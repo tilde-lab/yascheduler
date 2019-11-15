@@ -31,14 +31,8 @@ import pg8000
 from fabric import Connection as SSH_Connection
 
 
+RUN_CMD = "nohup mpirun -np 4 --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &" # TODO grep ^cpu\\scores /proc/cpuinfo | uniq | awk '{print $4}'
 sleep_interval = 6
-RUN_CMD = "nohup mpirun -np 4 --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
-#RUN_CMD = "daemonize /usr/bin/stress --cpu 4 --timeout %ss" # apt-get install daemonize stress
-CHECK_CMD = 'top -b -n 1 > /tmp/top.tmp && head -n27 /tmp/top.tmp | tail -n20'
-RUNNING_MARKER = 'Pcrystal'
-#RUNNING_MARKER = 'stress'
-REMOTE_ROOT_DIR = '/data'
-LOCAL_STORE_DIR = './data'
 logging.basicConfig(level=logging.INFO)
 
 
@@ -46,6 +40,9 @@ class Yascheduler(object):
     STATUS_TO_DO = 0
     STATUS_RUNNING = 1
     STATUS_DONE = 2
+
+    RUNNING_MARKER = 'Pcrystal'
+    CHECK_CMD = 'top -b -n 1 > /tmp/top.tmp && head -n27 /tmp/top.tmp | tail -n20'
 
     def __init__(self, config_file='env.ini'):
         self.config = ConfigParser()
@@ -98,7 +95,7 @@ class Yascheduler(object):
 
     def queue_submit_task(self, label, metadata):
         assert metadata['structure']
-        metadata['work_folder'] = REMOTE_ROOT_DIR + '/' + datetime.now().strftime('%Y%m%d_%H%M%S') + \
+        metadata['work_folder'] = self.config.get('remote', 'data_dir') + '/' + datetime.now().strftime('%Y%m%d_%H%M%S') + \
                                 '_' + ''.join([random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(4)])
         self.pgcursor.execute("INSERT INTO yascheduler_tasks (label, metadata, ip, status) VALUES ('{label}', '{metadata}', NULL, {status});".format(
             label=label,
@@ -140,12 +137,12 @@ class Yascheduler(object):
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool
         try:
-            result = self.ssh_conn_pool[ip].run(CHECK_CMD, hide=True)
+            result = self.ssh_conn_pool[ip].run(Yascheduler.CHECK_CMD, hide=True)
         except Exception as err:
             logging.error('SSH status cmd error: %s' % err)
             # TODO handle that situation properly, re-assign ip, etc.
             result = ""
-        return RUNNING_MARKER in str(result)
+        return Yascheduler.RUNNING_MARKER in str(result)
 
     def ssh_get_task(self, ip, work_folder, store_folder, remove=True):
         self.ssh_conn_pool[ip].get(work_folder + '/INPUT', store_folder + '/INPUT')
@@ -173,7 +170,7 @@ if __name__ == "__main__":
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
-                ready_task['metadata']['store_folder'] = LOCAL_STORE_DIR + '/' + ready_task['metadata']['work_folder'].split('/')[-1]
+                ready_task['metadata']['store_folder'] = yac.config.get('local', 'data_dir') + '/' + ready_task['metadata']['work_folder'].split('/')[-1]
                 os.makedirs(ready_task['metadata']['store_folder']) # TODO OSError if restart
                 try:
                     yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], ready_task['metadata']['store_folder'])

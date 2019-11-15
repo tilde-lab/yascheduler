@@ -8,13 +8,13 @@ from yascheduler import Yascheduler
 ela = ['Li', 'Na', 'K', 'Rb', 'Cs', 'Be', 'Mg', 'Ca', 'Sr', 'Ba']
 elb = ['F', 'Cl', 'Br', 'I', 'O', 'S', 'Se', 'Te']
 
+f34_input = Fort34()
+yac = Yascheduler()
+
 for pair in product(ela, elb):
     print(pair)
     structures = get_structures(pair, more_query_args=dict(lattices='cubic'))
     structures_by_sgn = {}
-
-    f34_input = Fort34()
-    yac = Yascheduler()
 
     for s in structures:
         structures_by_sgn.setdefault(s.info['spacegroup'].no, []).append(s)
