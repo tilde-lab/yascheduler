@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 """
 Postgres schema:
 CREATE TABLE yascheduler_nodes (
@@ -25,7 +25,7 @@ import json
 import tempfile
 import logging
 from datetime import datetime
-from ConfigParser import ConfigParser
+from configparser import ConfigParser
 
 import pg8000
 from fabric import Connection as SSH_Connection
@@ -119,7 +119,7 @@ class Yascheduler(object):
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
 
     def ssh_run_task(self, ip, label, metadata):
-        assert not self.ssh_check_task(ip)
+        assert not self.ssh_check_task(ip) # TODO handle this situation
         assert metadata['work_folder']
         assert metadata['structure']
 
@@ -127,7 +127,7 @@ class Yascheduler(object):
         # TODO input is hard-coded which is not what we want
         self.ssh_conn_pool[ip].put('INPUT.tpl', metadata['work_folder'] + '/INPUT')
         with tempfile.NamedTemporaryFile() as tmp:
-            tmp.write(metadata['structure'])
+            tmp.write(metadata['structure'].encode('utf-8'))
             tmp.flush()
             self.ssh_conn_pool[ip].put(tmp.name, metadata['work_folder'] + '/fort.34')
 
@@ -171,7 +171,7 @@ if __name__ == "__main__":
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
                 ready_task['metadata']['store_folder'] = yac.config.get('local', 'data_dir') + '/' + ready_task['metadata']['work_folder'].split('/')[-1]
-                os.makedirs(ready_task['metadata']['store_folder']) # TODO OSError if restart
+                os.mkdir(ready_task['metadata']['store_folder']) # TODO OSError if restart
                 try:
                     yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], ready_task['metadata']['store_folder'])
                 except IOError as err:

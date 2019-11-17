@@ -4,10 +4,8 @@ import sys
 import random
 
 import numpy as np
-
 from mpds_client import MPDSDataRetrieval, APIError
-from mpds_ml_labs.prediction import periodic_elements
-from mpds_ml_labs.struct_utils import get_formula
+from ase.data import chemical_symbols
 from aiida_crystal.io.f34 import Fort34
 
 from yascheduler import Yascheduler
@@ -58,7 +56,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         elements = sys.argv[1:]
     else:
-        elements = [random.choice(periodic_elements[1:]) for _ in range(random.randint(1, 5))]
+        elements = [random.choice(chemical_symbols[1:]) for _ in range(random.randint(1, 5))]
     elements = list(set(elements))
     print("Elements: %s" % ', '.join(elements))
 
@@ -71,11 +69,11 @@ if __name__ == "__main__":
     if len(structures_by_sgn) == 1:
         user_sgn = structures_by_sgn.keys()[0]
     else:
-        user_sgn = raw_input('Which SG? %s: ' % ' or '.join(map(str, sorted(structures_by_sgn.keys()))))
+        user_sgn = input('Which SG? %s: ' % ' or '.join(map(str, sorted(structures_by_sgn.keys()))))
         user_sgn = int(user_sgn)
 
     print("%s (SG%s)" % (
-        get_formula(structures_by_sgn[user_sgn][0]),
+        structures_by_sgn[user_sgn][0].get_chemical_formula(empirical=True),
         structures_by_sgn[user_sgn][0].info['spacegroup'].no
     ))
 
