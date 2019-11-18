@@ -125,7 +125,11 @@ class Yascheduler(object):
         assert metadata['input']
         assert metadata['structure']
 
-        self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['work_folder'], hide=True)
+        try:
+            self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['work_folder'], hide=True)
+        except Exception as err:
+            logging.error('SSH spawn cmd error: %s' % err)
+            return False
 
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(metadata['input'].encode('utf-8'))
@@ -136,7 +140,13 @@ class Yascheduler(object):
             tmp.flush()
             self.ssh_conn_pool[ip].put(tmp.name, metadata['work_folder'] + '/fort.34')
 
-        self.ssh_conn_pool[ip].run(RUN_CMD.format(path=metadata['work_folder']), hide=True)
+        try:
+            self.ssh_conn_pool[ip].run(RUN_CMD.format(path=metadata['work_folder']), hide=True)
+        except Exception as err:
+            logging.error('SSH spawn cmd error: %s' % err)
+            return False
+
+        return True
 
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool
@@ -177,14 +187,16 @@ if __name__ == "__main__":
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
-                ready_task['metadata']['store_folder'] = yac.config.get('local', 'data_dir') + '/' + ready_task['metadata']['work_folder'].split('/')[-1]
-                os.mkdir(ready_task['metadata']['store_folder']) # TODO OSError if restart
+                store_folder = yac.config.get('local', 'data_dir') + '/' + ready_task['metadata']['work_folder'].split('/')[-1]
+                os.mkdir(store_folder) # TODO OSError if restart
                 try:
-                    yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], ready_task['metadata']['store_folder'])
+                    yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], store_folder)
                 except IOError as err:
                     logging.error('SSH download error: %s' % err)
                     # TODO handle that situation properly, re-spawn, etc.
                     ready_task['metadata'] = dict(error='No remote data!')
+                else:
+                    ready_task['metadata'] = dict(store_folder=store_folder)
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
                 logging.info(':::%s done and saved in %s' % (ready_task['label'], ready_task['metadata'].get('store_folder')))
                 # TODO here we might want to notify our data consumers in an event-driven manner
@@ -194,13 +206,9 @@ if __name__ == "__main__":
             for task in yac.queue_get_tasks_to_do(len(nodes) - len(tasks_running)):
                 logging.info(':::to do: %s' % task['label'])
                 ip = random.choice(yac.queue_get_free_nodes(nodes, tasks_running))
-                try:
-                    yac.ssh_run_task(ip, task['label'], task['metadata'])
-                except Exception as err:
-                    logging.error('SSH spawn cmd error: %s' % err)
-                    # TODO handle that situation properly, re-assign ip, etc.
-                    continue
-                yac.queue_set_task_running(task['task_id'], ip)
-                tasks_running.append(dict(task_id=task['task_id'], ip=ip))
+
+                if yac.ssh_run_task(ip, task['label'], task['metadata']):
+                    yac.queue_set_task_running(task['task_id'], ip)
+                    tasks_running.append(dict(task_id=task['task_id'], ip=ip))
 
         time.sleep(sleep_interval)
