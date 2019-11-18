@@ -12,12 +12,15 @@ from ase.data import chemical_symbols
 
 from aiida_crystal.io.d12_write import write_input
 from aiida_crystal.io.f34 import Fort34
+from aiida_crystal.io.basis import BasisFile
 
 from yascheduler import Yascheduler
 
 
 supported_arities = {1: 'unary', 2: 'binary', 3: 'ternary', 4: 'quaternary', 5: 'quinary'}
 mpds_api = MPDSDataRetrieval()
+
+verbatim_basis = namedtuple("basis", field_names="content, all_electron")
 
 
 def get_basis_sets(repo_dir):
@@ -29,7 +32,11 @@ def get_basis_sets(repo_dir):
         el = filename.split('.')[0]
         assert el in chemical_symbols
         with open(repo_dir + os.sep + filename, 'r') as f:
-            bs_repo[el] = f.read().strip()
+            bs_str = f.read().strip()
+
+        # FIXME?
+        bs_parsed = BasisFile().parse(bs_str)
+        bs_repo[el] = verbatim_basis(content=bs_str, all_electron=('ecp' not in bs_parsed))
 
     return bs_repo
 
@@ -97,9 +104,7 @@ def get_input(elements, bs_repo, label):
             }
         }
     }
-    basis = namedtuple("basis", field_names="content")
-    basis.content = "\n".join([bs_repo[el] for el in elements])
-    return write_input(setup, [basis])
+    return write_input(setup, [bs_repo[el] for el in elements])
 
 
 if __name__ == "__main__":
@@ -141,9 +146,8 @@ if __name__ == "__main__":
     target_obj = structures_by_sgn[user_sgn][median_idx]
 
     setup_input = get_input(elements, bs_repo, target_obj.info['phase'])
-    #setup_input = open('INPUT.tpl').read()
 
-    f34_input = Fort34()
+    f34_input = Fort34([bs_repo[el] for el in elements])
     struct_input = f34_input.from_ase(target_obj)
 
     yac = Yascheduler(config)
