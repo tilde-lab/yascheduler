@@ -9,22 +9,19 @@ from yascheduler import Yascheduler
 
 
 # NB use HW ECP for Ba, Cs?
-# NB no Rb, Sr, Te due to ECP
-ela = ['Li', 'Na', 'K', 'Be', 'Mg', 'Ca']
-elb = ['F', 'Cl', 'Br', 'I', 'O', 'S', 'Se']
+ela = ['Li', 'Na', 'K', 'Rb', 'Be', 'Mg', 'Ca', 'Sr']
+elb = ['F', 'Cl', 'Br', 'I', 'O', 'S', 'Se', 'Te']
 
 config = ConfigParser()
 config.read('env.ini')
 
 bs_repo = get_basis_sets(config.get('local', 'bs_repo_dir'))
-#setup_input = open('INPUT.tpl').read()
 
-f34_input = Fort34()
 yac = Yascheduler(config)
 
-for pair in product(ela, elb):
-    print(pair)
-    structures = get_structures(pair, more_query_args=dict(lattices='cubic'))
+for elem_pair in product(ela, elb):
+    print(elem_pair)
+    structures = get_structures(elem_pair, more_query_args=dict(lattices='cubic'))
     structures_by_sgn = {}
 
     for s in structures:
@@ -38,7 +35,8 @@ for pair in product(ela, elb):
         median_idx = int(np.argmin(np.sum((cells - median_cell)**2, axis=1)**0.5))
         target_obj = structures_by_sgn[sgn_cls][median_idx]
 
+        f34_input = Fort34([bs_repo[el] for el in elem_pair])
         struct_input = f34_input.from_ase(target_obj)
-        setup_input = get_input(pair, bs_repo, target_obj.info['phase'])
+        setup_input = get_input(elem_pair, bs_repo, target_obj.info['phase'])
 
         yac.queue_submit_task(target_obj.info['phase'], dict(structure=str(struct_input), input=setup_input))
