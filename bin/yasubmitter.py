@@ -1,11 +1,16 @@
 #!/usr/bin/env python2
 
+import os
 import sys
 import random
+from collections import namedtuple
+from configparser import ConfigParser
 
 import numpy as np
 from mpds_client import MPDSDataRetrieval, APIError
 from ase.data import chemical_symbols
+
+from aiida_crystal.io.d12_write import write_input
 from aiida_crystal.io.f34 import Fort34
 
 from yascheduler import Yascheduler
@@ -13,6 +18,20 @@ from yascheduler import Yascheduler
 
 supported_arities = {1: 'unary', 2: 'binary', 3: 'ternary', 4: 'quaternary', 5: 'quinary'}
 mpds_api = MPDSDataRetrieval()
+
+
+def get_basis_sets(repo_dir):
+    bs_repo = {}
+    for filename in os.listdir(repo_dir):
+        if not filename.endswith('.basis'):
+            continue
+
+        el = filename.split('.')[0]
+        assert el in chemical_symbols
+        with open(repo_dir + os.sep + filename, 'r') as f:
+            bs_repo[el] = f.read().strip()
+
+    return bs_repo
 
 
 def get_structures(elements, more_query_args=None):
@@ -32,24 +51,55 @@ def get_structures(elements, more_query_args=None):
     if more_query_args and type(more_query_args) == dict:
         query.update(more_query_args)
 
-    for item in mpds_api.get_data(
-        query,
-        fields={'S': [
-            'phase',
-            'cell_abc',
-            'sg_n',
-            'basis_noneq',
-            'els_noneq'
-        ]}
-    ):
-        ase_obj = mpds_api.compile_crystal(item, flavor='ase')
-        if not ase_obj:
-            continue
-        ase_obj.info['phase'] = item[0]
-        structures.append(ase_obj)
+    try:
+        for item in mpds_api.get_data(
+            query,
+            fields={'S': [
+                'phase',
+                'cell_abc',
+                'sg_n',
+                'basis_noneq',
+                'els_noneq'
+            ]}
+        ):
+            ase_obj = mpds_api.compile_crystal(item, flavor='ase')
+            if not ase_obj:
+                continue
+            ase_obj.info['phase'] = item[0]
+            structures.append(ase_obj)
 
-    assert structures
+    except APIError as ex:
+        if ex.code == 204:
+            print("No results!")
+            return []
+        else: raise
+
     return structures
+
+
+def get_input(elements, bs_repo, label):
+    """
+    Generates a test input for very quick
+    (but meaningful) run
+    """
+    setup = {
+        "title": label,
+        "scf": {
+            "k_points": (4, 4),
+            "dft": {"xc": ("PBE", "PBE")},
+            "numerical": {"TOLDEE": 8, "MAXCYCLE": 50, "TOLINTEG": (6, 6, 6, 6, 12)},
+            "post_scf": ["PPAN"]
+        },
+        "geometry": {
+            "optimise": {
+                "type": "CELLONLY",
+                "convergence": {"TOLDEE": 8, "MAXCYCLE": 50}
+            }
+        }
+    }
+    basis = namedtuple("basis", field_names="content")
+    basis.content = "\n".join([bs_repo[el] for el in elements])
+    return write_input(setup, [basis])
 
 
 if __name__ == "__main__":
@@ -60,14 +110,20 @@ if __name__ == "__main__":
     elements = list(set(elements))
     print("Elements: %s" % ', '.join(elements))
 
+    config = ConfigParser()
+    config.read('env.ini')
+
+    bs_repo = get_basis_sets(config.get('local', 'bs_repo_dir'))
+
     structures = get_structures(elements)
     structures_by_sgn = {}
 
     for s in structures:
         structures_by_sgn.setdefault(s.info['spacegroup'].no, []).append(s)
 
+    assert structures_by_sgn
     if len(structures_by_sgn) == 1:
-        user_sgn = structures_by_sgn.keys()[0]
+        user_sgn = list(structures_by_sgn.keys())[0]
     else:
         user_sgn = input('Which SG? %s: ' % ' or '.join(map(str, sorted(structures_by_sgn.keys()))))
         user_sgn = int(user_sgn)
@@ -84,8 +140,11 @@ if __name__ == "__main__":
     median_idx = int(np.argmin(np.sum((cells - median_cell)**2, axis=1)**0.5))
     target_obj = structures_by_sgn[user_sgn][median_idx]
 
-    f34_input = Fort34()
-    struct_inp = f34_input.from_ase(target_obj)
+    setup_input = get_input(elements, bs_repo, target_obj.info['phase'])
+    #setup_input = open('INPUT.tpl').read()
 
-    yac = Yascheduler()
-    yac.queue_submit_task(target_obj.info['phase'], dict(structure=str(struct_inp)))
+    f34_input = Fort34()
+    struct_input = f34_input.from_ase(target_obj)
+
+    yac = Yascheduler(config)
+    yac.queue_submit_task(target_obj.info['phase'], dict(structure=str(struct_input), input=setup_input))

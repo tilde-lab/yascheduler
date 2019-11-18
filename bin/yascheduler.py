@@ -31,7 +31,7 @@ import pg8000
 from fabric import Connection as SSH_Connection
 
 
-RUN_CMD = "nohup mpirun -np 4 --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &" # TODO grep ^cpu\\scores /proc/cpuinfo | uniq | awk '{print $4}'
+RUN_CMD = "nohup /usr/bin/mpirun -np 4 --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &" # TODO grep ^cpu\\scores /proc/cpuinfo | uniq | awk '{print $4}'
 sleep_interval = 6
 logging.basicConfig(level=logging.INFO)
 
@@ -44,9 +44,8 @@ class Yascheduler(object):
     RUNNING_MARKER = 'Pcrystal'
     CHECK_CMD = 'top -b -n 1 > /tmp/top.tmp && head -n27 /tmp/top.tmp | tail -n20'
 
-    def __init__(self, config_file='env.ini'):
-        self.config = ConfigParser()
-        self.config.read(config_file)
+    def __init__(self, config):
+        self.config = config
         self.queue_connect()
         self.ssh_conn_pool = {}
 
@@ -94,7 +93,9 @@ class Yascheduler(object):
         self.pgconn.commit()
 
     def queue_submit_task(self, label, metadata):
+        assert metadata['input']
         assert metadata['structure']
+
         metadata['work_folder'] = self.config.get('remote', 'data_dir') + '/' + datetime.now().strftime('%Y%m%d_%H%M%S') + \
                                 '_' + ''.join([random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(4)])
         self.pgcursor.execute("INSERT INTO yascheduler_tasks (label, metadata, ip, status) VALUES ('{label}', '{metadata}', NULL, {status});".format(
@@ -121,18 +122,21 @@ class Yascheduler(object):
     def ssh_run_task(self, ip, label, metadata):
         assert not self.ssh_check_task(ip) # TODO handle this situation
         assert metadata['work_folder']
+        assert metadata['input']
         assert metadata['structure']
 
         self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['work_folder'], hide=True)
-        # TODO input is hard-coded which is not what we want
-        self.ssh_conn_pool[ip].put('INPUT.tpl', metadata['work_folder'] + '/INPUT')
+
         with tempfile.NamedTemporaryFile() as tmp:
+            tmp.write(metadata['input'].encode('utf-8'))
+            tmp.flush()
+            self.ssh_conn_pool[ip].put(tmp.name, metadata['work_folder'] + '/INPUT')
+            tmp.seek(0)
             tmp.write(metadata['structure'].encode('utf-8'))
             tmp.flush()
             self.ssh_conn_pool[ip].put(tmp.name, metadata['work_folder'] + '/fort.34')
 
         self.ssh_conn_pool[ip].run(RUN_CMD.format(path=metadata['work_folder']), hide=True)
-        #self.ssh_conn_pool[ip].run(RUN_CMD % random.randint(10, 20), hide=True)
 
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool
@@ -157,7 +161,10 @@ class Yascheduler(object):
 
 if __name__ == "__main__":
 
-    yac = Yascheduler()
+    config = ConfigParser()
+    config.read('env.ini')
+
+    yac = Yascheduler(config)
     yac.ssh_connect()
 
     while True:
