@@ -15,7 +15,7 @@ import pg8000
 from fabric import Connection as SSH_Connection
 
 
-RUN_CMD = "nohup /usr/bin/mpirun -np 4 --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &" # TODO grep ^cpu\\scores /proc/cpuinfo | uniq | awk '{print $4}'
+RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
 sleep_interval = 6
 logging.basicConfig(level=logging.INFO)
 
@@ -82,13 +82,16 @@ class Yascheduler(object):
 
         metadata['work_folder'] = self.config.get('remote', 'data_dir') + '/' + datetime.now().strftime('%Y%m%d_%H%M%S') + \
                                 '_' + ''.join([random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(4)])
-        self.pgcursor.execute("INSERT INTO yascheduler_tasks (label, metadata, ip, status) VALUES ('{label}', '{metadata}', NULL, {status});".format(
+        self.pgcursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
+            VALUES ('{label}', '{metadata}', NULL, {status})
+            RETURNING task_id;""".format(
             label=label,
             metadata=json.dumps(metadata),
             status=Yascheduler.STATUS_TO_DO
         ))
         self.pgconn.commit()
         logging.info(':::submitted: %s' % label)
+        return self.pgcursor.fetchone()[0]
 
     def ssh_connect(self):
         new_nodes = self.queue_get_all_nodes()
