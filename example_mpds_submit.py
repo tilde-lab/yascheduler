@@ -9,7 +9,6 @@ from configparser import ConfigParser
 import numpy as np
 from mpds_client import MPDSDataRetrieval, APIError
 from ase.data import chemical_symbols
-
 from aiida_crystal.io.d12_write import write_input
 from aiida_crystal.io.f34 import Fort34
 from aiida_crystal.io.basis import BasisFile
@@ -134,7 +133,7 @@ if __name__ == "__main__":
         user_sgn = int(user_sgn)
 
     print("%s (SG%s)" % (
-        structures_by_sgn[user_sgn][0].get_chemical_formula(empirical=True),
+        structures_by_sgn[user_sgn][0].get_chemical_formula(empirical=True), # ase 3.18
         structures_by_sgn[user_sgn][0].info['spacegroup'].no
     ))
 

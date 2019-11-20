@@ -4,7 +4,8 @@ from configparser import ConfigParser
 
 import numpy as np
 from aiida_crystal.io.f34 import Fort34
-from yasubmitter import get_basis_sets, get_structures, get_input
+
+from example_mpds_submit import get_basis_sets, get_structures, get_input
 from yascheduler import Yascheduler
 
 
