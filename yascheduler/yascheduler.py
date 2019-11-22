@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 KNOWN BUGS: exits on Enter press
 """
@@ -8,14 +7,15 @@ import random
 import json
 import tempfile
 import logging
+import pg8000
 from datetime import datetime
 from configparser import ConfigParser
-
-import pg8000
 from fabric import Connection as SSH_Connection
+from yascheduler import CONFIG_FILE
 
 
-RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` --allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
+RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` " \
+          "--allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
 sleep_interval = 6
 logging.basicConfig(level=logging.INFO)
 
@@ -30,51 +30,48 @@ class Yascheduler(object):
 
     def __init__(self, config):
         self.config = config
-        self.queue_connect()
-        self.ssh_conn_pool = {}
-
-    def queue_connect(self):
-        self.pgconn = pg8000.connect(
+        self.connection = pg8000.connect(
             user=self.config.get('db', 'user'),
             password=self.config.get('db', 'password'),
             database=self.config.get('db', 'database'),
             host=self.config.get('db', 'host'),
             port=self.config.getint('db', 'port')
         )
-        self.pgcursor = self.pgconn.cursor()
+        self.cursor = self.connection.cursor()
+        self.ssh_conn_pool = {}
 
     def queue_get_all_nodes(self):
-        self.pgcursor.execute('SELECT ip FROM yascheduler_nodes;')
-        return [row[0] for row in self.pgcursor.fetchall()]
+        self.cursor.execute('SELECT ip FROM yascheduler_nodes;')
+        return [row[0] for row in self.cursor.fetchall()]
 
     def queue_get_free_nodes(self, all_nodes, tasks_running):
         running_nodes = set([task['ip'] for task in tasks_running])
         return [ip for ip in all_nodes if ip not in running_nodes]
 
     def queue_get_task(self, task_id):
-        self.pgcursor.execute('SELECT label, metadata, ip, status FROM yascheduler_tasks WHERE task_id=%s;' % task_id)
-        row = self.pgcursor.fetchone()
+        self.cursor.execute('SELECT label, metadata, ip, status FROM yascheduler_tasks WHERE task_id=%s;' % task_id)
+        row = self.cursor.fetchone()
         if not row:
             return None
         return dict(task_id=task_id, label=row[0], metadata=row[1], ip=row[2], status=row[3])
 
     def queue_get_tasks_to_do(self, num_nodes):
-        self.pgcursor.execute('SELECT task_id, label, metadata FROM yascheduler_tasks WHERE status=%s LIMIT %s;' % (Yascheduler.STATUS_TO_DO, num_nodes))
-        return [dict(task_id=row[0], label=row[1], metadata=row[2]) for row in self.pgcursor.fetchall()]
+        self.cursor.execute('SELECT task_id, label, metadata FROM yascheduler_tasks WHERE status=%s LIMIT %s;' % (Yascheduler.STATUS_TO_DO, num_nodes))
+        return [dict(task_id=row[0], label=row[1], metadata=row[2]) for row in self.cursor.fetchall()]
 
     def queue_get_tasks_running(self):
-        self.pgcursor.execute('SELECT task_id, ip FROM yascheduler_tasks WHERE status=%s;' % Yascheduler.STATUS_RUNNING)
-        return [dict(task_id=row[0], ip=row[1]) for row in self.pgcursor.fetchall()]
+        self.cursor.execute('SELECT task_id, ip FROM yascheduler_tasks WHERE status=%s;' % Yascheduler.STATUS_RUNNING)
+        return [dict(task_id=row[0], ip=row[1]) for row in self.cursor.fetchall()]
 
     def queue_set_task_running(self, task_id, ip):
-        self.pgcursor.execute("UPDATE yascheduler_tasks SET status=%s, ip='%s' WHERE task_id=%s;" % (Yascheduler.STATUS_RUNNING, ip, task_id))
-        self.pgconn.commit()
+        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip='%s' WHERE task_id=%s;" % (Yascheduler.STATUS_RUNNING, ip, task_id))
+        self.connection.commit()
 
     def queue_set_task_done(self, task_id, metadata):
-        self.pgcursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata='%s' WHERE task_id=%s;" % (
+        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata='%s' WHERE task_id=%s;" % (
             Yascheduler.STATUS_DONE, json.dumps(metadata), task_id
         ))
-        self.pgconn.commit()
+        self.connection.commit()
 
     def queue_submit_task(self, label, metadata):
         assert metadata['input']
@@ -82,16 +79,16 @@ class Yascheduler(object):
 
         metadata['work_folder'] = self.config.get('remote', 'data_dir') + '/' + datetime.now().strftime('%Y%m%d_%H%M%S') + \
                                 '_' + ''.join([random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(4)])
-        self.pgcursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
+        self.cursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
             VALUES ('{label}', '{metadata}', NULL, {status})
             RETURNING task_id;""".format(
             label=label,
             metadata=json.dumps(metadata),
             status=Yascheduler.STATUS_TO_DO
         ))
-        self.pgconn.commit()
+        self.connection.commit()
         logging.info(':::submitted: %s' % label)
-        return self.pgcursor.fetchone()[0]
+        return self.cursor.fetchone()[0]
 
     def ssh_connect(self):
         new_nodes = self.queue_get_all_nodes()
@@ -159,7 +156,7 @@ class Yascheduler(object):
 if __name__ == "__main__":
 
     config = ConfigParser()
-    config.read('env.ini')
+    config.read(CONFIG_FILE)
 
     yac = Yascheduler(config)
     yac.ssh_connect()

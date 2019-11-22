@@ -7,7 +7,8 @@ from computing clouds.
 
 Installation
 ------------
-Installation by `pip` is preferred: ::
+Installation by `pip` is preferred (clone the repo first before it gets on PyPI): ::
 
-    pip install yascheduler
+    git clone https://github.com/tilde-lab/yascheduler.git
+    pip install yascheduler/
 
