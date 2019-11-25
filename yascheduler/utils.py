@@ -29,6 +29,29 @@ def check_status():
 def init():
     # service initialization
     install_path = os.path.dirname(__file__)
+    # check for systemd (exit status is 0 if there is a process)
+    has_systemd = not os.system("pidof systemd")
+    if has_systemd:
+        _init_systemd(install_path)
+    else:
+        _init_sysv(install_path)
+    _init_db(install_path)
+
+
+def _init_systemd(install_path):
+    print("Installing systemd service")
+    # create unit file in /lib/systemd/system
+    src_unit_file = os.path.join(install_path, 'data/yascheduler.service')
+    unit_file = os.path.join('/lib/systemd/system/yascheduler.service')
+    if not os.path.isfile(unit_file):
+        daemon_file = os.path.join(install_path, 'daemon_systemd.py')
+        systemd_script = open(src_unit_file).read().replace('%YASCHEDULER_DAEMON_FILE%', daemon_file)
+        with open(unit_file, 'w') as f:
+            f.write(systemd_script)
+
+
+def _init_sysv(install_path):
+    print("Installing SysV service")
     # create sysv script in /etc/init.d
     src_startup_file = os.path.join(install_path, 'data/yascheduler.sh')
     startup_file = os.path.join('/etc/init.d/yascheduler')
@@ -39,7 +62,6 @@ def init():
             f.write(sysv_script)
         # make script executable
         os.chmod(startup_file, 0o755)
-    _init_db(install_path)
 
 
 def _init_db(install_path):
