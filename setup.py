@@ -19,16 +19,17 @@ class CustomInstall(install):
         def _post_install():
             def find_module_path():
                 for p in sys.path:
+                    print(p)
                     if os.path.isdir(p) and package_name in os.listdir(p):
                         return os.path.join(p, package_name)
             install_path = find_module_path()
+            print(install_path)
             src_config = os.path.join(install_path, 'data/yascheduler.conf')
             # create config file in /etc if absent
             if not os.path.isfile(CONFIG_FILE):
                 config_dir = os.path.dirname(CONFIG_FILE)
                 os.makedirs(config_dir)
                 shutil.copy(src_config, CONFIG_FILE)
-
         atexit.register(_post_install)
         install.run(self)
 
@@ -52,7 +53,7 @@ if __name__ == '__main__':
         entry_points={
           "console_scripts": ["yasubmit = yascheduler.utils:submit",
                               "yastatus = yascheduler.utils:check_status",
-                              "yainitdb = yascheduler.utils:init_db"]
+                              "yainit = yascheduler.utils:init"]
         },
         cmdclass={'install': CustomInstall},
     )

@@ -2,21 +2,19 @@
 KNOWN BUGS: exits on Enter press
 """
 import os
-import time
 import random
 import json
+import time
 import tempfile
 import logging
 import pg8000
-from datetime import datetime
 from configparser import ConfigParser
+from datetime import datetime
 from fabric import Connection as SSH_Connection
-from yascheduler import CONFIG_FILE
-
+from yascheduler import SLEEP_INTERVAL, CONFIG_FILE
 
 RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` " \
           "--allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
-sleep_interval = 6
 logging.basicConfig(level=logging.INFO)
 
 
@@ -104,7 +102,7 @@ class Yascheduler(object):
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
 
     def ssh_run_task(self, ip, label, metadata):
-        assert not self.ssh_check_task(ip) # TODO handle this situation
+        assert not self.ssh_check_task(ip)  # TODO handle this situation
         assert metadata['work_folder']
         assert metadata['input']
         assert metadata['structure']
@@ -153,11 +151,10 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip].run('rm -rf %s' % work_folder, hide=True)
 
 
-if __name__ == "__main__":
-
+def daemonize(log_file):
+    logger = get_logger(log_file)
     config = ConfigParser()
     config.read(CONFIG_FILE)
-
     yac = Yascheduler(config)
     yac.ssh_connect()
 
@@ -167,32 +164,48 @@ if __name__ == "__main__":
             yac.ssh_connect()
 
         tasks_running = yac.queue_get_tasks_running()
-        logging.info('tasks_running: %s' % tasks_running)
+        logger.info('tasks_running: %s' % tasks_running)
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
-                store_folder = yac.config.get('local', 'data_dir') + '/' + ready_task['metadata']['work_folder'].split('/')[-1]
-                os.mkdir(store_folder) # TODO OSError if restart
+                store_folder = os.path.join(yac.config.get('local', 'data_dir'),
+                                            os.path.basename(ready_task['metadata']['work_folder']))
+                os.mkdir(store_folder)  # TODO OSError if restart
                 try:
                     yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], store_folder)
                 except IOError as err:
-                    logging.error('SSH download error: %s' % err)
+                    logger.error('SSH download error: %s' % err)
                     # TODO handle that situation properly, re-spawn, etc.
                     ready_task['metadata'] = dict(error='No remote data!')
                 else:
                     ready_task['metadata'] = dict(store_folder=store_folder)
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
-                logging.info(':::%s done and saved in %s' % (ready_task['label'], ready_task['metadata'].get('store_folder')))
+                logger.info(':::{} done and saved in {}'.format(ready_task['label'],
+                                                                ready_task['metadata'].get('store_folder')))
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
         if len(tasks_running) < len(nodes):
             for task in yac.queue_get_tasks_to_do(len(nodes) - len(tasks_running)):
-                logging.info(':::to do: %s' % task['label'])
+                logger.info(':::to do: %s' % task['label'])
                 ip = random.choice(yac.queue_get_free_nodes(nodes, tasks_running))
 
                 if yac.ssh_run_task(ip, task['label'], task['metadata']):
                     yac.queue_set_task_running(task['task_id'], ip)
                     tasks_running.append(dict(task_id=task['task_id'], ip=ip))
 
-        time.sleep(sleep_interval)
+        time.sleep(SLEEP_INTERVAL)
+
+
+def get_logger(log_file):
+    logger = logging.getLogger('yascheduler')
+    logger.setLevel(logging.INFO)
+
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.INFO)
+    formatstr = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    formatter = logging.Formatter(formatstr)
+    fh.setFormatter(formatter)
+
+    logger.addHandler(fh)
+    return logger

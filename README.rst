@@ -16,6 +16,6 @@ The installation procedure creates the configuration file located at ``/etc/yasc
 The file contains credentials for Postgres database access as well as several directories. Please check
 and amend the file with the correct credentials. The database should then be initialized with ::
 
-    yainitdb
+    yainit
 
 script.

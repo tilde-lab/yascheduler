@@ -23,7 +23,7 @@ if [ -f /etc/sysconfig/yascheduler ]; then
         . /etc/sysconfig/yascheduler
 fi
 
-yascheduler=/var/lib/yascheduler/yascheduler.py
+yascheduler="python %YASCHEDULER_DAEMON_FILE%"
 prog=yascheduler
 pidfile=${PIDFILE-/var/run/yascheduler.pid}
 logfile=${LOGFILE-/var/log/yascheduler.log}
