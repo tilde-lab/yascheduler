@@ -19,11 +19,9 @@ class CustomInstall(install):
         def _post_install():
             def find_module_path():
                 for p in sys.path:
-                    print(p)
                     if os.path.isdir(p) and package_name in os.listdir(p):
                         return os.path.join(p, package_name)
             install_path = find_module_path()
-            print(install_path)
             src_config = os.path.join(install_path, 'data/yascheduler.conf')
             # create config file in /etc if absent
             if not os.path.isfile(CONFIG_FILE):

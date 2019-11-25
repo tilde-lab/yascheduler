@@ -5,7 +5,7 @@ Description=Yascheduler systemd service
 
 [Service]
 # Command to execute when the service is started
-ExecStart=python %YASCHEDULER_DAEMON_FILE%
+ExecStart=/usr/bin/python3 %YASCHEDULER_DAEMON_FILE%
 
 # Disable Python's buffering of STDOUT and STDERR, so that output from the
 # service shows up immediately in systemd's logs
