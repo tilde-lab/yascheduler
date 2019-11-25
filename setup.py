@@ -37,7 +37,7 @@ if __name__ == '__main__':
     setup(
         name=package_name,
         version=package_version,
-        author="Eugeny Blokhin",
+        author="Evgeny Blokhin",
         author_email="eb@tilde.pro",
         description="Yet another scheduler",
         long_description=open('README.rst').read(),
