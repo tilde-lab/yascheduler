@@ -23,6 +23,7 @@ class CustomInstall(install):
                         return os.path.join(p, package_name)
             install_path = find_module_path()
             src_config = os.path.join(install_path, 'data/yascheduler.conf')
+            # create config file in /etc if absent
             if not os.path.isfile(CONFIG_FILE):
                 config_dir = os.path.dirname(CONFIG_FILE)
                 os.makedirs(config_dir)
