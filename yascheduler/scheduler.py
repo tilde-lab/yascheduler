@@ -68,12 +68,12 @@ class Yascheduler(object):
         return [dict(task_id=row[0], ip=row[1], status=row[2]) for row in self.cursor.fetchall()]
 
     def queue_set_task_running(self, task_id, ip):
-        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip='%s' WHERE task_id=%s;",
+        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip=%s WHERE task_id=%s;",
                             (self.STATUS_RUNNING, ip, task_id))
         self.connection.commit()
 
     def queue_set_task_done(self, task_id, metadata):
-        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata='%s' WHERE task_id=%s;",
+        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata=%s WHERE task_id=%s;",
                             (self.STATUS_DONE, json.dumps(metadata), task_id))
         self.connection.commit()
 
