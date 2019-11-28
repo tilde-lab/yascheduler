@@ -21,7 +21,7 @@ def submit():
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    task_id = yac.queue_submit_task(label, dict(structure=struct_input, input=setup_input))
+    task_id = yac.queue_submit_task(label, dict(structure=struct_input, input=setup_input, local_folder=os.getcwd()))
     print("Successfully submitted task: {}".format(task_id))
 
 

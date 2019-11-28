@@ -6,6 +6,7 @@ import random
 import json
 import time
 import tempfile
+import string
 import logging
 import pg8000
 from configparser import ConfigParser
@@ -54,7 +55,8 @@ class Yascheduler(object):
         return dict(task_id=task_id, label=row[0], metadata=row[1], ip=row[2], status=row[3])
 
     def queue_get_tasks_to_do(self, num_nodes):
-        self.cursor.execute('SELECT task_id, label, metadata FROM yascheduler_tasks WHERE status=%s LIMIT %s;' % (Yascheduler.STATUS_TO_DO, num_nodes))
+        self.cursor.execute('SELECT task_id, label, metadata FROM yascheduler_tasks WHERE status=%s LIMIT %s;',
+                            (self.STATUS_TO_DO, num_nodes))
         return [dict(task_id=row[0], label=row[1], metadata=row[2]) for row in self.cursor.fetchall()]
 
     def queue_get_tasks(self, status):
@@ -66,21 +68,22 @@ class Yascheduler(object):
         return [dict(task_id=row[0], ip=row[1], status=row[2]) for row in self.cursor.fetchall()]
 
     def queue_set_task_running(self, task_id, ip):
-        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip='%s' WHERE task_id=%s;" % (Yascheduler.STATUS_RUNNING, ip, task_id))
+        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip='%s' WHERE task_id=%s;",
+                            (self.STATUS_RUNNING, ip, task_id))
         self.connection.commit()
 
     def queue_set_task_done(self, task_id, metadata):
-        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata='%s' WHERE task_id=%s;" % (
-            Yascheduler.STATUS_DONE, json.dumps(metadata), task_id
-        ))
+        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata='%s' WHERE task_id=%s;",
+                            (self.STATUS_DONE, json.dumps(metadata), task_id))
         self.connection.commit()
 
     def queue_submit_task(self, label, metadata):
         assert metadata['input']
         assert metadata['structure']
+        metadata['remote_folder'] = os.path.join(self.config.get('remote', 'data_dir'),
+                                                 '_'.join([datetime.now().strftime('%Y%m%d_%H%M%S'),
+                                                           ''.join(random.choices(string.ascii_lowercase, k=4))]))
 
-        metadata['work_folder'] = self.config.get('remote', 'data_dir') + '/' + datetime.now().strftime('%Y%m%d_%H%M%S') + \
-                                '_' + ''.join([random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(4)])
         self.cursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
             VALUES ('{label}', '{metadata}', NULL, {status})
             RETURNING task_id;""".format(
@@ -107,12 +110,12 @@ class Yascheduler(object):
 
     def ssh_run_task(self, ip, label, metadata):
         assert not self.ssh_check_task(ip)  # TODO handle this situation
-        assert metadata['work_folder']
+        assert metadata['remote_folder']
         assert metadata['input']
         assert metadata['structure']
 
         try:
-            self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['work_folder'], hide=True)
+            self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['remote_folder'], hide=True)
         except Exception as err:
             logging.error('SSH spawn cmd error: %s' % err)
             return False
@@ -120,14 +123,14 @@ class Yascheduler(object):
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(metadata['input'].encode('utf-8'))
             tmp.flush()
-            self.ssh_conn_pool[ip].put(tmp.name, metadata['work_folder'] + '/INPUT')
+            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/INPUT')
             tmp.seek(0)
             tmp.write(metadata['structure'].encode('utf-8'))
             tmp.flush()
-            self.ssh_conn_pool[ip].put(tmp.name, metadata['work_folder'] + '/fort.34')
+            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34')
 
         try:
-            self.ssh_conn_pool[ip].run(RUN_CMD.format(path=metadata['work_folder']), hide=True)
+            self.ssh_conn_pool[ip].run(RUN_CMD.format(path=metadata['remote_folder']), hide=True)
         except Exception as err:
             logging.error('SSH spawn cmd error: %s' % err)
             return False
@@ -175,20 +178,18 @@ def daemonize(log_file):
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
-                store_folder = os.path.join(yac.config.get('local', 'data_dir'),
-                                            os.path.basename(ready_task['metadata']['work_folder']))
-                os.makedirs(store_folder)  # TODO OSError if restart
+                store_folder = ready_task['metadata']['local_folder']
+                os.makedirs(store_folder, exist_ok=True)  # TODO OSError if restart
                 try:
-                    yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], store_folder)
+                    yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['remote_folder'], store_folder)
                 except IOError as err:
                     logger.error('SSH download error: %s' % err)
                     # TODO handle that situation properly, re-spawn, etc.
-                    ready_task['metadata'] = dict(error='No remote data!')
-                else:
-                    ready_task['metadata'] = dict(store_folder=store_folder)
+                ready_task['metadata'] = dict(remote_folder=ready_task['metadata']['remote_folder'],
+                                              local_folder=store_folder)
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
                 logger.info(':::{} done and saved in {}'.format(ready_task['label'],
-                                                                ready_task['metadata'].get('store_folder')))
+                                                                ready_task['metadata'].get('local_folder')))
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
