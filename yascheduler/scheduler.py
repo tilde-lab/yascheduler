@@ -11,10 +11,10 @@ import pg8000
 from configparser import ConfigParser
 from datetime import datetime
 from fabric import Connection as SSH_Connection
-from yascheduler import SLEEP_INTERVAL, CONFIG_FILE
+from yascheduler import SLEEP_INTERVAL, CONFIG_FILE, REMOTE_USER
 
 RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` " \
-          "--allow-run-as-root -wd {path} /root/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
+          "--allow-run-as-root -wd {path} /usr/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
 logging.basicConfig(level=logging.INFO)
 
 
@@ -57,9 +57,13 @@ class Yascheduler(object):
         self.cursor.execute('SELECT task_id, label, metadata FROM yascheduler_tasks WHERE status=%s LIMIT %s;' % (Yascheduler.STATUS_TO_DO, num_nodes))
         return [dict(task_id=row[0], label=row[1], metadata=row[2]) for row in self.cursor.fetchall()]
 
-    def queue_get_tasks_running(self):
-        self.cursor.execute('SELECT task_id, ip FROM yascheduler_tasks WHERE status=%s;' % Yascheduler.STATUS_RUNNING)
-        return [dict(task_id=row[0], ip=row[1]) for row in self.cursor.fetchall()]
+    def queue_get_tasks(self, status):
+        if isinstance(status, int):
+            status = (status,)
+        status_string = ', '.join(['%s'] * len(status))
+        sql_statement = 'SELECT task_id, ip, status FROM yascheduler_tasks WHERE status in ({});'.format(status_string)
+        self.cursor.execute(sql_statement, status)
+        return [dict(task_id=row[0], ip=row[1], status=row[2]) for row in self.cursor.fetchall()]
 
     def queue_set_task_running(self, task_id, ip):
         self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip='%s' WHERE task_id=%s;" % (Yascheduler.STATUS_RUNNING, ip, task_id))
@@ -96,7 +100,7 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip].close()
             del self.ssh_conn_pool[ip]
         for ip in set(new_nodes) - set(old_nodes):
-            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user='root')
+            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=REMOTE_USER)
 
         assert self.ssh_conn_pool
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
@@ -144,6 +148,9 @@ class Yascheduler(object):
         self.ssh_conn_pool[ip].get(work_folder + '/INPUT', store_folder + '/INPUT')
         self.ssh_conn_pool[ip].get(work_folder + '/fort.34', store_folder + '/fort.34')
         self.ssh_conn_pool[ip].get(work_folder + '/OUTPUT', store_folder + '/OUTPUT')
+        self.ssh_conn_pool[ip].get(work_folder + '/fort.9', store_folder + '/fort.9')
+        self.ssh_conn_pool[ip].get(work_folder + '/fort.78', store_folder + '/fort.78')
+
         # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.34" "fort.98" "fort.20"
         # TODO but how to do it quickly or in the background?
         # NB recursive copying of folders is not supported :(
@@ -163,14 +170,14 @@ def daemonize(log_file):
         if sorted(yac.ssh_conn_pool.keys()) != sorted(nodes):
             yac.ssh_connect()
 
-        tasks_running = yac.queue_get_tasks_running()
+        tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
         logger.info('tasks_running: %s' % tasks_running)
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
                 store_folder = os.path.join(yac.config.get('local', 'data_dir'),
                                             os.path.basename(ready_task['metadata']['work_folder']))
-                os.mkdir(store_folder)  # TODO OSError if restart
+                os.makedirs(store_folder)  # TODO OSError if restart
                 try:
                     yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['work_folder'], store_folder)
                 except IOError as err:

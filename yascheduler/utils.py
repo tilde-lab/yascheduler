@@ -9,7 +9,7 @@ from pg8000.core import ProgrammingError
 from fabric import Connection as SSH_Connection
 import socket
 from configparser import ConfigParser
-from yascheduler import CONFIG_FILE
+from yascheduler import CONFIG_FILE, REMOTE_USER
 from yascheduler.scheduler import Yascheduler
 
 
@@ -26,7 +26,12 @@ def submit():
 
 
 def check_status():
-    print("Not implemented!")
+    config = ConfigParser()
+    config.read(CONFIG_FILE)
+    yac = Yascheduler(config)
+    tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
+    for task in tasks:
+        print('{}   {}'.format(task['task_id'], 'RUNNING' if task['status'] == yac.STATUS_RUNNING else 'QUEUED'))
 
 
 def init():
@@ -90,7 +95,7 @@ def add_node():
     parser.add_argument('host')
     args = parser.parse_args()
     try:
-        with SSH_Connection(host=args.host, user='root', connect_timeout=5) as conn:
+        with SSH_Connection(host=args.host, user=REMOTE_USER, connect_timeout=5) as conn:
             conn.run('ls')
     except socket.timeout:
         print('Host is unreachable: {}'.format(args.host))
