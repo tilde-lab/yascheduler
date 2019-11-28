@@ -4,7 +4,10 @@ Console scripts for yascheduler
 
 import os
 import sys
+import argparse
 from pg8000.core import ProgrammingError
+from fabric import Connection as SSH_Connection
+import socket
 from configparser import ConfigParser
 from yascheduler import CONFIG_FILE
 from yascheduler.scheduler import Yascheduler
@@ -79,3 +82,30 @@ def _init_db(install_path):
             print("Database already initialized!")
         else:
             print(e)
+
+
+def add_node():
+    # parse command line arguments
+    parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
+    parser.add_argument('host')
+    args = parser.parse_args()
+    try:
+        with SSH_Connection(host=args.host, user='root', connect_timeout=5) as conn:
+            conn.run('ls')
+    except socket.timeout:
+        print('Host is unreachable: {}'.format(args.host))
+        return False
+
+    config = ConfigParser()
+    config.read(CONFIG_FILE)
+    yac = Yascheduler(config)
+    # check if node is already there
+    yac.cursor.execute('SELECT * from yascheduler_nodes WHERE ip=%s;', [args.host])
+    if yac.cursor.fetchall():
+        print('Host already in DB: {}'.format(args.host))
+        return False
+    else:
+        yac.cursor.execute('INSERT INTO yascheduler_nodes (ip) VALUES (%s);', [args.host])
+        yac.connection.commit()
+        print('Added host to yascheduler: {}'.format(args.host))
+        return True

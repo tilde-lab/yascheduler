@@ -51,6 +51,7 @@ if __name__ == '__main__':
         entry_points={
           "console_scripts": ["yasubmit = yascheduler.utils:submit",
                               "yastatus = yascheduler.utils:check_status",
+                              "yaaddnode = yascheduler.utils:add_node",
                               "yainit = yascheduler.utils:init"]
         },
         cmdclass={'install': CustomInstall},
