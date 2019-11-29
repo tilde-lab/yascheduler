@@ -3,7 +3,6 @@ Console scripts for yascheduler
 """
 
 import os
-import sys
 import argparse
 from pg8000.core import ProgrammingError
 from fabric import Connection as SSH_Connection
@@ -14,18 +13,32 @@ from yascheduler.scheduler import Yascheduler
 
 
 def submit():
-    setup_input = open(sys.argv[1]).read()
-    struct_input = open(sys.argv[2]).read()
-    label = setup_input.splitlines()[0]
-
+    # parse command line arguments
+    parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
+    parser.add_argument('script')
+    args = parser.parse_args()
+    if not os.path.isfile(args.script):
+        raise ValueError("Script parameter is not a file name")
+    inputs = {}
+    with open(args.script) as f:
+        for l in f.readlines():
+            k, v = l.split()
+            inputs[k] = v
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    task_id = yac.queue_submit_task(label, dict(structure=struct_input, input=setup_input, local_folder=os.getcwd()))
+    task_id = yac.queue_submit_task(inputs['LABEL'],
+                                    {'structure': open(inputs['STRUCT']).read(),
+                                     'input': open(inputs['INPUT']).read(),
+                                     'local_folder': os.getcwd()})
+
     print("Successfully submitted task: {}".format(task_id))
 
 
 def check_status():
+    parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
+    parser.add_argument('-j', '--jobs')
+    args = parser.parse_args()
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
@@ -114,3 +127,4 @@ def add_node():
         yac.connection.commit()
         print('Added host to yascheduler: {}'.format(args.host))
         return True
+

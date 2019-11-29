@@ -49,11 +49,15 @@ if __name__ == '__main__':
             "python-daemon"
         ],
         entry_points={
-          "console_scripts": ["yasubmit = yascheduler.utils:submit",
-                              "yastatus = yascheduler.utils:check_status",
-                              "yaaddnode = yascheduler.utils:add_node",
-                              "yainit = yascheduler.utils:init"]
+            "console_scripts": [
+                "yasubmit = yascheduler.utils:submit",
+                "yastatus = yascheduler.utils:check_status",
+                "yaaddnode = yascheduler.utils:add_node",
+                "yainit = yascheduler.utils:init"
+            ],
+            "aiida.schedulers": [
+                "yascheduler = yascheduler.aiida_plugin:YaScheduler",
+            ],
         },
         cmdclass={'install': CustomInstall},
     )
-

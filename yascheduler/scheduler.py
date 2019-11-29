@@ -59,12 +59,19 @@ class Yascheduler(object):
                             (self.STATUS_TO_DO, num_nodes))
         return [dict(task_id=row[0], label=row[1], metadata=row[2]) for row in self.cursor.fetchall()]
 
-    def queue_get_tasks(self, status):
-        if isinstance(status, int):
-            status = (status,)
-        status_string = ', '.join(['%s'] * len(status))
-        sql_statement = 'SELECT task_id, ip, status FROM yascheduler_tasks WHERE status in ({});'.format(status_string)
-        self.cursor.execute(sql_statement, status)
+    def queue_get_tasks(self, jobs=None, status=None):
+        if jobs is not None and status is not None:
+            raise ValueError("jobs can be selected only by status or by task ids")
+        if jobs is None and status is None:
+            raise ValueError("jobs can only be selected by status or by task ids")
+        if status is not None:
+            query_string = 'status IN ({})'.format(', '.join(['%s'] * len(status)))
+            params = status
+        else:
+            query_string = 'task_id IN ({})'.format(', '.join(['%s'] * len(jobs)))
+            params = jobs
+        sql_statement = 'SELECT task_id, ip, status FROM yascheduler_tasks WHERE {};'.format(query_string)
+        self.cursor.execute(sql_statement, params)
         return [dict(task_id=row[0], ip=row[1], status=row[2]) for row in self.cursor.fetchall()]
 
     def queue_set_task_running(self, task_id, ip):
