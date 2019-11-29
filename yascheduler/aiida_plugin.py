@@ -4,19 +4,19 @@ Aiida plugin for yascheduler
 
 import six
 import aiida.schedulers
-from aiida.schedulers.datastructures import (JobState, NodeNumberJobResource)
+from aiida.schedulers.datastructures import (JobState, JobInfo, NodeNumberJobResource)
 
 _MAP_STATUS_YASCHEDULER = {
     'QUEUED': JobState.QUEUED,
     'RUNNING': JobState.RUNNING,
-    # 'F': JobState.DONE,
+    'FINISHED': JobState.DONE,
     # 'S': JobState.SUSPENDED,
 }
 
 
 class YaschedJobResource(NodeNumberJobResource):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *_, **kwargs):
         super(YaschedJobResource, self).__init__(**kwargs)
 
 
@@ -51,15 +51,15 @@ class YaScheduler(aiida.schedulers.Scheduler):
                 if not isinstance(jobs, (tuple, list)):
                     raise TypeError("If provided, the 'jobs' variable must be a string or a list of strings")
                 joblist = jobs
-            command.append('--jobs={}'.format(','.join(joblist)))
-        return command
+            command.append('--jobs {}'.format(' '.join(joblist)))
+        return ' '.join(command)
 
     def _get_detailed_jobinfo_command(self, jobid):
         """
         Return the command to run to get the detailed information on a job,
         even after the job has finished.
         """
-        return 'yastatus --jobs={}'.format(jobid)
+        return 'yastatus --jobs {}'.format(jobid)
 
     def _get_submit_script_header(self, job_tmpl):
         """
@@ -100,7 +100,14 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         if stderr.strip():
             self.logger.warning("Stderr when parsing joblist: {}".format(stderr.strip()))
-        job_list = [job.split() for job in '\n'.split(stdout)]
+        job_list = [job.split() for job in stdout.split('\n') if job]
+        job_infos = []
+        for job_id, status in job_list:
+            job = JobInfo()
+            job.job_id = job_id
+            job.job_state = _MAP_STATUS_YASCHEDULER[status]
+            job_infos.append(job)
+        return job_infos
 
     def _get_kill_command(self, jobid):
         """

@@ -22,8 +22,8 @@ def submit():
     inputs = {}
     with open(args.script) as f:
         for l in f.readlines():
-            k, v = l.split()
-            inputs[k] = v
+            k, v = l.split('=')
+            inputs[k.strip()] = v.strip()
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
@@ -37,14 +37,22 @@ def submit():
 
 def check_status():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
-    parser.add_argument('-j', '--jobs')
+    parser.add_argument('-j', '--jobs', required=False, default=None, nargs='*')
     args = parser.parse_args()
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
+    status = {
+        yac.STATUS_TO_DO: "QUEUED",
+        yac.STATUS_RUNNING: "RUNNING",
+        yac.STATUS_DONE: "FINISHED"
+    }
+    if args.jobs is not None:
+        tasks = yac.queue_get_tasks(jobs=args.jobs)
+    else:
+        tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
     for task in tasks:
-        print('{}   {}'.format(task['task_id'], 'RUNNING' if task['status'] == yac.STATUS_RUNNING else 'QUEUED'))
+        print('{}   {}'.format(task['task_id'], status[task['status']]))
 
 
 def init():
