@@ -67,8 +67,8 @@ class YaScheduler(aiida.schedulers.Scheduler):
         job_tmpl.
         """
         lines = []
-        if job_tmpl.label:
-            lines.append("LABEL={}".format(job_tmpl.label))
+        if job_tmpl.job_name:
+            lines.append("LABEL={}".format(job_tmpl.job_name))
         lines += ["INPUT=INPUT", "STRUCT=fort.34"]
         return "\n".join(lines)
 
@@ -85,7 +85,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         if stderr.strip():
             self.logger.warning("Stderr when submitting: {}".format(stderr.strip()))
-        return stdout.split(':').strip()
+        return stdout.split(':')[1].strip()
 
     def _parse_joblist_output(self, retval, stdout, stderr):
         """

@@ -22,8 +22,11 @@ def submit():
     inputs = {}
     with open(args.script) as f:
         for l in f.readlines():
-            k, v = l.split('=')
-            inputs[k.strip()] = v.strip()
+            try:
+                k, v = l.split('=')
+                inputs[k.strip()] = v.strip()
+            except ValueError:
+                pass
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)

@@ -157,7 +157,7 @@ class Yascheduler(object):
     def ssh_get_task(self, ip, work_folder, store_folder, remove=True):
         self.ssh_conn_pool[ip].get(work_folder + '/INPUT', store_folder + '/INPUT')
         self.ssh_conn_pool[ip].get(work_folder + '/fort.34', store_folder + '/fort.34')
-        self.ssh_conn_pool[ip].get(work_folder + '/OUTPUT', store_folder + '/OUTPUT')
+        self.ssh_conn_pool[ip].get(work_folder + '/OUTPUT', store_folder + '/crystal.out')
         self.ssh_conn_pool[ip].get(work_folder + '/fort.9', store_folder + '/fort.9')
         self.ssh_conn_pool[ip].get(work_folder + '/fort.78', store_folder + '/fort.78')
 
