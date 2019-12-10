@@ -161,7 +161,7 @@ class Yascheduler(object):
         self.ssh_conn_pool[ip].get(work_folder + '/fort.9', store_folder + '/fort.9')
         self.ssh_conn_pool[ip].get(work_folder + '/fort.78', store_folder + '/fort.78')
 
-        # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.34" "fort.98" "fort.20"
+        # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.98" "fort.20"
         # TODO but how to do it quickly or in the background?
         # NB recursive copying of folders is not supported :(
         if remove:
@@ -185,8 +185,10 @@ def daemonize(log_file):
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
-                store_folder = ready_task['metadata']['local_folder']
-                os.makedirs(store_folder, exist_ok=True)  # TODO OSError if restart
+                store_folder = ready_task['metadata'].get('local_folder') or \
+                    os.path.join(self.config.get('local', 'data_dir'),
+                                 os.path.basename(ready_task['metadata']['remote_folder']))
+                os.makedirs(store_folder, exist_ok=True) # TODO OSError if restart or invalid data_dir
                 try:
                     yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['remote_folder'], store_folder)
                 except IOError as err:

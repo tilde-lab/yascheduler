@@ -13,7 +13,6 @@ from yascheduler.scheduler import Yascheduler
 
 
 def submit():
-    # parse command line arguments
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument('script')
     args = parser.parse_args()
@@ -110,7 +109,7 @@ def _init_db(install_path):
         if "already exists" in e.args[0]["M"]:
             print("Database already initialized!")
         else:
-            print(e)
+            raise
 
 
 def add_node():
