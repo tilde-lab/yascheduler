@@ -186,7 +186,7 @@ def daemonize(log_file):
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
                 store_folder = ready_task['metadata'].get('local_folder') or \
-                    os.path.join(self.config.get('local', 'data_dir'),
+                    os.path.join(config.get('local', 'data_dir'),
                                  os.path.basename(ready_task['metadata']['remote_folder']))
                 os.makedirs(store_folder, exist_ok=True) # TODO OSError if restart or invalid data_dir
                 try:
