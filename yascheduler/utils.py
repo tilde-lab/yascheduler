@@ -8,7 +8,7 @@ from pg8000.core import ProgrammingError
 from fabric import Connection as SSH_Connection
 import socket
 from configparser import ConfigParser
-from yascheduler import CONFIG_FILE, REMOTE_USER
+from yascheduler import CONFIG_FILE
 from yascheduler.scheduler import Yascheduler
 
 
@@ -63,7 +63,7 @@ def init():
     # check for systemd (exit status is 0 if there is a process)
     has_systemd = not os.system("pidof systemd")
     if has_systemd:
-        _init_systemd(install_path)
+        _init_systemd(install_path) # NB. will be absent in *service --status-all*
     else:
         _init_sysv(install_path)
     _init_db(install_path)
@@ -117,15 +117,15 @@ def add_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument('host')
     args = parser.parse_args()
-    try:
-        with SSH_Connection(host=args.host, user=REMOTE_USER, connect_timeout=5) as conn:
-            conn.run('ls')
-    except socket.timeout:
-        print('Host is unreachable: {}'.format(args.host))
-        return False
-
     config = ConfigParser()
     config.read(CONFIG_FILE)
+    try:
+        with SSH_Connection(host=args.host, user=config.get('remote', 'user'), connect_timeout=5) as conn:
+            conn.run('ls')
+    except socket.timeout:
+        print('Host %s@%s is unreachable' % (config.get('remote', 'user'), args.host))
+        return False
+
     yac = Yascheduler(config)
     # check if node is already there
     yac.cursor.execute('SELECT * from yascheduler_nodes WHERE ip=%s;', [args.host])

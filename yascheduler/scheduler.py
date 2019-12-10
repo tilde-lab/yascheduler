@@ -12,7 +12,7 @@ import pg8000
 from configparser import ConfigParser
 from datetime import datetime
 from fabric import Connection as SSH_Connection
-from yascheduler import SLEEP_INTERVAL, CONFIG_FILE, REMOTE_USER
+from yascheduler import SLEEP_INTERVAL, CONFIG_FILE
 
 RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` " \
           "--allow-run-as-root -wd {path} /usr/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
@@ -110,7 +110,7 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip].close()
             del self.ssh_conn_pool[ip]
         for ip in set(new_nodes) - set(old_nodes):
-            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=REMOTE_USER)
+            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=self.config.get('remote', 'user'))
 
         assert self.ssh_conn_pool
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
