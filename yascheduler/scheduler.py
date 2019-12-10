@@ -132,6 +132,7 @@ class Yascheduler(object):
             tmp.flush()
             self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/INPUT')
             tmp.seek(0)
+            tmp.truncate()
             tmp.write(metadata['structure'].encode('utf-8'))
             tmp.flush()
             self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34')
