@@ -40,7 +40,7 @@ def submit():
 def check_status():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument('-j', '--jobs', required=False, default=None, nargs='*')
-    parser.add_argument('-v', '--view', required=False, default=None, nargs='?', type=bool)
+    parser.add_argument('-v', '--view', required=False, default=None, nargs='?', type=bool, const=True)
 
     args = parser.parse_args()
     config = ConfigParser()
@@ -56,7 +56,7 @@ def check_status():
     else:
         tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
 
-    if args.view:
+    if args.view and tasks:
         yac.cursor.execute('SELECT task_id, label, metadata, ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
             yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
         ))

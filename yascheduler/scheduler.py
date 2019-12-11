@@ -182,7 +182,7 @@ def daemonize(log_file):
             yac.ssh_connect()
 
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
-        logger.info('tasks_running: %s' % tasks_running)
+        logger.debug('tasks_running: %s' % tasks_running)
         for task in tasks_running:
             if not yac.ssh_check_task(task['ip']):
                 ready_task = yac.queue_get_task(task['task_id'])
