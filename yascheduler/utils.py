@@ -40,6 +40,8 @@ def submit():
 def check_status():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument('-j', '--jobs', required=False, default=None, nargs='*')
+    parser.add_argument('-v', '--view', required=False, default=None, nargs='?', type=bool)
+
     args = parser.parse_args()
     config = ConfigParser()
     config.read(CONFIG_FILE)
@@ -49,12 +51,25 @@ def check_status():
         yac.STATUS_RUNNING: "RUNNING",
         yac.STATUS_DONE: "FINISHED"
     }
-    if args.jobs is not None:
+    if args.jobs:
         tasks = yac.queue_get_tasks(jobs=args.jobs)
     else:
         tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
-    for task in tasks:
-        print('{}   {}'.format(task['task_id'], status[task['status']]))
+
+    if args.view:
+        yac.cursor.execute('SELECT task_id, label, metadata, ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
+            yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
+        ))
+        for row in yac.cursor.fetchall():
+            print(":" * 9 + "ID%s %s at %s@%s:%s" % (
+                row[0], row[1], config.get('remote', 'user'), row[3], row[2]['remote_folder']
+            ))
+            ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'))
+            result = ssh_conn.run('tail -n15 %s/OUTPUT' % row[2]['remote_folder'], hide=True)
+            print(result.stdout)
+    else:
+        for task in tasks:
+            print('{}   {}'.format(task['task_id'], status[task['status']]))
 
 
 def init():
