@@ -156,13 +156,19 @@ class Yascheduler(object):
         return Yascheduler.RUNNING_MARKER in str(result)
 
     def ssh_get_task(self, ip, work_folder, store_folder, remove=True):
-        self.ssh_conn_pool[ip].get(work_folder + '/INPUT', store_folder + '/INPUT')
-        self.ssh_conn_pool[ip].get(work_folder + '/fort.34', store_folder + '/fort.34')
-        self.ssh_conn_pool[ip].get(work_folder + '/OUTPUT', store_folder + '/crystal.out')
-        self.ssh_conn_pool[ip].get(work_folder + '/fort.9', store_folder + '/fort.9')
-        self.ssh_conn_pool[ip].get(work_folder + '/fort.78', store_folder + '/fort.78')
-
-        # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.98" "fort.20"
+        remote_local_files = {
+            'INPUT': 'INPUT',
+            'fort.34': 'fort.34',
+            'OUTPUT': '_scheduler-stderr.txt', # expected by AiiDA, FIXME!
+            'fort.9': 'fort.9'
+        }
+        for remote, local in remote_local_files.items():
+            try:
+                self.ssh_conn_pool[ip].get(work_folder + '/' + remote, store_folder + '/' + local)
+            except IOError as err:
+                # TODO handle that situation properly
+                logging.error('Cannot scp %s: %s' % (work_folder + '/' + remote, err))
+        # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.98", "fort.78"
         # TODO but how to do it quickly or in the background?
         # NB recursive copying of folders is not supported :(
         if remove:
@@ -190,11 +196,7 @@ def daemonize(log_file):
                     os.path.join(config.get('local', 'data_dir'),
                                  os.path.basename(ready_task['metadata']['remote_folder']))
                 os.makedirs(store_folder, exist_ok=True) # TODO OSError if restart or invalid data_dir
-                try:
-                    yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['remote_folder'], store_folder)
-                except IOError as err:
-                    logger.error('SSH download error: %s' % err)
-                    # TODO handle that situation properly, re-spawn, etc.
+                yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['remote_folder'], store_folder)
                 ready_task['metadata'] = dict(remote_folder=ready_task['metadata']['remote_folder'],
                                               local_folder=store_folder)
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
