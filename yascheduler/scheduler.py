@@ -89,7 +89,7 @@ class Yascheduler(object):
         assert metadata['structure']
         metadata['remote_folder'] = os.path.join(self.config.get('remote', 'data_dir'),
                                                  '_'.join([datetime.now().strftime('%Y%m%d_%H%M%S'),
-                                                           ''.join(random.choices(string.ascii_lowercase, k=4))]))
+                                                           ''.join([random.choice(string.ascii_lowercase) for _ in range(4)])]))
 
         self.cursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
             VALUES ('{label}', '{metadata}', NULL, {status})
