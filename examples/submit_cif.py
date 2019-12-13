@@ -27,7 +27,7 @@ print('symprec = %s' % symprec)
 label = sys.argv[1].split(os.sep)[-1].split('.')[0] + \
     " " + spglib.get_spacegroup(ase_obj, symprec=symprec)
 
-ase_obj, error = refine(ase_obj, accuracy=symprec)
+ase_obj, error = refine(ase_obj, accuracy=symprec, conventional_cell=True)
 assert not error, error
 
 yaconfig = ConfigParser()
