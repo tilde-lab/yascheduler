@@ -15,6 +15,7 @@ from yascheduler.scheduler import Yascheduler
 def submit():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument('script')
+
     args = parser.parse_args()
     if not os.path.isfile(args.script):
         raise ValueError("Script parameter is not a file name")
@@ -61,7 +62,7 @@ def check_status():
             yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
         ))
         for row in yac.cursor.fetchall():
-            print(":" * 9 + "ID%s %s at %s@%s:%s" % (
+            print("|" * 20 + "ID%s %s at %s@%s:%s" % (
                 row[0], row[1], config.get('remote', 'user'), row[3], row[2]['remote_folder']
             ))
             ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'))
@@ -128,9 +129,10 @@ def _init_db(install_path):
 
 
 def add_node():
-    # parse command line arguments
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument('host')
+    parser.add_argument('--remove', required=False, default=None, nargs='?', type=bool, const=True)
+
     args = parser.parse_args()
     config = ConfigParser()
     config.read(CONFIG_FILE)
@@ -142,7 +144,12 @@ def add_node():
         return False
 
     yac = Yascheduler(config)
-    # check if node is already there
+    if args.remove:
+        yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
+        yac.connection.commit()
+        print('Removed host from yascheduler: {}'.format(args.host))
+        return True
+
     yac.cursor.execute('SELECT * from yascheduler_nodes WHERE ip=%s;', [args.host])
     if yac.cursor.fetchall():
         print('Host already in DB: {}'.format(args.host))
@@ -152,4 +159,3 @@ def add_node():
         yac.connection.commit()
         print('Added host to yascheduler: {}'.format(args.host))
         return True
-
