@@ -25,6 +25,7 @@ class Yascheduler(object):
     STATUS_TO_DO = 0
     STATUS_RUNNING = 1
     STATUS_DONE = 2
+    STATUS_DETACHED = 9
 
     RUNNING_MARKER = 'Pcrystal'
     CHECK_CMD = 'top -b -n 1 > /tmp/top.tmp && head -n27 /tmp/top.tmp | tail -n20'

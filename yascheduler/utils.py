@@ -49,7 +49,8 @@ def check_status():
     status = {
         yac.STATUS_TO_DO: "QUEUED",
         yac.STATUS_RUNNING: "RUNNING",
-        yac.STATUS_DONE: "FINISHED"
+        yac.STATUS_DONE: "FINISHED",
+        yac.STATUS_DETACHED: "QUEUED_HELD"
     }
     if args.jobs:
         tasks = yac.queue_get_tasks(jobs=args.jobs)
