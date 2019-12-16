@@ -14,8 +14,10 @@ from datetime import datetime
 from fabric import Connection as SSH_Connection
 from yascheduler import SLEEP_INTERVAL, CONFIG_FILE
 
-RUN_CMD = "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` " \
+
+RUN_CMD = "nohup /usr/bin/mpirun -np {ncpus} " \
           "--allow-run-as-root -wd {path} /usr/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
+# NB default ncpus: `grep -c ^processor /proc/cpuinfo`
 logging.basicConfig(level=logging.INFO)
 
 
@@ -46,6 +48,10 @@ class Yascheduler(object):
     def queue_get_free_nodes(self, all_nodes, tasks_running):
         running_nodes = set([task['ip'] for task in tasks_running])
         return [ip for ip in all_nodes if ip not in running_nodes]
+
+    def queue_get_resources(self):
+        self.cursor.execute('SELECT ip, ncpus FROM yascheduler_nodes;')
+        return {row[0]: row[1] for row in self.cursor.fetchall()}
 
     def queue_get_task(self, task_id):
         self.cursor.execute('SELECT label, metadata, ip, status FROM yascheduler_tasks WHERE task_id=%s;' % task_id)
@@ -115,8 +121,8 @@ class Yascheduler(object):
         assert self.ssh_conn_pool
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
 
-    def ssh_run_task(self, ip, label, metadata):
-        assert not self.ssh_check_task(ip)  # TODO handle this situation
+    def ssh_run_task(self, ip, ncpus, label, metadata):
+        assert not self.ssh_check_task(ip) # TODO handle this situation
         assert metadata['remote_folder']
         assert metadata['input']
         assert metadata['structure']
@@ -138,7 +144,10 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34')
 
         try:
-            self.ssh_conn_pool[ip].run(RUN_CMD.format(path=metadata['remote_folder']), hide=True)
+            self.ssh_conn_pool[ip].run(RUN_CMD.format(
+                path=metadata['remote_folder'],
+                ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`'
+            ), hide=True)
         except Exception as err:
             logging.error('SSH spawn cmd error: %s' % err)
             return False
@@ -168,6 +177,7 @@ class Yascheduler(object):
             except IOError as err:
                 # TODO handle that situation properly
                 logging.error('Cannot scp %s: %s' % (work_folder + '/' + remote, err))
+
         # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.98", "fort.78"
         # TODO but how to do it quickly or in the background?
         # NB recursive copying of folders is not supported :(
@@ -183,7 +193,8 @@ def daemonize(log_file):
     yac.ssh_connect()
 
     while True:
-        nodes = yac.queue_get_all_nodes()
+        resources = yac.queue_get_resources()
+        nodes = resources.keys()
         if sorted(yac.ssh_conn_pool.keys()) != sorted(nodes):
             yac.ssh_connect()
 
@@ -210,7 +221,7 @@ def daemonize(log_file):
                 logger.info(':::to do: %s' % task['label'])
                 ip = random.choice(yac.queue_get_free_nodes(nodes, tasks_running))
 
-                if yac.ssh_run_task(ip, task['label'], task['metadata']):
+                if yac.ssh_run_task(ip, resources[ip], task['label'], task['metadata']):
                     yac.queue_set_task_running(task['task_id'], ip)
                     tasks_running.append(dict(task_id=task['task_id'], ip=ip))
 

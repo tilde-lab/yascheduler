@@ -1,4 +1,4 @@
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 CONFIG_FILE = '/etc/yascheduler/yascheduler.conf'
 LOG_FILE = '/var/log/yascheduler.log'

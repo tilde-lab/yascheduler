@@ -52,6 +52,7 @@ if __name__ == '__main__':
             "console_scripts": [
                 "yasubmit = yascheduler.utils:submit",
                 "yastatus = yascheduler.utils:check_status",
+                "yanodes = yascheduler.utils:show_nodes",
                 "yaaddnode = yascheduler.utils:add_node",
                 "yainit = yascheduler.utils:init"
             ],

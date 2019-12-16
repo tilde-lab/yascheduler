@@ -1,5 +1,6 @@
 CREATE TABLE yascheduler_nodes (
-    ip VARCHAR(15) UNIQUE
+    ip VARCHAR(15) UNIQUE,
+    ncpus SMALLINT DEFAULT NULL
 );
 
 CREATE TABLE yascheduler_tasks (

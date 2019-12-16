@@ -1,7 +1,6 @@
 """
 Console scripts for yascheduler
 """
-
 import os
 import argparse
 from pg8000.core import ProgrammingError
@@ -128,6 +127,15 @@ def _init_db(install_path):
             raise
 
 
+def show_nodes():
+    config = ConfigParser()
+    config.read(CONFIG_FILE)
+    yac = Yascheduler(config)
+    yac.cursor.execute('SELECT * from yascheduler_nodes;')
+    for item in yac.cursor.fetchall():
+        print(item)
+
+
 def add_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument('host')
@@ -136,6 +144,12 @@ def add_node():
     args = parser.parse_args()
     config = ConfigParser()
     config.read(CONFIG_FILE)
+
+    ncpus = None
+    if '~' in args.host:
+        args.host, ncpus = args.host.split('~')
+        ncpus = int(ncpus)
+
     try:
         with SSH_Connection(host=args.host, user=config.get('remote', 'user'), connect_timeout=5) as conn:
             conn.run('ls')
@@ -155,7 +169,7 @@ def add_node():
         print('Host already in DB: {}'.format(args.host))
         return False
     else:
-        yac.cursor.execute('INSERT INTO yascheduler_nodes (ip) VALUES (%s);', [args.host])
+        yac.cursor.execute('INSERT INTO yascheduler_nodes (ip, ncpus) VALUES (%s, %s);', [args.host, ncpus])
         yac.connection.commit()
         print('Added host to yascheduler: {}'.format(args.host))
         return True
