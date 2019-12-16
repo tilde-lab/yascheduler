@@ -132,9 +132,9 @@ def show_nodes():
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    yac.cursor.execute('SELECT * from yascheduler_nodes;')
+    yac.cursor.execute('SELECT ip, ncpus from yascheduler_nodes;')
     for item in yac.cursor.fetchall():
-        print(item)
+        print("ip=%s ncpus=%s" % (item[0], item[1] or 'MAX'))
 
 
 def add_node():
