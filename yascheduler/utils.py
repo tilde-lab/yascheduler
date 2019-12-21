@@ -62,7 +62,7 @@ def check_status():
             yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
         ))
         for row in yac.cursor.fetchall():
-            print("|" * 20 + "ID%s %s at %s@%s:%s" % (
+            print("*" * 20 + "ID%s %s at %s@%s:%s" % (
                 row[0], row[1], config.get('remote', 'user'), row[3], row[2]['remote_folder']
             ))
             ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'))
@@ -151,15 +151,14 @@ def add_node():
         args.host, ncpus = args.host.split('~')
         ncpus = int(ncpus)
 
-    try:
-        with SSH_Connection(host=args.host, user=config.get('remote', 'user'), connect_timeout=5) as conn:
-            conn.run('ls')
-    except socket.timeout:
-        print('Host %s@%s is unreachable' % (config.get('remote', 'user'), args.host))
-        return False
-
     yac = Yascheduler(config)
     if args.remove:
+        yac.cursor.execute('SELECT task_id from yascheduler_tasks WHERE ip=%s AND status=%s;', [args.host, yac.STATUS_RUNNING])
+        result = yac.cursor.fetchall() or []
+        for item in result: # only one item is expected, but here we also try to account inconsistency case
+            yac.cursor.execute('UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;', [yac.STATUS_DETACHED, item[0]])
+            print('An associated task %s is now detached!')
+
         yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
         yac.connection.commit()
         print('Removed host from yascheduler: {}'.format(args.host))
@@ -169,8 +168,15 @@ def add_node():
     if yac.cursor.fetchall():
         print('Host already in DB: {}'.format(args.host))
         return False
-    else:
-        yac.cursor.execute('INSERT INTO yascheduler_nodes (ip, ncpus) VALUES (%s, %s);', [args.host, ncpus])
-        yac.connection.commit()
-        print('Added host to yascheduler: {}'.format(args.host))
-        return True
+
+    try:
+        with SSH_Connection(host=args.host, user=config.get('remote', 'user'), connect_timeout=5) as conn:
+            conn.run('ls')
+    except socket.timeout:
+        print('Host %s@%s is unreachable' % (config.get('remote', 'user'), args.host))
+        return False
+
+    yac.cursor.execute('INSERT INTO yascheduler_nodes (ip, ncpus) VALUES (%s, %s);', [args.host, ncpus])
+    yac.connection.commit()
+    print('Added host to yascheduler: {}'.format(args.host))
+    return True

@@ -1,6 +1,4 @@
-"""
-KNOWN BUGS: exits on Enter press
-"""
+
 import os
 import random
 import json
@@ -103,7 +101,7 @@ class Yascheduler(object):
             RETURNING task_id;""".format(
             label=label,
             metadata=json.dumps(metadata),
-            status=Yascheduler.STATUS_TO_DO
+            status=self.STATUS_TO_DO
         ))
         self.connection.commit()
         logging.info(':::submitted: %s' % label)
