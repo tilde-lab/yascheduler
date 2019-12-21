@@ -41,15 +41,15 @@ def get_input(elements, bs_repo, label):
     setup = {
         "title": label,
         "scf": {
-            "k_points": (4, 4),
-            "dft": {"xc": ("PBE", "PBE")},
-            "numerical": {"TOLDEE": 8, "MAXCYCLE": 50, "TOLINTEG": (6, 6, 6, 6, 12)},
+            "k_points": (8, 16),
+            "dft": {"xc": "PBE0", "grid": "XLGRID", "numerical": {"TOLLDENS": 8, "TOLLGRID": 16}},
+            "numerical": {"TOLDEE": 9, "MAXCYCLE": 75},
             "post_scf": ["PPAN"]
         },
         "geometry": {
             "optimise": {
                 "type": "FULLOPTG",
-                "convergence": {"TOLDEE": 8, "MAXCYCLE": 50}
+                "convergence": {"TOLDEE": 9, "MAXCYCLE": 75}
             }
         }
     }
