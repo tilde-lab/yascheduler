@@ -121,7 +121,10 @@ class Yascheduler(object):
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
-        assert not self.ssh_check_task(ip) # TODO handle this situation
+        assert not self.ssh_check_task(ip), \
+            "Cannot run the task %s at host %s, as this host is already occupied with another task!" % (
+            label, ip) # TODO handle this situation
+
         assert metadata['remote_folder']
         assert metadata['input']
         assert metadata['structure']
@@ -217,7 +220,7 @@ def daemonize(log_file):
 
         if len(tasks_running) < len(nodes):
             for task in yac.queue_get_tasks_to_do(len(nodes) - len(tasks_running)):
-                logger.info(':::to do: %s' % task['label'])
+                logger.info(':::submitting: %s' % task['label'])
                 ip = random.choice(yac.queue_get_free_nodes(nodes, tasks_running))
 
                 if yac.ssh_run_task(ip, resources[ip], task['label'], task['metadata']):

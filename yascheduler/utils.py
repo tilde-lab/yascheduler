@@ -171,7 +171,9 @@ def add_node():
 
     try:
         with SSH_Connection(host=args.host, user=config.get('remote', 'user'), connect_timeout=5) as conn:
-            conn.run('ls')
+            result = conn.run(yac.CHECK_CMD, hide=True)
+            assert yac.RUNNING_MARKER not in str(result), \
+            'Cannot add a busy resourse %s@%s' % (config.get('remote', 'user'), args.host)
     except socket.timeout:
         print('Host %s@%s is unreachable' % (config.get('remote', 'user'), args.host))
         return False
