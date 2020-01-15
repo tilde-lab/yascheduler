@@ -157,7 +157,7 @@ def add_node():
         result = yac.cursor.fetchall() or []
         for item in result: # only one item is expected, but here we also try to account inconsistency case
             yac.cursor.execute('UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;', [yac.STATUS_DETACHED, item[0]])
-            print('An associated task %s is now detached!' % item[0])
+            print('An associated task %s at %s is now detached!' % (item[0], args.host))
 
         yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
         yac.connection.commit()
