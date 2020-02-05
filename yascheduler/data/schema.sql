@@ -1,6 +1,7 @@
 CREATE TABLE yascheduler_nodes (
     ip VARCHAR(15) UNIQUE,
-    ncpus SMALLINT DEFAULT NULL
+    ncpus SMALLINT DEFAULT NULL,
+    enabled BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE yascheduler_tasks (
@@ -12,4 +13,4 @@ CREATE TABLE yascheduler_tasks (
 );
 CREATE SEQUENCE task_id_seq START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
 ALTER SEQUENCE task_id_seq OWNED BY yascheduler_tasks.task_id;
-ALTER TABLE ONLY yascheduler_tasks ALTER COLUMN task_id SET DEFAULT nextval('task_id_seq'::regclass)
+ALTER TABLE ONLY yascheduler_tasks ALTER COLUMN task_id SET DEFAULT nextval('task_id_seq'::regclass);

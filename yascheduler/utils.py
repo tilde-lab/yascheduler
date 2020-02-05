@@ -41,16 +41,16 @@ def check_status():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument('-j', '--jobs', required=False, default=None, nargs='*')
     parser.add_argument('-v', '--view', required=False, default=None, nargs='?', type=bool, const=True)
+    parser.add_argument('-i', '--info', required=False, default=None, nargs='?', type=bool, const=True)
 
     args = parser.parse_args()
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    status = {
+    statuses = {
         yac.STATUS_TO_DO: "QUEUED",
         yac.STATUS_RUNNING: "RUNNING",
-        yac.STATUS_DONE: "FINISHED",
-        yac.STATUS_DETACHED: "QUEUED_HELD"
+        yac.STATUS_DONE: "FINISHED"
     }
     if args.jobs:
         tasks = yac.queue_get_tasks(jobs=args.jobs)
@@ -68,9 +68,14 @@ def check_status():
             ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'))
             result = ssh_conn.run('tail -n15 %s/OUTPUT' % row[2]['remote_folder'], hide=True)
             print(result.stdout)
+
+    elif args.info:
+        for task in tasks:
+            print('task_id={} status={} ip={}'.format(task['task_id'], statuses[task['status']], task['ip']))
+
     else:
         for task in tasks:
-            print('{}   {}'.format(task['task_id'], status[task['status']]))
+            print('{}   {}'.format(task['task_id'], statuses[task['status']]))
 
 
 def init():
@@ -132,15 +137,22 @@ def show_nodes():
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    yac.cursor.execute('SELECT ip, ncpus from yascheduler_nodes;')
+
+    yac.cursor.execute('SELECT ip, label FROM yascheduler_tasks WHERE status=%s;', [yac.STATUS_RUNNING])
+    tasks_running = {row[0]: row[1] for row in yac.cursor.fetchall()}
+
+    yac.cursor.execute('SELECT ip, ncpus, enabled from yascheduler_nodes;')
     for item in yac.cursor.fetchall():
-        print("ip=%s ncpus=%s" % (item[0], item[1] or 'MAX'))
+        print("ip=%s ncpus=%s enabled=%s occupied_by=%s" % (
+            item[0], item[1] or 'MAX', item[2], tasks_running.get(item[0], 'none')
+        ))
 
 
 def add_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
-    parser.add_argument('host')
-    parser.add_argument('--remove', required=False, default=None, nargs='?', type=bool, const=True)
+    parser.add_argument('host', help='IP[~ncpus]')
+    parser.add_argument('--remove-soft', required=False, default=None, nargs='?', type=bool, const=True, help='Remove IP delayed')
+    parser.add_argument('--remove-hard', required=False, default=None, nargs='?', type=bool, const=True, help='Remove IP immediate')
 
     args = parser.parse_args()
     config = ConfigParser()
@@ -152,17 +164,34 @@ def add_node():
         ncpus = int(ncpus)
 
     yac = Yascheduler(config)
-    if args.remove:
+
+    if args.remove_hard:
         yac.cursor.execute('SELECT task_id from yascheduler_tasks WHERE ip=%s AND status=%s;', [args.host, yac.STATUS_RUNNING])
         result = yac.cursor.fetchall() or []
-        for item in result: # only one item is expected, but here we also try to account inconsistency case
-            yac.cursor.execute('UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;', [yac.STATUS_DETACHED, item[0]])
-            print('An associated task %s at %s is now detached!' % (item[0], args.host))
+        for item in result: # only one item is expected, but here we also account inconsistency case
+            yac.cursor.execute('UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;', [yac.STATUS_DONE, item[0]])
+            print('An associated task %s at %s is now marked done!' % (item[0], args.host))
 
         yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
         yac.connection.commit()
         print('Removed host from yascheduler: {}'.format(args.host))
         return True
+
+    elif args.remove_soft:
+        yac.cursor.execute('SELECT task_id from yascheduler_tasks WHERE ip=%s AND status=%s;', [args.host, yac.STATUS_RUNNING])
+        if yac.cursor.fetchall():
+            print('A task associated, prevent from assigning the new tasks')
+            yac.cursor.execute('UPDATE yascheduler_nodes SET enabled=FALSE WHERE ip=%s;', [args.host])
+            yac.connection.commit()
+            print('Prevented from assigning the new tasks: {}'.format(args.host))
+            return True
+
+        else:
+            print('No tasks associated, remove node immediately')
+            yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
+            yac.connection.commit()
+            print('Removed host from yascheduler: {}'.format(args.host))
+            return True
 
     yac.cursor.execute('SELECT * from yascheduler_nodes WHERE ip=%s;', [args.host])
     if yac.cursor.fetchall():

@@ -9,9 +9,7 @@ from aiida.schedulers.datastructures import (JobState, JobInfo, NodeNumberJobRes
 _MAP_STATUS_YASCHEDULER = {
     'QUEUED': JobState.QUEUED,
     'RUNNING': JobState.RUNNING,
-    'FINISHED': JobState.DONE,
-    'QUEUED_HELD': JobState.QUEUED_HELD,
-    # 'S': JobState.SUSPENDED,
+    'FINISHED': JobState.DONE
 }
 
 

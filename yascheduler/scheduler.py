@@ -23,7 +23,6 @@ class Yascheduler(object):
     STATUS_TO_DO = 0
     STATUS_RUNNING = 1
     STATUS_DONE = 2
-    STATUS_DETACHED = 9
 
     RUNNING_MARKER = 'Pcrystal'
     CHECK_CMD = 'top -b -n 1 > /tmp/top.tmp && head -n27 /tmp/top.tmp | tail -n20'
@@ -40,13 +39,11 @@ class Yascheduler(object):
         self.cursor = self.connection.cursor()
         self.ssh_conn_pool = {}
 
-    def queue_get_all_nodes(self):
-        self.cursor.execute('SELECT ip FROM yascheduler_nodes;')
+    def queue_get_free_nodes(self):
+        self.cursor.execute(
+        'SELECT ip FROM yascheduler_nodes WHERE enabled=TRUE AND ip NOT IN (SELECT ip FROM yascheduler_tasks WHERE status=%s);',
+        [self.STATUS_RUNNING])
         return [row[0] for row in self.cursor.fetchall()]
-
-    def queue_get_free_nodes(self, all_nodes, tasks_running):
-        running_nodes = set([task['ip'] for task in tasks_running])
-        return [ip for ip in all_nodes if ip not in running_nodes]
 
     def queue_get_resources(self):
         self.cursor.execute('SELECT ip, ncpus FROM yascheduler_nodes;')
@@ -75,6 +72,7 @@ class Yascheduler(object):
         else:
             query_string = 'task_id IN ({})'.format(', '.join(['%s'] * len(jobs)))
             params = jobs
+
         sql_statement = 'SELECT task_id, ip, status FROM yascheduler_tasks WHERE {};'.format(query_string)
         self.cursor.execute(sql_statement, params)
         return [dict(task_id=row[0], ip=row[1], status=row[2]) for row in self.cursor.fetchall()]
@@ -108,8 +106,8 @@ class Yascheduler(object):
         return self.cursor.fetchone()[0]
 
     def ssh_connect(self):
-        new_nodes = self.queue_get_all_nodes()
-        old_nodes = self.ssh_conn_pool.keys()
+        new_nodes = self.queue_get_resources().keys()
+        old_nodes =         self.ssh_conn_pool.keys()
 
         for ip in set(old_nodes) - set(new_nodes):
             self.ssh_conn_pool[ip].close()
@@ -117,7 +115,7 @@ class Yascheduler(object):
         for ip in set(new_nodes) - set(old_nodes):
             self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=self.config.get('remote', 'user'))
 
-        assert self.ssh_conn_pool
+        assert self.ssh_conn_pool, 'No work nodes set'
         logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
@@ -193,7 +191,6 @@ def daemonize(log_file):
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    yac.ssh_connect()
 
     while True:
         resources = yac.queue_get_resources()
@@ -203,9 +200,9 @@ def daemonize(log_file):
 
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
         logger.debug('tasks_running: %s' % tasks_running)
-        for task in tasks_running:
-            if not yac.ssh_check_task(task['ip']):
-                ready_task = yac.queue_get_task(task['task_id'])
+        for n in range(len(tasks_running) - 1, 0, -1):
+            if not yac.ssh_check_task(tasks_running[n]['ip']):
+                ready_task = yac.queue_get_task(tasks_running[n]['task_id'])
                 store_folder = ready_task['metadata'].get('local_folder') or \
                     os.path.join(config.get('local', 'data_dir'),
                                  os.path.basename(ready_task['metadata']['remote_folder']))
@@ -219,14 +216,16 @@ def daemonize(log_file):
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
+                tasks_running.pop(n)
+
         if len(tasks_running) < len(nodes):
+            free_nodes = yac.queue_get_free_nodes()
             for task in yac.queue_get_tasks_to_do(len(nodes) - len(tasks_running)):
                 logger.info(':::submitting: %s' % task['label'])
-                ip = random.choice(yac.queue_get_free_nodes(nodes, tasks_running))
+                ip = random.choice(free_nodes)
 
                 if yac.ssh_run_task(ip, resources[ip], task['label'], task['metadata']):
                     yac.queue_set_task_running(task['task_id'], ip)
-                    tasks_running.append(dict(task_id=task['task_id'], ip=ip))
 
         time.sleep(SLEEP_INTERVAL)
 
