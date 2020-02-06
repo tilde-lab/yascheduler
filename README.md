@@ -1,6 +1,5 @@
-=====================
-Yet another scheduler
-=====================
+Yet another computational scheduler
+==========
 
 **Yascheduler** is a simple job scheduler designed specifically for submitting _ab initio_ calculations and copying back results from computing clouds.
 

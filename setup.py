@@ -39,7 +39,7 @@ if __name__ == '__main__':
         author="Evgeny Blokhin",
         author_email="eb@tilde.pro",
         description="Yet another scheduler",
-        long_description=open('README.rst').read(),
+        long_description=open('README.md').read(),
         license="MIT",
         packages=find_packages(),
         package_data={'yascheduler': ['data/*']},
