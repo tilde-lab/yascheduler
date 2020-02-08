@@ -39,15 +39,9 @@ class Yascheduler(object):
         self.cursor = self.connection.cursor()
         self.ssh_conn_pool = {}
 
-    def queue_get_free_nodes(self):
-        self.cursor.execute(
-        'SELECT ip FROM yascheduler_nodes WHERE enabled=TRUE AND ip NOT IN (SELECT ip FROM yascheduler_tasks WHERE status=%s);',
-        [self.STATUS_RUNNING])
-        return [row[0] for row in self.cursor.fetchall()]
-
     def queue_get_resources(self):
-        self.cursor.execute('SELECT ip, ncpus FROM yascheduler_nodes;')
-        return {row[0]: row[1] for row in self.cursor.fetchall()}
+        self.cursor.execute('SELECT ip, ncpus, enabled FROM yascheduler_nodes;')
+        return self.cursor.fetchall()
 
     def queue_get_task(self, task_id):
         self.cursor.execute('SELECT label, metadata, ip, status FROM yascheduler_tasks WHERE task_id=%s;' % task_id)
@@ -73,9 +67,9 @@ class Yascheduler(object):
             query_string = 'task_id IN ({})'.format(', '.join(['%s'] * len(jobs)))
             params = jobs
 
-        sql_statement = 'SELECT task_id, ip, status FROM yascheduler_tasks WHERE {};'.format(query_string)
+        sql_statement = 'SELECT task_id, label, ip, status FROM yascheduler_tasks WHERE {};'.format(query_string)
         self.cursor.execute(sql_statement, params)
-        return [dict(task_id=row[0], ip=row[1], status=row[2]) for row in self.cursor.fetchall()]
+        return [dict(task_id=row[0], label=row[1], ip=row[2], status=row[3]) for row in self.cursor.fetchall()]
 
     def queue_set_task_running(self, task_id, ip):
         self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip=%s WHERE task_id=%s;",
@@ -105,9 +99,8 @@ class Yascheduler(object):
         logging.info(':::submitted: %s' % label)
         return self.cursor.fetchone()[0]
 
-    def ssh_connect(self):
-        new_nodes = self.queue_get_resources().keys()
-        old_nodes =         self.ssh_conn_pool.keys()
+    def ssh_connect(self, new_nodes):
+        old_nodes = self.ssh_conn_pool.keys()
 
         for ip in set(old_nodes) - set(new_nodes):
             self.ssh_conn_pool[ip].close()
@@ -116,7 +109,7 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=self.config.get('remote', 'user'))
 
         assert self.ssh_conn_pool, 'No work nodes set'
-        logging.info('New nodes: %s' % ', '.join(self.ssh_conn_pool.keys()))
+        logging.info('Nodes to watch: %s' % ', '.join(self.ssh_conn_pool.keys()))
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
         assert not self.ssh_check_task(ip), \
@@ -136,12 +129,12 @@ class Yascheduler(object):
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(metadata['input'].encode('utf-8'))
             tmp.flush()
-            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/INPUT')
+            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/INPUT') # NB beware overflown remote
             tmp.seek(0)
             tmp.truncate()
             tmp.write(metadata['structure'].encode('utf-8'))
             tmp.flush()
-            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34')
+            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34') # NB beware overflown remote
 
         try:
             self.ssh_conn_pool[ip].run(RUN_CMD.format(
@@ -155,7 +148,7 @@ class Yascheduler(object):
         return True
 
     def ssh_check_task(self, ip):
-        assert ip in self.ssh_conn_pool
+        assert ip in self.ssh_conn_pool, "Node %s was referred by active task, however absent in node list" % ip
         try:
             result = self.ssh_conn_pool[ip].run(Yascheduler.CHECK_CMD, hide=True)
         except Exception as err:
@@ -186,7 +179,7 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip].run('rm -rf %s' % work_folder, hide=True)
 
 
-def daemonize(log_file):
+def daemonize(log_file=None):
     logger = get_logger(log_file)
     config = ConfigParser()
     config.read(CONFIG_FILE)
@@ -194,15 +187,20 @@ def daemonize(log_file):
 
     while True:
         resources = yac.queue_get_resources()
-        nodes = resources.keys()
-        if sorted(yac.ssh_conn_pool.keys()) != sorted(nodes):
-            yac.ssh_connect()
+        all_nodes = [item[0] for item in resources]
+        if sorted(yac.ssh_conn_pool.keys()) != sorted(all_nodes):
+            yac.ssh_connect(all_nodes)
 
+        enabled_nodes = {item[0]: item[1] for item in resources if item[2]}
+        free_nodes = list(enabled_nodes.keys())
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
-        logger.debug('tasks_running: %s' % tasks_running)
-        for n in range(len(tasks_running) - 1, 0, -1):
-            if not yac.ssh_check_task(tasks_running[n]['ip']):
-                ready_task = yac.queue_get_task(tasks_running[n]['task_id'])
+        logger.info('tasks_running: %s' % tasks_running)
+        for task in tasks_running:
+            if yac.ssh_check_task(task['ip']):
+                try: free_nodes.remove(task['ip'])
+                except ValueError: pass
+            else:
+                ready_task = yac.queue_get_task(task['task_id'])
                 store_folder = ready_task['metadata'].get('local_folder') or \
                     os.path.join(config.get('local', 'data_dir'),
                                  os.path.basename(ready_task['metadata']['remote_folder']))
@@ -216,15 +214,13 @@ def daemonize(log_file):
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
-                tasks_running.pop(n)
+        if free_nodes:
+            for task in yac.queue_get_tasks_to_do(len(free_nodes)):
+                random.shuffle(free_nodes)
+                ip = free_nodes.pop()
+                logger.info(':::submitting task_id=%s %s to %s' % (task['task_id'], task['label'], ip))
 
-        if len(tasks_running) < len(nodes):
-            free_nodes = yac.queue_get_free_nodes()
-            for task in yac.queue_get_tasks_to_do(len(nodes) - len(tasks_running)):
-                logger.info(':::submitting: %s' % task['label'])
-                ip = random.choice(free_nodes)
-
-                if yac.ssh_run_task(ip, resources[ip], task['label'], task['metadata']):
+                if yac.ssh_run_task(ip, enabled_nodes[ip], task['label'], task['metadata']):
                     yac.queue_set_task_running(task['task_id'], ip)
 
         time.sleep(SLEEP_INTERVAL)
@@ -234,11 +230,15 @@ def get_logger(log_file):
     logger = logging.getLogger('yascheduler')
     logger.setLevel(logging.INFO)
 
-    fh = logging.FileHandler(log_file)
-    fh.setLevel(logging.INFO)
-    formatstr = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    formatter = logging.Formatter(formatstr)
-    fh.setFormatter(formatter)
+    if log_file:
+        fh = logging.FileHandler(log_file)
+        fh.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
 
-    logger.addHandler(fh)
     return logger
+
+
+if __name__ == "__main__":
+    daemonize()
