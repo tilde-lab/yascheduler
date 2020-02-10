@@ -15,3 +15,17 @@ Installation by `pip` is preferred (clone the repo first before it gets on PyPI)
 The installation procedure creates the configuration file located at `/etc/yascheduler/yascheduler.conf`.
 The file contains credentials for Postgres database access as well as several directories. Please check
 and amend the file with the correct credentials. The database should then be initialized with `yainit` script.
+
+AiiDA integration
+------------
+
+```
+    pip install --upgrade paramiko
+    ssh aiidauser@localhost # important
+    reentry scan
+    verdi computer setup
+    verdi computer test $COMPUTER
+    verdi code setup
+```
+
+See also https://github.com/mpds-io/ansible-mpds

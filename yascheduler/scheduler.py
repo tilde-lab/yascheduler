@@ -194,7 +194,7 @@ def daemonize(log_file=None):
         enabled_nodes = {item[0]: item[1] for item in resources if item[2]}
         free_nodes = list(enabled_nodes.keys())
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
-        logger.info('tasks_running: %s' % tasks_running)
+        logger.debug('tasks_running: %s' % tasks_running)
         for task in tasks_running:
             if yac.ssh_check_task(task['ip']):
                 try: free_nodes.remove(task['ip'])

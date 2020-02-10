@@ -127,13 +127,14 @@ def _init_db(install_path):
     schema = open(os.path.join(install_path, 'data', 'schema.sql')).read()
     try:
         for line in schema.split(';'):
+            if not line:
+                continue
             yac.cursor.execute(line)
         yac.connection.commit()
     except ProgrammingError as e:
-        if "already exists" in e.args[0]["M"]:
+        if "already exists" in str(e.args[0]):
             print("Database already initialized!")
-        else:
-            raise
+        raise
 
 
 def show_nodes():
