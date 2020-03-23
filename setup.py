@@ -46,7 +46,9 @@ if __name__ == '__main__':
         install_requires=[
             "pg8000",
             "fabric",
-            "python-daemon"
+            "python-daemon",
+            "hcloud",
+            "upcloud_api"
         ],
         entry_points={
             "console_scripts": [

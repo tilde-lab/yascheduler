@@ -1,3 +1,6 @@
 pg8000
 fabric
 python-daemon
+
+hcloud
+upcloud_api

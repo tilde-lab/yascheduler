@@ -6,11 +6,14 @@ import time
 import tempfile
 import string
 import logging
-import pg8000
+import socket
 from configparser import ConfigParser
 from datetime import datetime
+from collections import Counter
+
 from fabric import Connection as SSH_Connection
-from yascheduler import SLEEP_INTERVAL, CONFIG_FILE
+from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
+from yascheduler.clouds import CloudAPIManager
 
 
 RUN_CMD = "nohup /usr/bin/mpirun -np {ncpus} " \
@@ -29,18 +32,13 @@ class Yascheduler(object):
 
     def __init__(self, config):
         self.config = config
-        self.connection = pg8000.connect(
-            user=self.config.get('db', 'user'),
-            password=self.config.get('db', 'password'),
-            database=self.config.get('db', 'database'),
-            host=self.config.get('db', 'host'),
-            port=self.config.getint('db', 'port')
-        )
-        self.cursor = self.connection.cursor()
+        self.connection, self.cursor = connect_db(config)
         self.ssh_conn_pool = {}
+        self.ssh_custom_key = {}
+        self.clouds = None
 
     def queue_get_resources(self):
-        self.cursor.execute('SELECT ip, ncpus, enabled FROM yascheduler_nodes;')
+        self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;')
         return self.cursor.fetchall()
 
     def queue_get_task(self, task_id):
@@ -106,10 +104,12 @@ class Yascheduler(object):
             self.ssh_conn_pool[ip].close()
             del self.ssh_conn_pool[ip]
         for ip in set(new_nodes) - set(old_nodes):
-            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=self.config.get('remote', 'user'))
+            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
+                connect_kwargs=self.ssh_custom_key)
 
-        assert self.ssh_conn_pool, 'No work nodes set'
         logging.info('Nodes to watch: %s' % ', '.join(self.ssh_conn_pool.keys()))
+        if not self.ssh_conn_pool:
+            logging.warning('No nodes set!')
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
         assert not self.ssh_check_task(ip), \
@@ -147,6 +147,20 @@ class Yascheduler(object):
 
         return True
 
+    def ssh_check_node(self, ip):
+        try:
+            with SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
+                connect_kwargs=self.ssh_custom_key, connect_timeout=5
+            ) as conn:
+                result = conn.run(Yascheduler.CHECK_CMD, hide=True)
+                if Yascheduler.RUNNING_MARKER in str(result):
+                    logging.error('Cannot add a busy resourse %s@%s' % (self.config.get('remote', 'user'), ip))
+                    return False
+        except socket.timeout:
+            logging.error('Host %s@%s is unreachable' % (self.config.get('remote', 'user'), ip))
+            return False
+        return True
+
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool, "Node %s was referred by active task, however absent in node list" % ip
         try:
@@ -171,6 +185,7 @@ class Yascheduler(object):
             except IOError as err:
                 # TODO handle that situation properly
                 logging.error('Cannot scp %s: %s' % (work_folder + '/' + remote, err))
+                if 'Connection timed out' in str(err): break
 
         # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.98", "fort.78"
         # TODO but how to do it quickly or in the background?
@@ -178,23 +193,40 @@ class Yascheduler(object):
         if remove:
             self.ssh_conn_pool[ip].run('rm -rf %s' % work_folder, hide=True)
 
+    def clouds_allocate(self, on_task):
+        if self.clouds:
+            self.clouds.allocate(on_task)
+
+    def clouds_deallocate(self, ips):
+        if self.clouds:
+            self.clouds.deallocate(ips)
+
+    def clouds_get_capacity(self, resources):
+        if self.clouds:
+            return self.clouds.get_capacity(resources)
+        return 0
+
 
 def daemonize(log_file=None):
     logger = get_logger(log_file)
     config = ConfigParser()
     config.read(CONFIG_FILE)
-    yac = Yascheduler(config)
+
+    yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(config), CloudAPIManager(config)
+    clouds.initialize()
+
+    chilling_nodes = Counter()
 
     while True:
         resources = yac.queue_get_resources()
-        all_nodes = [item[0] for item in resources]
+        all_nodes = [item[0] for item in resources if '.' in item[0]] # NB provision nodes have fake ips
         if sorted(yac.ssh_conn_pool.keys()) != sorted(all_nodes):
             yac.ssh_connect(all_nodes)
 
         enabled_nodes = {item[0]: item[1] for item in resources if item[2]}
         free_nodes = list(enabled_nodes.keys())
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
-        logger.debug('tasks_running: %s' % tasks_running)
+        logger.debug('running %s tasks: %s' % (len(tasks_running), tasks_running))
         for task in tasks_running:
             if yac.ssh_check_task(task['ip']):
                 try: free_nodes.remove(task['ip'])
@@ -209,19 +241,32 @@ def daemonize(log_file=None):
                 ready_task['metadata'] = dict(remote_folder=ready_task['metadata']['remote_folder'],
                                               local_folder=store_folder)
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
-                logger.info(':::{} done and saved in {}'.format(ready_task['label'],
+                logger.info(':::task_id={} {} done and saved in {}'.format(task['task_id'], ready_task['label'],
                                                                 ready_task['metadata'].get('local_folder')))
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
-        if free_nodes:
-            for task in yac.queue_get_tasks_to_do(len(free_nodes)):
+        clouds_capacity = yac.clouds_get_capacity(resources)
+        if free_nodes or clouds_capacity:
+            for task in yac.queue_get_tasks_to_do(clouds_capacity + len(free_nodes)):
+                if not free_nodes:
+                    yac.clouds_allocate(task['task_id'])
+                    continue
                 random.shuffle(free_nodes)
                 ip = free_nodes.pop()
                 logger.info(':::submitting task_id=%s %s to %s' % (task['task_id'], task['label'], ip))
 
                 if yac.ssh_run_task(ip, enabled_nodes[ip], task['label'], task['metadata']):
                     yac.queue_set_task_running(task['task_id'], ip)
+
+        if free_nodes: # candidates for removal
+            chilling_nodes.update(free_nodes)
+            deallocatable = Counter([
+                x[0] for x in filter(lambda x: x[1] >= N_IDLE_PASSES, chilling_nodes.most_common())
+            ])
+            if deallocatable:
+                yac.clouds_deallocate(list(deallocatable.elements()))
+                chilling_nodes.subtract(deallocatable)
 
         time.sleep(SLEEP_INTERVAL)
 
