@@ -1,7 +1,8 @@
 CREATE TABLE yascheduler_nodes (
     ip VARCHAR(15) UNIQUE,
     ncpus SMALLINT DEFAULT NULL,
-    enabled BOOLEAN DEFAULT TRUE
+    enabled BOOLEAN DEFAULT TRUE,
+    cloud VARCHAR(32) DEFAULT NULL
 );
 
 CREATE TABLE yascheduler_tasks (

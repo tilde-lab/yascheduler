@@ -1,0 +1,1 @@
+ALTER TABLE yascheduler_nodes ADD COLUMN cloud VARCHAR(32) DEFAULT NULL;
