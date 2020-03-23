@@ -53,7 +53,7 @@ if __name__ == '__main__':
                 "yasubmit = yascheduler.utils:submit",
                 "yastatus = yascheduler.utils:check_status",
                 "yanodes = yascheduler.utils:show_nodes",
-                "yaaddnode = yascheduler.utils:add_node",
+                "yasetnode = yascheduler.utils:manage_node",
                 "yainit = yascheduler.utils:init"
             ],
             "aiida.schedulers": [

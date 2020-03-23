@@ -2,7 +2,6 @@
 Aiida plugin for yascheduler
 """
 
-import six
 import aiida.schedulers
 from aiida.schedulers.datastructures import (JobState, JobInfo, NodeNumberJobResource)
 
@@ -44,7 +43,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         # make list from job ids (taken from slurm scheduler)
         if jobs:
             joblist = []
-            if isinstance(jobs, six.string_types):
+            if isinstance(jobs, str):
                 joblist.append(jobs)
             else:
                 if not isinstance(jobs, (tuple, list)):

@@ -3,11 +3,11 @@ Console scripts for yascheduler
 """
 import os
 import argparse
+from configparser import ConfigParser
+
 from pg8000.core import ProgrammingError
 from fabric import Connection as SSH_Connection
-import socket
-from configparser import ConfigParser
-from yascheduler import CONFIG_FILE
+from yascheduler import CONFIG_FILE, has_node, add_node, remove_node
 from yascheduler.scheduler import Yascheduler
 
 
@@ -35,6 +35,7 @@ def submit():
                                      'local_folder': os.getcwd()})
 
     print("Successfully submitted task: {}".format(task_id))
+    yac.connection.close()
 
 
 def check_status():
@@ -79,6 +80,8 @@ def check_status():
     else:
         for task in tasks:
             print('{}   {}'.format(task['task_id'], statuses[task['status']]))
+
+    yac.connection.close()
 
 
 def init():
@@ -145,14 +148,14 @@ def show_nodes():
     yac.cursor.execute('SELECT ip, label, task_id FROM yascheduler_tasks WHERE status=%s;', [yac.STATUS_RUNNING])
     tasks_running = {row[0]: [row[1], row[2]] for row in yac.cursor.fetchall()}
 
-    yac.cursor.execute('SELECT ip, ncpus, enabled from yascheduler_nodes;')
+    yac.cursor.execute('SELECT ip, ncpus, enabled, cloud from yascheduler_nodes;')
     for item in yac.cursor.fetchall():
-        print("ip=%s ncpus=%s enabled=%s occupied_by=%s (task_id=%s)" % tuple(
-            [item[0], item[1] or 'MAX', item[2]] + tasks_running.get(item[0], ['-', '-'])
+        print("ip=%s ncpus=%s enabled=%s occupied_by=%s (task_id=%s) %s" % tuple(
+            [item[0], item[1] or 'MAX', item[2]] + tasks_running.get(item[0], ['-', '-']) + [item[3] or '']
         ))
 
 
-def add_node():
+def manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument('host',
         help='IP[~ncpus]')
@@ -172,8 +175,7 @@ def add_node():
 
     yac = Yascheduler(config)
 
-    yac.cursor.execute('SELECT * from yascheduler_nodes WHERE ip=%s;', [args.host])
-    already_there = yac.cursor.fetchall()
+    already_there = has_node(config, args.host)
     if already_there and not args.remove_hard and not args.remove_soft:
         print('Host already in DB: {}'.format(args.host))
         return False
@@ -188,8 +190,7 @@ def add_node():
             yac.cursor.execute('UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;', [yac.STATUS_DONE, item[0]])
             print('An associated task %s at %s is now marked done!' % (item[0], args.host))
 
-        yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
-        yac.connection.commit()
+        remove_node(config, args.host)
         print('Removed host from yascheduler: {}'.format(args.host))
         return True
 
@@ -204,21 +205,12 @@ def add_node():
 
         else:
             print('No tasks associated, remove node immediately')
-            yac.cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [args.host])
-            yac.connection.commit()
+            remove_node(config, args.host)
             print('Removed host from yascheduler: {}'.format(args.host))
             return True
 
-    try:
-        with SSH_Connection(host=args.host, user=config.get('remote', 'user'), connect_timeout=5) as conn:
-            result = conn.run(yac.CHECK_CMD, hide=True)
-            assert yac.RUNNING_MARKER not in str(result), \
-            'Cannot add a busy resourse %s@%s' % (config.get('remote', 'user'), args.host)
-    except socket.timeout:
-        print('Host %s@%s is unreachable' % (config.get('remote', 'user'), args.host))
+    if not yac.ssh_check_node(args.host) and not add_node(config, args.host, ncpus):
+        print('Failed to add host to yascheduler: {}'.format(args.host))
         return False
-
-    yac.cursor.execute('INSERT INTO yascheduler_nodes (ip, ncpus) VALUES (%s, %s);', [args.host, ncpus])
-    yac.connection.commit()
     print('Added host to yascheduler: {}'.format(args.host))
     return True
