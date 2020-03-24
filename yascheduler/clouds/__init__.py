@@ -1,5 +1,6 @@
 
 import os
+import sys
 import string
 import random
 import logging
@@ -28,7 +29,7 @@ class AbstractCloudAPI(object):
         self.ssh_custom_key = None
 
     def init_key(self):
-        if self.ssh_custom_key or (self.yascheduler and self.yascheduler.ssh_custom_key):
+        if self.ssh_custom_key:
             return
 
         for filename in os.listdir(self.config.get('local', 'data_dir')):
@@ -124,13 +125,13 @@ class CloudAPIManager(object):
             return
         self.tasks.add(on_task)
 
-        subprocess.Popen([os.path.join(os.path.dirname(__file__), 'allocate_node.py')])
+        subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), 'allocate_node.py')])
         logging.info('STARTED BACKGROUND ALLOCATION')
 
     def deallocate(self, ips):
         self.yascheduler.cursor.execute("SELECT ip, cloud FROM yascheduler_nodes WHERE cloud IS NOT NULL AND ip IN ('%s');" % "', '".join(ips))
         for row in self.yascheduler.cursor.fetchall():
-            subprocess.Popen([os.path.join(os.path.dirname(__file__), 'deallocate_node.py'), row[1], row[0]])
+            subprocess.Popen([sys.executable, os.path.join(os.path.dirname(__file__), 'deallocate_node.py'), row[1], row[0]])
             logging.info('STARTED BACKGROUND DEALLOCATION')
 
     def get_capacity(self, resources):

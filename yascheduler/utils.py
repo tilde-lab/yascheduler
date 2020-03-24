@@ -188,6 +188,7 @@ def manage_node():
         result = yac.cursor.fetchall() or []
         for item in result: # only one item is expected, but here we also account inconsistency case
             yac.cursor.execute('UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;', [yac.STATUS_DONE, item[0]])
+            yac.connection.commit()
             print('An associated task %s at %s is now marked done!' % (item[0], args.host))
 
         remove_node(config, args.host)

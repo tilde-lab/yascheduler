@@ -14,7 +14,7 @@ class UpCloudAPI(AbstractCloudAPI):
     name = 'upcloud'
 
     def __init__(self, config):
-        super().__init__(max_nodes=config.getint('clouds', 'upcloud_max_nodes'))
+        super().__init__(max_nodes=config.getint('clouds', 'upcloud_max_nodes', fallback=None))
         self.client = CloudManager(config.get('clouds', 'upcloud_login'), config.get('clouds', 'upcloud_pass'))
         self.client.authenticate()
         self.config = config
@@ -32,7 +32,7 @@ class UpCloudAPI(AbstractCloudAPI):
 
         server = self.client.create_server(Server(
             core_number=8,
-            memory_amount=1024,
+            memory_amount=4096,
             hostname=self.get_rnd_name('node'),
             zone=ZONE.London,
             storage_devices=[

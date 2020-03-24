@@ -17,7 +17,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
     name = 'hetzner'
 
     def __init__(self, config):
-        super().__init__(max_nodes=config.getint('clouds', 'hetzner_max_nodes'))
+        super().__init__(max_nodes=config.getint('clouds', 'hetzner_max_nodes', fallback=None))
         self.client = Client(token=config.get('clouds', 'hetzner_token'))
         self.config = config
 
