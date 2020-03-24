@@ -209,7 +209,7 @@ def manage_node():
             print('Removed host from yascheduler: {}'.format(args.host))
             return True
 
-    if not yac.ssh_check_node(args.host) and not add_node(config, args.host, ncpus):
+    if not yac.ssh_check_node(args.host) or not add_node(config, args.host, ncpus):
         print('Failed to add host to yascheduler: {}'.format(args.host))
         return False
     print('Added host to yascheduler: {}'.format(args.host))

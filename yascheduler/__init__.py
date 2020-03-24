@@ -1,6 +1,4 @@
 
-import pg8000
-
 __version__ = "0.1.0"
 
 
@@ -13,6 +11,8 @@ DEFAULT_NODES_PER_PROVIDER = 10
 
 
 def connect_db(config):
+    import pg8000
+
     connection = pg8000.connect(
         user=config.get('db', 'user'),
         password=config.get('db', 'password'),
