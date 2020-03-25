@@ -6,7 +6,7 @@ CONFIG_FILE = '/etc/yascheduler/yascheduler.conf'
 LOG_FILE = '/var/log/yascheduler.log'
 PID_FILE = '/var/run/yascheduler.pid'
 SLEEP_INTERVAL = 6
-N_IDLE_PASSES = 6
+N_IDLE_PASSES = 20
 DEFAULT_NODES_PER_PROVIDER = 10
 
 
