@@ -34,8 +34,7 @@ class AbstractCloudAPI(object):
 
         for filename in os.listdir(self.config.get('local', 'data_dir')):
             if not filename.startswith('yakey') or not os.path.isfile(
-                os.path.join(self.config.get('local', 'data_dir'),
-                filename)):
+                os.path.join(self.config.get('local', 'data_dir'), filename)):
                 continue
             key_path = os.path.join(self.config.get('local', 'data_dir'), filename)
             self.key_name = key_path.split(os.sep)[-1]

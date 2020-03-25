@@ -36,7 +36,7 @@ class UpCloudAPI(AbstractCloudAPI):
             hostname=self.get_rnd_name('node'),
             zone=ZONE.London,
             storage_devices=[
-                Storage(os='Debian 10.0', size=20)
+                Storage(os='Debian 10.0', size=40)
             ],
             login_user=self.login_user
         ))
@@ -56,15 +56,17 @@ class UpCloudAPI(AbstractCloudAPI):
         return ip
 
     def delete_node(self, ip):
-        for s in self.client.get_servers():
-            if s.get_public_ip() == ip:
-                s.stop()
+        for server in self.client.get_servers():
+            if server.get_public_ip() == ip:
+                server.stop()
                 logging.info('WAITING FOR STOP...')
                 time.sleep(20)
                 while True:
-                    try: s.destroy()
+                    try: server.destroy()
                     except: time.sleep(5)
                     else: break
+                for storage in server.storage_devices:
+                      storage.destroy()
                 logging.info('DELETED %s' % ip)
                 break
         # TODO remove the associated storage

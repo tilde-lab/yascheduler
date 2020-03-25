@@ -7,6 +7,8 @@ from configparser import ConfigParser
 
 from pg8000.core import ProgrammingError
 from fabric import Connection as SSH_Connection
+from paramiko.rsakey import RSAKey
+
 from yascheduler import CONFIG_FILE, has_node, add_node, remove_node
 from yascheduler.scheduler import Yascheduler
 
@@ -59,6 +61,17 @@ def check_status():
         tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
 
     if args.view and tasks:
+        ssh_custom_key = {}
+        for filename in os.listdir(config.get('local', 'data_dir')):
+            if not filename.startswith('yakey') or not os.path.isfile(
+                os.path.join(config.get('local', 'data_dir'), filename)):
+                continue
+            key_path = os.path.join(config.get('local', 'data_dir'), filename)
+            pmk_key = RSAKey.from_private_key_file(key_path)
+            print('LOADED KEY %s' % key_path)
+            ssh_custom_key = {'pkey': pmk_key}
+            break
+
         yac.cursor.execute(
             'SELECT task_id, label, metadata, ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
             yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
@@ -67,7 +80,8 @@ def check_status():
             print("*" * 20 + "ID%s %s at %s@%s:%s" % (
                 row[0], row[1], config.get('remote', 'user'), row[3], row[2]['remote_folder']
             ))
-            ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'))
+            ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'),
+                connect_kwargs=ssh_custom_key)
             result = ssh_conn.run('tail -n15 %s/OUTPUT' % row[2]['remote_folder'], hide=True)
             print(result.stdout)
 
