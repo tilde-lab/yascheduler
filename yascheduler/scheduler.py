@@ -78,6 +78,8 @@ class Yascheduler(object):
         self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata=%s WHERE task_id=%s;",
                             (self.STATUS_DONE, json.dumps(metadata), task_id))
         self.connection.commit()
+        #if self.clouds:
+        # TODO: free-up CloudAPIManager().tasks
 
     def queue_submit_task(self, label, metadata):
         assert metadata['input']
@@ -215,8 +217,9 @@ def daemonize(log_file=None):
     yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(config), CloudAPIManager(config)
     clouds.initialize()
 
-    chilling_nodes = Counter()
+    chilling_nodes = Counter() # ips vs. their occurences
 
+    # The main scheduler loop
     while True:
         resources = yac.queue_get_resources()
         all_nodes = [item[0] for item in resources if '.' in item[0]] # NB provision nodes have fake ips
@@ -225,6 +228,8 @@ def daemonize(log_file=None):
 
         enabled_nodes = {item[0]: item[1] for item in resources if item[2]}
         free_nodes = list(enabled_nodes.keys())
+
+        # (I.) Tasks de-allocation clause
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
         logger.debug('running %s tasks: %s' % (len(tasks_running), tasks_running))
         for task in tasks_running:
@@ -246,6 +251,7 @@ def daemonize(log_file=None):
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
+        # (II.) Resourses and tasks allocation clause
         clouds_capacity = yac.clouds_get_capacity(resources)
         if free_nodes or clouds_capacity:
             for task in yac.queue_get_tasks_to_do(clouds_capacity + len(free_nodes)):
@@ -259,6 +265,7 @@ def daemonize(log_file=None):
                 if yac.ssh_run_task(ip, enabled_nodes[ip], task['label'], task['metadata']):
                     yac.queue_set_task_running(task['task_id'], ip)
 
+        # (III.) Resourses de-allocation clause
         if free_nodes: # candidates for removal
             chilling_nodes.update(free_nodes)
             deallocatable = Counter([

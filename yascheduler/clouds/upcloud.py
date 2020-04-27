@@ -69,4 +69,3 @@ class UpCloudAPI(AbstractCloudAPI):
                       storage.destroy()
                 logging.info('DELETED %s' % ip)
                 break
-        # TODO remove the associated storage

@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 class AbstractCloudAPI(object):
 
     def __init__(self, max_nodes=None):
-        self.max_nodes = int(max_nodes or DEFAULT_NODES_PER_PROVIDER)
+        self.max_nodes = int(max_nodes if max_nodes is not None else DEFAULT_NODES_PER_PROVIDER)
         self.yascheduler = None
 
         self.public_key = None
