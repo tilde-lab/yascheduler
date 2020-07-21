@@ -1,12 +1,28 @@
 #!/usr/bin/env python
 
-import sys
+import os
+import time
+from datetime import datetime
 import random
+import logging
 
 from configparser import ConfigParser
 from yascheduler import connect_db, provision_node, add_node, has_node, CONFIG_FILE
 from yascheduler.clouds import CloudAPIManager
 
+
+log_dir = '/tmp/_MPDS'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+LOG_DEST_FILE = os.path.join(log_dir, '_'.join([
+    'allocate',
+    datetime.now().strftime('%m%d_%H%M%S'),
+    ''.join([random.choice(string.ascii_lowercase) for _ in range(4)])
+]))
+
+logging.basicConfig(level=logging.INFO, filename=LOG_DEST_FILE)
+
+time.sleep(random.choice([1, 32, 64, 96, 128]))
 
 config = ConfigParser()
 config.read(CONFIG_FILE)
@@ -27,6 +43,8 @@ for row in cursor.fetchall():
     used_providers.append((row[0], row[1]))
 
 assert active_providers, 'No suitable cloud providers'
+logging.info('Enabled: %s' % str(active_providers))
+logging.info('In use : %s' % str(used_providers))
 
 if len(used_providers) < len(active_providers):
     name = random.choice(list(
@@ -36,10 +54,14 @@ else:
     name = sorted(used_providers, key=lambda x: x[1])[0][0]
 
 cloudapi = clouds.apis[name]
+logging.info('Chosen: %s' % cloudapi.name)
 
 provision_node(config, cloudapi.name)
 cloudapi.init_key()
 ip = cloudapi.create_node() # NB time-consuming
+
+logging.info('Created: %s' % ip)
+
 cloudapi.setup_node(ip) # NB time-consuming
-assert not has_node(config, ip)
+assert not has_node(config, ip), 'A newly allocated node is already in the list'
 add_node(config, ip, cloud=cloudapi.name, provisioned=True)
