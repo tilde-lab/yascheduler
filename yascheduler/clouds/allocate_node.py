@@ -2,6 +2,7 @@
 
 import os
 import time
+import string
 from datetime import datetime
 import random
 import logging
