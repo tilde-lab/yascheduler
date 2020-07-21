@@ -77,7 +77,7 @@ def check_status():
             yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
         ))
         for row in yac.cursor.fetchall(): # FIXME at about 100 servers the fetch gets invalidated quickly
-            print("|" * 25 + "ID%s %s at %s@%s:%s" % (
+            print("." * 50 + "ID%s %s at %s@%s:%s" % (
                 row[0], row[1], config.get('remote', 'user'), row[3], row[2]['remote_folder']
             ))
             ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'),

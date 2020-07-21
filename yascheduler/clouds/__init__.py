@@ -106,6 +106,8 @@ class CloudAPIManager(object):
             active_providers.add(name.split('_')[0])
 
         for name in active_providers:
+            if config.getint('clouds', name + '_max_nodes', fallback=None) == 0:
+                continue
             self.apis[name] = load_cloudapi(name)(config)
 
         logging.info('Active cloud APIs: ' + ', '.join(self.apis.keys()))
