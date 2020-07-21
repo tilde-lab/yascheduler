@@ -46,14 +46,14 @@ class HetznerCloudAPI(AbstractCloudAPI):
         ip = server.public_net.ipv4.ip
         logging.info('CREATED %s' % ip)
 
-        time.sleep(3)
+        time.sleep(5)
 
-        # warm up: first pass is unsuccessful, but required (FIXME?)
-        for _ in range(3):
+        # warm up
+        for _ in range(10):
             ssh_conn = SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
                 connect_kwargs=self.ssh_custom_key)
             try: ssh_conn.run('whoami', hide=True)
-            except: time.sleep(1)
+            except: time.sleep(5)
             else: break
 
         return ip

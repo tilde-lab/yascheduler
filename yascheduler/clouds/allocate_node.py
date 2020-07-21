@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 
-import os
 import time
-import string
-from datetime import datetime
 import random
 import logging
 
@@ -12,16 +9,7 @@ from yascheduler import connect_db, provision_node, add_node, has_node, CONFIG_F
 from yascheduler.clouds import CloudAPIManager
 
 
-log_dir = '/tmp/_MPDS'
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-LOG_DEST_FILE = os.path.join(log_dir, '_'.join([
-    'allocate',
-    datetime.now().strftime('%m%d_%H%M%S'),
-    ''.join([random.choice(string.ascii_lowercase) for _ in range(4)])
-]))
-
-logging.basicConfig(level=logging.INFO, filename=LOG_DEST_FILE)
+logging.basicConfig(level=logging.INFO)
 
 time.sleep(random.choice([1, 32, 64, 96, 128]))
 
