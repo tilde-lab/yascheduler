@@ -63,4 +63,5 @@ if __name__ == '__main__':
             ],
         },
         cmdclass={'install': CustomInstall},
+        python_requires='>=3.5'
     )
