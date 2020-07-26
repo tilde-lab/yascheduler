@@ -177,7 +177,7 @@ class Yascheduler(object):
         remote_local_files = {
             'INPUT': 'INPUT',
             'fort.34': 'fort.34',
-            'OUTPUT': '_scheduler-stderr.txt', # expected by AiiDA, FIXME!
+            'OUTPUT': 'OUTPUT', # NB aiida still considers this as stderr
             'fort.9': 'fort.9', # wavefunction
             'fort.87': 'fort.87' # errors
         }
