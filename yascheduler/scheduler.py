@@ -28,7 +28,7 @@ class Yascheduler(object):
     STATUS_DONE = 2
 
     RUNNING_MARKER = 'Pcrystal'
-    CHECK_CMD = 'top -b -n 1 > /tmp/top.tmp && head -n27 /tmp/top.tmp | tail -n20'
+    CHECK_CMD = 'ps aux | grep crystal' # NB not "Pcrystal"
 
     def __init__(self, config):
         self.config = config
