@@ -14,7 +14,7 @@ for (( i=0; i<${#MACHINES[@]}; i++ )); do
 
     # Manage packages
     ssh -T ${MACHINES[i]} "apt-get -y update && apt-get -y upgrade" > /dev/null
-    ssh -T ${MACHINES[i]} "apt-get -y install openmpi-bin" > /dev/null
+    ssh -T ${MACHINES[i]} "apt-get -y install wget openmpi-bin" > /dev/null
 
     # Show versions
     ssh -T ${MACHINES[i]} "/usr/bin/mpirun --allow-run-as-root -V"
