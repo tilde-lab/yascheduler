@@ -11,6 +11,7 @@ TEST_TO_COPY=~/ab_initio/universal_test_input/INPUT
 
 for (( i=0; i<${#MACHINES[@]}; i++ )); do
     echo "Setup ${MACHINES[i]}"
+    ssh -T -o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=no ${MACHINES[i]} "whoami"
 
     # Manage packages
     ssh -T ${MACHINES[i]} "apt-get -y update && apt-get -y upgrade" > /dev/null
@@ -32,7 +33,7 @@ for (( i=0; i<${#MACHINES[@]}; i++ )); do
 
     # Copy & run benchmark
     ssh -T ${MACHINES[i]} "mkdir -p /data/benchmark"
-    #scp $TEST_TO_COPY ${MACHINES[i]}:/data/benchmark
+    scp $TEST_TO_COPY ${MACHINES[i]}:/data/benchmark
     #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
     #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun -np 24 --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
     #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun --oversubscribe -np 8 --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"

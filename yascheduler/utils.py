@@ -8,6 +8,7 @@ from configparser import ConfigParser
 from pg8000.core import ProgrammingError
 from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
+from invoke.exceptions import UnexpectedExit
 
 from yascheduler import CONFIG_FILE, has_node, add_node, remove_node
 from yascheduler.scheduler import Yascheduler
@@ -82,8 +83,12 @@ def check_status():
             ))
             ssh_conn = SSH_Connection(host=row[3], user=config.get('remote', 'user'),
                 connect_kwargs=ssh_custom_key)
-            result = ssh_conn.run('tail -n15 %s/OUTPUT' % row[2]['remote_folder'], hide=True)
-            print(result.stdout)
+            try:
+                result = ssh_conn.run('tail -n15 %s/OUTPUT' % row[2]['remote_folder'], hide=True)
+            except UnexpectedExit:
+                print('OUTDATED TASK, SKIPPING')
+            else:
+                print(result.stdout)
 
     elif args.info:
         for task in tasks:
