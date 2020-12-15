@@ -45,7 +45,9 @@ def check_status():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument('-j', '--jobs', required=False, default=None, nargs='*')
     parser.add_argument('-v', '--view', required=False, default=None, nargs='?', type=bool, const=True)
+    parser.add_argument('-o', '--convergence', required=False, default=None, nargs='?', type=bool, const=True, help='needs -v option')
     parser.add_argument('-i', '--info', required=False, default=None, nargs='?', type=bool, const=True)
+    parser.add_argument('-k', '--kill', required=False, default=None, nargs='?', type=bool, const=True)
 
     args = parser.parse_args()
     config = ConfigParser()
@@ -56,12 +58,17 @@ def check_status():
         yac.STATUS_RUNNING: "RUNNING",
         yac.STATUS_DONE: "FINISHED"
     }
+    local_parsing_ready, local_calc_snippet = False, False
+
     if args.jobs:
         tasks = yac.queue_get_tasks(jobs=args.jobs)
     else:
         tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
 
-    if args.view and tasks:
+    if args.view or args.kill:
+        if not tasks:
+            print('NO MATCHING TASKS FOUND')
+            return
         ssh_custom_key = {}
         for filename in os.listdir(config.get('local', 'data_dir')):
             if not filename.startswith('yakey') or not os.path.isfile(
@@ -73,11 +80,19 @@ def check_status():
             ssh_custom_key = {'pkey': pmk_key}
             break
 
+    if args.convergence:
+        try:
+            from pycrystal import CRYSTOUT
+            from numpy import nan
+            local_parsing_ready = True
+        except: pass
+
+    if args.view:
         yac.cursor.execute(
             'SELECT task_id, label, metadata, ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
             yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
         ))
-        for row in yac.cursor.fetchall(): # FIXME at about 100 servers the fetch gets invalidated quickly
+        for row in yac.cursor.fetchall():
             print("." * 50 + "ID%s %s at %s@%s:%s" % (
                 row[0], row[1], config.get('remote', 'user'), row[3], row[2]['remote_folder']
             ))
@@ -90,6 +105,45 @@ def check_status():
             else:
                 print(result.stdout)
 
+            if local_parsing_ready:
+                local_calc_snippet = os.path.join(config.get('local', 'data_dir'), 'local_calc_snippet.tmp')
+                try:
+                    ssh_conn.get(row[2]['remote_folder'] + '/OUTPUT', local_calc_snippet)
+                except IOError as err:
+                    continue
+                calc = CRYSTOUT(local_calc_snippet)
+                output_lines = ''
+                if calc.info['convergence']:
+                    output_lines += str(calc.info['convergence']) + "\n"
+                if calc.info['optgeom']:
+                    for n in range(len(calc.info['optgeom'])):
+                        try:
+                            ncycles = calc.info['ncycles'][n]
+                        except IndexError:
+                            ncycles = "^"
+                        output_lines += "{:8f}".format(calc.info['optgeom'][n][0] or nan) + "  " + \
+                                        "{:8f}".format(calc.info['optgeom'][n][1] or nan) + "  " + \
+                                        "{:8f}".format(calc.info['optgeom'][n][2] or nan) + "  " + \
+                                        "{:8f}".format(calc.info['optgeom'][n][3] or nan) + "  " + \
+                                        "E={:12f}".format(calc.info['optgeom'][n][4] or nan) + " eV" + "  " + \
+                                        "(%s)" % ncycles + "\n"
+                print(output_lines)
+
+    elif args.kill:
+        if not args.jobs:
+            print('NO JOBS GIVEN')
+            return
+        yac.cursor.execute(
+            'SELECT ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
+            yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
+        ))
+        for row in yac.cursor.fetchall():
+            ssh_conn = SSH_Connection(host=row[0], user=config.get('remote', 'user'),
+                connect_kwargs=ssh_custom_key)
+            try:
+                result = ssh_conn.run('pkill %s' % yac.RUNNING_MARKER, hide=True)
+            except: pass
+
     elif args.info:
         for task in tasks:
             print('task_id={}\tstatus={}\tlabel={}\tip={}'.format(
@@ -101,6 +155,9 @@ def check_status():
             print('{}   {}'.format(task['task_id'], statuses[task['status']]))
 
     yac.connection.close()
+
+    if local_calc_snippet and os.path.exists(local_calc_snippet):
+        os.unlink(local_calc_snippet)
 
 
 def init():
