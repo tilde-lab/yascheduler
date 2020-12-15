@@ -69,5 +69,9 @@ class HetznerCloudAPI(AbstractCloudAPI):
                 server = self.client.servers.get_by_id(s.id)
                 break
 
-        server.delete()
-        logging.info('DELETED %s' % ip)
+        if server:
+            server.delete()
+            logging.info('DELETED %s' % ip)
+
+        else:
+            logging.info('NODE %s NOT DELETED AS UNKNOWN' % ip)

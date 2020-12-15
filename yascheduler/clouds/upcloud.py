@@ -69,3 +69,5 @@ class UpCloudAPI(AbstractCloudAPI):
                       storage.destroy()
                 logging.info('DELETED %s' % ip)
                 break
+        else:
+            logging.info('NODE %s NOT DELETED AS UNKNOWN' % ip)
