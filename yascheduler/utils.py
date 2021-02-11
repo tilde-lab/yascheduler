@@ -5,7 +5,7 @@ import os
 import argparse
 from configparser import ConfigParser
 
-from pg8000.core import ProgrammingError
+from pg8000 import ProgrammingError
 from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
 from invoke.exceptions import UnexpectedExit
