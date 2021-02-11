@@ -4,10 +4,11 @@
 MACHINEFILE=$(dirname "$0")/nodes
 MACHINES=($( cat $MACHINEFILE ))
 
-BIN_TO_COPY=~/ab_initio/CRYSTAL_bin/debian_10_openmpi_3.1.3/Pcrystal
-WWW_TO_COPY=https://tilde.pro/sw/313.tar.gz
-WWWMP_TO_COPY=https://tilde.pro/sw/313mp.tar.gz
-TEST_TO_COPY=~/ab_initio/universal_test_input/INPUT
+. $(dirname $0)/read_ini.sh
+read_ini /etc/yascheduler/yascheduler.conf
+
+BIN_TO_COPY=${INI__local__deployable_code}
+WWW_TO_COPY=${INI__local__deployable_code}
 
 for (( i=0; i<${#MACHINES[@]}; i++ )); do
     echo "Setup ${MACHINES[i]}"
@@ -24,18 +25,10 @@ for (( i=0; i<${#MACHINES[@]}; i++ )); do
 
     # Copy exec
     ssh -T ${MACHINES[i]} "mkdir -p /root/bin"
+    #scp $BIN_TO_COPY ${MACHINES[i]}:/root/bin
     ssh -T ${MACHINES[i]} "cd /root/bin && wget $WWW_TO_COPY"
     ssh -T ${MACHINES[i]} "cd /root/bin && tar xvf *.gz"
-    #scp $BIN_TO_COPY ${MACHINES[i]}:/root/bin
-    #ssh -T ${MACHINES[i]} "ln -s /root/bin/MPPcrystal /usr/bin/Pcrystal"
     ssh -T ${MACHINES[i]} "ln -s /root/bin/Pcrystal /usr/bin/Pcrystal"
     echo "set mouse-=a" > ~/.vimrc
 
-    # Copy & run benchmark
-    ssh -T ${MACHINES[i]} "mkdir -p /data/benchmark"
-    scp $TEST_TO_COPY ${MACHINES[i]}:/data/benchmark
-    #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun -np `grep -c ^processor /proc/cpuinfo` --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
-    #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun -np 24 --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
-    #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun --oversubscribe -np 8 --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
-    #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun -np 4 --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
 done
