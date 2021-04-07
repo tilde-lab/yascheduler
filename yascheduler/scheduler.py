@@ -16,8 +16,8 @@ from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 from yascheduler.clouds import CloudAPIManager
 
 
-RUN_CMD = "nohup /usr/bin/mpirun -np {ncpus} " \
-          "--allow-run-as-root -wd {path} /usr/bin/Pcrystal > {path}/OUTPUT 2>&1 &"
+RUN_CMD = "cp {path}/INPUT {path}/OUTPUT && nohup /usr/bin/mpirun -np {ncpus} " \
+          "--allow-run-as-root -wd {path} /usr/bin/Pcrystal >> {path}/OUTPUT 2>&1 &"
 # NB default ncpus: `grep -c ^processor /proc/cpuinfo`
 logging.basicConfig(level=logging.INFO)
 

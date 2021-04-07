@@ -2,7 +2,7 @@
 
 MACHINEFILE=$(dirname "$0")/nodes
 MACHINES=($( cat $MACHINEFILE ))
-SUDOER=admin # used e.g. at Google Cloud
+SUDOER=admin
 KEY_TOCOPY=~/.ssh/id_rsa.pub
 
 for (( i=0; i<${#MACHINES[@]}; i++ )); do

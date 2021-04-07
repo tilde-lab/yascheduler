@@ -7,6 +7,7 @@ import logging
 import subprocess
 from importlib import import_module
 import inspect
+from configparser import NoSectionError
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
@@ -100,10 +101,12 @@ class CloudAPIManager(object):
         self.tasks = set()
         active_providers = set()
 
-        for name, value in dict(config.items('clouds')).items():
-            if not value:
-                continue
-            active_providers.add(name.split('_')[0])
+        try:
+            for name, value in dict(config.items('clouds')).items():
+                if not value:
+                    continue
+                active_providers.add(name.split('_')[0])
+        except NoSectionError: pass
 
         for name in active_providers:
             if config.getint('clouds', name + '_max_nodes', fallback=None) == 0:
