@@ -113,7 +113,7 @@ class CloudAPIManager(object):
                 continue
             self.apis[name] = load_cloudapi(name)(config)
 
-        logging.info('Active cloud APIs: ' + ', '.join(self.apis.keys()))
+        logging.info( 'Active cloud APIs: ' + (', '.join(self.apis.keys()) or '-') )
 
     def __bool__(self):
         return bool(len(self.apis))

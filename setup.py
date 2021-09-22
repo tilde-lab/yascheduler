@@ -28,6 +28,10 @@ class CustomInstall(install):
                 config_dir = os.path.dirname(CONFIG_FILE)
                 os.makedirs(config_dir)
                 shutil.copy(src_config, CONFIG_FILE)
+
+            # link executable
+            os.symlink(os.path.join(install_path, 'scheduler.py'), '/usr/bin/yascheduler')
+
         atexit.register(_post_install)
         install.run(self)
 
