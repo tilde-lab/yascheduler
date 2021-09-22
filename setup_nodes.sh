@@ -1,14 +1,16 @@
 #!/bin/bash
 # Pcrystal **Debian 10** installer
 
-MACHINEFILE=$(dirname "$0")/nodes
+CURDIR=$(dirname $0)
+MACHINEFILE=$CURDIR/nodes
 MACHINES=($( cat $MACHINEFILE ))
 
-. $(dirname $0)/read_ini.sh
+. $CURDIR/read_ini.sh
 read_ini /etc/yascheduler/yascheduler.conf
 
 BIN_TO_COPY=${INI__local__deployable_code}
 WWW_TO_COPY=${INI__local__deployable_code}
+TEST_TO_COPY=$CURDIR/data/CRYSTAL-benchmark/INPUT
 
 for (( i=0; i<${#MACHINES[@]}; i++ )); do
     echo "Setup ${MACHINES[i]}"
@@ -30,5 +32,10 @@ for (( i=0; i<${#MACHINES[@]}; i++ )); do
     ssh -T ${MACHINES[i]} "cd /root/bin && tar xvf *.gz"
     ssh -T ${MACHINES[i]} "ln -s /root/bin/Pcrystal /usr/bin/Pcrystal"
     echo "set mouse-=a" > ~/.vimrc
+
+    # Benchmark
+    ssh -T ${MACHINES[i]} "mkdir -p /data/benchmark"
+    scp $TEST_TO_COPY ${MACHINES[i]}:/data/benchmark
+    #ssh -T ${MACHINES[i]} "nohup /usr/bin/mpirun -np 8 --allow-run-as-root -wd /data/benchmark /usr/bin/Pcrystal > /data/benchmark/OUTPUT 2>&1 &"
 
 done
