@@ -17,8 +17,8 @@ from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 from yascheduler.clouds import CloudAPIManager
 
 
-RUN_CMD = "cp {path}/INPUT {path}/OUTPUT && nohup /usr/bin/mpirun -np {ncpus} " \
-          "--allow-run-as-root -wd {path} /usr/bin/Pcrystal >> {path}/OUTPUT 2>&1 &"
+RUN_CMD = "nohup sh -c \"cp {path}/INPUT {path}/OUTPUT && /usr/bin/mpirun -np {ncpus} " \
+          "--allow-run-as-root -wd {path} /usr/bin/Pcrystal >> {path}/OUTPUT 2>&1\" &"
 # NB default ncpus: `grep -c ^processor /proc/cpuinfo`
 logging.basicConfig(level=logging.INFO)
 
@@ -139,11 +139,11 @@ class Yascheduler(object):
             tmp.flush()
             self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34') # NB beware overflown remote
 
+        RUN_CMD = RUN_CMD.format(path=metadata['remote_folder'], ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`')
+        logging.debug(RUN_CMD)
+
         try:
-            self.ssh_conn_pool[ip].run(RUN_CMD.format(
-                path=metadata['remote_folder'],
-                ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`'
-            ), hide=True)
+            self.ssh_conn_pool[ip].run(RUN_CMD, hide=True, disown=True)
         except Exception as err:
             logging.error('SSH spawn cmd error: %s' % err)
             return False
