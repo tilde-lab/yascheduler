@@ -18,6 +18,27 @@ The file contains credentials for Postgres database access as well as several di
 and amend the file with the correct credentials. The database should then be initialized with `yainit` script.
 
 
+Usage
+------------
+
+```python
+from configparser import ConfigParser
+
+from yascheduler import CONFIG_FILE
+from yascheduler.scheduler import Yascheduler
+
+config = ConfigParser()
+config.read(CONFIG_FILE)
+yac = Yascheduler(config)
+
+label = 'test assignment'
+struct_input = str(...) # simulation control file: crystal structure
+setup_input = str(...) # simulation control file: main setup, can include struct_input
+
+result = yac.queue_submit_task(label, dict(structure=struct_input, input=setup_input))
+print(result)
+```
+
 
 AiiDA integration
 ------------
