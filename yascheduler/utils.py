@@ -82,7 +82,7 @@ def check_status():
 
     if args.convergence:
         try:
-            from pycrystal import CRYSTOUT
+            from pycrystal import CRYSTOUT, CRYSTOUT_Error
             from numpy import nan
             local_parsing_ready = True
         except: pass
@@ -111,7 +111,11 @@ def check_status():
                     ssh_conn.get(row[2]['remote_folder'] + '/OUTPUT', local_calc_snippet)
                 except IOError as err:
                     continue
-                calc = CRYSTOUT(local_calc_snippet)
+                try:
+                    calc = CRYSTOUT(local_calc_snippet)
+                except CRYSTOUT_Error as err:
+                    print(err)
+                    continue
                 output_lines = ''
                 if calc.info['convergence']:
                     output_lines += str(calc.info['convergence']) + "\n"
