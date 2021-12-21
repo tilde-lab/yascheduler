@@ -33,6 +33,11 @@ config = ConfigParser()
 config.read(CONFIG_FILE)
 yac = Yascheduler(config)
 
-result = yac.queue_submit_task(label, dict(structure=struct_input, input=setup_input, local_folder=folder))
+result = yac.queue_submit_task(label, {
+    'fort.34': struct_input,
+    'INPUT': setup_input,
+    'local_folder': folder
+}, 'pcrystal')
+
 print(label)
 print(result)
