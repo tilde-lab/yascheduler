@@ -21,6 +21,7 @@ def submit():
     args = parser.parse_args()
     if not os.path.isfile(args.script):
         raise ValueError("Script parameter is not a file name")
+
     inputs = {}
     with open(args.script) as f:
         for l in f.readlines():
@@ -35,7 +36,7 @@ def submit():
     task_id = yac.queue_submit_task(inputs['LABEL'],
                                     {'structure': open(inputs['STRUCT']).read(),
                                      'input': open(inputs['INPUT']).read(),
-                                     'local_folder': os.getcwd()})
+                                     'local_folder': os.getcwd()}) # TODO
 
     print("Successfully submitted task: {}".format(task_id))
     yac.connection.close()
@@ -47,7 +48,7 @@ def check_status():
     parser.add_argument('-v', '--view', required=False, default=None, nargs='?', type=bool, const=True)
     parser.add_argument('-o', '--convergence', required=False, default=None, nargs='?', type=bool, const=True, help='needs -v option')
     parser.add_argument('-i', '--info', required=False, default=None, nargs='?', type=bool, const=True)
-    parser.add_argument('-k', '--kill', required=False, default=None, nargs='?', type=bool, const=True)
+    #parser.add_argument('-k', '--kill', required=False, default=None, nargs='?', type=bool, const=True)
 
     args = parser.parse_args()
     config = ConfigParser()
@@ -65,7 +66,7 @@ def check_status():
     else:
         tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
 
-    if args.view or args.kill:
+    if args.view: # or args.kill:
         if not tasks:
             print('NO MATCHING TASKS FOUND')
             return
@@ -133,20 +134,20 @@ def check_status():
                                         "(%s)" % ncycles + "\n"
                 print(output_lines)
 
-    elif args.kill:
-        if not args.jobs:
-            print('NO JOBS GIVEN')
-            return
-        yac.cursor.execute(
-            'SELECT ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
-            yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
-        ))
-        for row in yac.cursor.fetchall():
-            ssh_conn = SSH_Connection(host=row[0], user=config.get('remote', 'user'),
-                connect_kwargs=ssh_custom_key)
-            try:
-                result = ssh_conn.run('pkill %s' % yac.RUNNING_MARKER, hide=True)
-            except: pass
+    #elif args.kill:
+    #    if not args.jobs:
+    #        print('NO JOBS GIVEN')
+    #        return
+    #    yac.cursor.execute(
+    #        'SELECT ip FROM yascheduler_tasks WHERE status=%s AND task_id IN (%s);' % (
+    #        yac.STATUS_RUNNING, ', '.join([str(task['task_id']) for task in tasks])
+    #    ))
+    #    for row in yac.cursor.fetchall():
+    #        ssh_conn = SSH_Connection(host=row[0], user=config.get('remote', 'user'),
+    #            connect_kwargs=ssh_custom_key)
+    #        try:
+    #            result = ssh_conn.run('pkill %s' % yac.RUNNING_MARKER, hide=True)
+    #        except: pass
 
     elif args.info:
         for task in tasks:
@@ -189,11 +190,17 @@ def _init_systemd(install_path):
 
 
 def _init_sysv(install_path):
+
     print("Installing SysV service")
+
     # create sysv script in /etc/init.d
     src_startup_file = os.path.join(install_path, 'data/yascheduler.sh')
     startup_file = os.path.join('/etc/init.d/yascheduler')
     if not os.path.isfile(startup_file):
+        if not os.access(startup_file, os.W_OK):
+            print("Error: cannot write to %s" % startup_file)
+            return
+
         daemon_file = os.path.join(install_path, 'daemon_sysv.py')
         sysv_script = open(src_startup_file).read().replace('%YASCHEDULER_DAEMON_FILE%', daemon_file)
         with open(startup_file, 'w') as f:
@@ -259,6 +266,7 @@ def manage_node():
     if already_there and not args.remove_hard and not args.remove_soft:
         print('Host already in DB: {}'.format(args.host))
         return False
+
     if not already_there and (args.remove_hard or args.remove_soft):
         print('Host NOT in DB: {}'.format(args.host))
         return False
@@ -293,5 +301,6 @@ def manage_node():
     if not yac.ssh_check_node(args.host) or not add_node(config, args.host, ncpus):
         print('Failed to add host to yascheduler: {}'.format(args.host))
         return False
+
     print('Added host to yascheduler: {}'.format(args.host))
     return True

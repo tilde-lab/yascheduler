@@ -67,6 +67,8 @@ class YaScheduler(aiida.schedulers.Scheduler):
         lines = []
         if job_tmpl.job_name:
             lines.append("LABEL={}".format(job_tmpl.job_name))
+
+        # TODO too specific for engine.pcrystal
         lines += ["INPUT=INPUT", "STRUCT=fort.34"]
         return "\n".join(lines)
 

@@ -1,6 +1,5 @@
 
-__version__ = "0.1.5"
-
+__version__ = "0.5.0"
 
 CONFIG_FILE = '/etc/yascheduler/yascheduler.conf'
 LOG_FILE = '/var/log/yascheduler.log'
@@ -26,7 +25,7 @@ def connect_db(config):
 
 def has_node(config, ip):
     connection, cursor = connect_db(config)
-    cursor.execute('SELECT * from yascheduler_nodes WHERE ip=%s;', [ip])
+    cursor.execute('SELECT * FROM yascheduler_nodes WHERE ip=%s;', [ip])
     result = cursor.fetchall()
     connection.close()
     return result
@@ -58,7 +57,7 @@ def add_node(config, ip, ncpus=None, cloud=None, provisioned=False):
 
 def remove_node(config, ip):
     connection, cursor = connect_db(config)
-    cursor.execute('DELETE from yascheduler_nodes WHERE ip=%s;', [ip])
+    cursor.execute('DELETE FROM yascheduler_nodes WHERE ip=%s;', [ip])
     connection.commit()
     connection.close()
     return True

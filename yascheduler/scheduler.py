@@ -7,7 +7,6 @@ import time
 import tempfile
 import string
 import logging
-import socket
 from configparser import ConfigParser
 from datetime import datetime
 from collections import Counter
@@ -15,20 +14,17 @@ from collections import Counter
 from fabric import Connection as SSH_Connection
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 from yascheduler.clouds import CloudAPIManager
+from yascheduler.engines import init_engines, get_engines_check_cmd
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 
 class Yascheduler(object):
+
     STATUS_TO_DO = 0
     STATUS_RUNNING = 1
     STATUS_DONE = 2
-
-    RUNNING_MARKER = 'Pcrystal'
-    CHECK_CMD = 'ps aux | grep crystal' # NB not "Pcrystal"
-    RUN_CMD = "nohup sh -c \"cp {path}/INPUT {path}/OUTPUT && /usr/bin/mpirun -np {ncpus} " \
-              "--allow-run-as-root -wd {path} /usr/bin/Pcrystal >> {path}/OUTPUT 2>&1\" &"
 
     def __init__(self, config):
         self.config = config
@@ -36,6 +32,7 @@ class Yascheduler(object):
         self.ssh_conn_pool = {}
         self.ssh_custom_key = {}
         self.clouds = None
+        self.engines = init_engines(config)
 
     def queue_get_resources(self):
         self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;')
@@ -81,9 +78,18 @@ class Yascheduler(object):
         #if self.clouds:
         # TODO: free-up CloudAPIManager().tasks
 
-    def queue_submit_task(self, label, metadata):
-        assert metadata['input']
-        assert metadata['structure']
+    def queue_submit_task(self, label, metadata, engine):
+
+        if engine not in self.engines:
+            raise RuntimeError("Engine %s requested, but absent in the supported engines list (%s)" %
+                engine, ', '.join(list(self.engines.keys()))
+            )
+
+        for input_file in self.engines[engine]['input_files']:
+            if input_file not in metadata:
+                raise RuntimeError("Input file %s was not provided" % input_file)
+
+        metadata['engine'] = engine
         metadata['remote_folder'] = os.path.join(self.config.get('remote', 'data_dir'),
                                                  '_'.join([datetime.now().strftime('%Y%m%d_%H%M%S'),
                                                            ''.join([random.choice(string.ascii_lowercase) for _ in range(4)])]))
@@ -119,8 +125,7 @@ class Yascheduler(object):
             label, ip) # TODO handle this situation
 
         assert metadata['remote_folder']
-        assert metadata['input']
-        assert metadata['structure']
+        assert metadata['engine'] in self.engines
 
         try:
             self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['remote_folder'], hide=True)
@@ -128,17 +133,19 @@ class Yascheduler(object):
             logging.error('SSH spawn cmd error: %s' % err)
             return False
 
-        with tempfile.NamedTemporaryFile() as tmp:
-            tmp.write(metadata['input'].encode('utf-8'))
-            tmp.flush()
-            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/INPUT') # NB beware overflown remote
-            tmp.seek(0)
-            tmp.truncate()
-            tmp.write(metadata['structure'].encode('utf-8'))
-            tmp.flush()
-            self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/fort.34') # NB beware overflown remote
+        with tempfile.NamedTemporaryFile() as tmp: # NB beware overflown remote
+            for input_file in self.engines[metadata['engine']]['input_files']:
+                tmp.write(metadata[input_file].encode('utf-8'))
+                tmp.flush()
+                self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/' + input_file)
+                tmp.seek(0)
+                tmp.truncate()
 
-        run_cmd = Yascheduler.RUN_CMD.format(path=metadata['remote_folder'], ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`')
+        # placeholders {path} and {ncpus} are supported
+        run_cmd = self.engines[metadata['engine']]['spawn'].format(
+            path=metadata['remote_folder'],
+            ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`'
+        )
         logging.debug(run_cmd)
 
         try:
@@ -154,44 +161,42 @@ class Yascheduler(object):
             with SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
                 connect_kwargs=self.ssh_custom_key, connect_timeout=5
             ) as conn:
-                result = conn.run(Yascheduler.CHECK_CMD, hide=True)
-                if Yascheduler.RUNNING_MARKER in str(result):
-                    logging.error('Cannot add a busy resourse %s@%s' % (self.config.get('remote', 'user'), ip))
-                    return False
-        except socket.timeout:
-            logging.error('Host %s@%s is unreachable' % (self.config.get('remote', 'user'), ip))
+                result = str( conn.run(get_engines_check_cmd(self.engines), hide=True) )
+                for engine_name in self.engines:
+                    if self.engines[engine_name]['run_marker'] in result:
+                        logging.error('Cannot add a busy with %s resourse %s@%s' % (engine_name, self.config.get('remote', 'user'), ip))
+                        return False
+
+        except Exception as err:
+            logging.error('Host %s@%s is unreachable due to: %s' % (self.config.get('remote', 'user'), ip, err))
             return False
+
         return True
 
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool, "Node %s was referred by active task, however absent in node list" % ip
         try:
-            result = self.ssh_conn_pool[ip].run(Yascheduler.CHECK_CMD, hide=True)
+            result = str( self.ssh_conn_pool[ip].run(get_engines_check_cmd(self.engines), hide=True) )
         except Exception as err:
             logging.error('SSH status cmd error: %s' % err)
             # TODO handle that situation properly, re-assign ip, etc.
             result = ""
-        return Yascheduler.RUNNING_MARKER in str(result)
 
-    def ssh_get_task(self, ip, work_folder, store_folder, remove=True):
-        remote_local_files = {
-            'INPUT': 'INPUT',
-            'fort.34': 'fort.34',
-            'OUTPUT': 'OUTPUT', # NB aiida still considers this as stderr
-            'fort.9': 'fort.9', # wavefunction
-            'fort.87': 'fort.87' # errors
-        }
-        for remote, local in remote_local_files.items():
+        for engine in self.engines.values():
+            if engine['run_marker'] in result:
+                return True
+
+        return False
+
+    def ssh_get_task(self, ip, engine, work_folder, store_folder, remove=True):
+        for output_file in self.engines[engine]['output_files']:
             try:
-                self.ssh_conn_pool[ip].get(work_folder + '/' + remote, store_folder + '/' + local)
+                self.ssh_conn_pool[ip].get(work_folder + '/' + output_file, store_folder + '/' + output_file)
             except IOError as err:
                 # TODO handle that situation properly
-                logging.error('Cannot scp %s: %s' % (work_folder + '/' + remote, err))
+                logging.error('Cannot scp %s: %s' % (work_folder + '/' + output_file, err))
                 if 'Connection timed out' in str(err): break
 
-        # TODO get other files: "FREQINFO.DAT" "OPTINFO.DAT" "SCFOUT.LOG" "fort.13" "fort.98", "fort.78"
-        # TODO but how to do it quickly or in the background?
-        # NB recursive copying of folders is not supported :(
         if remove:
             self.ssh_conn_pool[ip].run('rm -rf %s' % work_folder, hide=True)
 
@@ -219,6 +224,8 @@ def daemonize(log_file=None):
 
     chilling_nodes = Counter() # ips vs. their occurences
 
+    logger.debug('Available computing engines: %s' % ', '.join([engine_name for engine_name in yac.engines]))
+
     # The main scheduler loop
     while True:
         resources = yac.queue_get_resources()
@@ -242,7 +249,7 @@ def daemonize(log_file=None):
                     os.path.join(config.get('local', 'data_dir'),
                                  os.path.basename(ready_task['metadata']['remote_folder']))
                 os.makedirs(store_folder, exist_ok=True) # TODO OSError if restart or invalid data_dir
-                yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['remote_folder'], store_folder)
+                yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['engine'], ready_task['metadata']['remote_folder'], store_folder)
                 ready_task['metadata'] = dict(remote_folder=ready_task['metadata']['remote_folder'],
                                               local_folder=store_folder)
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
@@ -280,11 +287,11 @@ def daemonize(log_file=None):
 
 def get_logger(log_file):
     logger = logging.getLogger('yascheduler')
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     if log_file:
         fh = logging.FileHandler(log_file)
-        fh.setLevel(logging.INFO)
+        fh.setLevel(logging.DEBUG)
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         fh.setFormatter(formatter)
         logger.addHandler(fh)

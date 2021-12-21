@@ -71,18 +71,19 @@ class AbstractCloudAPI(object):
         ssh_conn.run('apt-get -y update && apt-get -y upgrade', hide=True)
         ssh_conn.run('apt-get -y install openmpi-bin', hide=True)
 
-        ssh_conn.run('mkdir -p /root/bin', hide=True)
-        if self.config.get('local', 'deployable_code').startswith('http'):
+        ssh_conn.run('mkdir -p ~/bin', hide=True)
+        if self.config.get('local', 'deployable').startswith('http'):
             # downloading binary from a trusted non-public address
-            ssh_conn.run('cd /root/bin && wget %s' % self.config.get('local', 'deployable_code'), hide=True)
+            ssh_conn.run('cd ~/bin && wget %s' % self.config.get('local', 'deployable'), hide=True)
         else:
             # uploading binary from local; requires broadband connection
-            ssh_conn.put(self.config.get('local', 'deployable_code'), '/root/bin/Pcrystal')
-        if self.config.get('local', 'deployable_code').endswith('.gz'):
+            ssh_conn.put(self.config.get('local', 'deployable'), '~/bin/Pcrystal') # TODO
+
+        if self.config.get('local', 'deployable').endswith('.gz'):
             # binary may be gzipped, without subfolders, with an arbitrary archive name,
             # but the name of the binary must remain Pcrystal
-            ssh_conn.run('cd /root/bin && tar xvf %s' % self.config.get('local', 'deployable_code').split('/')[-1], hide=True)
-        ssh_conn.run('ln -sf /root/bin/Pcrystal /usr/bin/Pcrystal', hide=True)
+            ssh_conn.run('cd ~/bin && tar xvf %s' % self.config.get('local', 'deployable').split('/')[-1], hide=True)
+        #ssh_conn.run('ln -sf ~/bin/Pcrystal /usr/bin/Pcrystal', hide=True)
 
         # print and ensure versions
         result = ssh_conn.run('/usr/bin/mpirun --allow-run-as-root -V', hide=True)
