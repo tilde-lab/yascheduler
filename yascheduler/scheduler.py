@@ -81,9 +81,7 @@ class Yascheduler(object):
     def queue_submit_task(self, label, metadata, engine):
 
         if engine not in self.engines:
-            raise RuntimeError("Engine %s requested, but absent in the supported engines list (%s)" %
-                engine, ', '.join(list(self.engines.keys()))
-            )
+            raise RuntimeError("Engine %s requested, but not supported" % engine)
 
         for input_file in self.engines[engine]['input_files']:
             if input_file not in metadata:

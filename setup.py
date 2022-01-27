@@ -30,7 +30,8 @@ class CustomInstall(install):
                 shutil.copy(src_config, CONFIG_FILE)
 
             # link executable
-            os.symlink(os.path.join(install_path, 'scheduler.py'), '/usr/bin/yascheduler')
+            try: os.symlink(os.path.join(install_path, 'scheduler.py'), '/usr/bin/yascheduler')
+            except Exception: pass
 
         atexit.register(_post_install)
         install.run(self)
