@@ -39,7 +39,13 @@ class Yascheduler(object):
         return self.cursor.fetchall()
 
     def queue_get_resource(self, ip):
-        self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes WHERE ip=(%S);', (ip))
+        self.cursor.execute(
+            (
+                "SELECT ip, ncpus, enabled, cloud "
+                "FROM yascheduler_nodes WHERE ip=(%S);"
+            ),
+            (ip),
+        )
         return self.cursor.fetchone()
 
     def queue_get_task(self, task_id):
@@ -121,7 +127,9 @@ class Yascheduler(object):
             del self.ssh_conn_pool[ip]
         for ip in set(new_nodes) - set(old_nodes):
             cloud = self.clouds and self.clouds.apis.get(ip_cloud_map.get(ip))
-            ssh_user = cloud and cloud.ssh_user or self.config.get("remote", "user")
+            ssh_user = (
+                cloud and cloud.ssh_user or self.config.get("remote", "user")
+            )
             self.ssh_conn_pool[ip] = SSH_Connection(
                 host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key
             )
@@ -170,15 +178,25 @@ class Yascheduler(object):
     def ssh_check_node(self, ip):
         try:
             node_info = self.queue_get_resource(ip)
-            cloud = self.clouds and self.clouds.apis.get(node_info and node_info[3])
-            ssh_user = cloud and cloud.ssh_user or self.config.get("remote", "user")
+            cloud = (
+                self.clouds and self.clouds.apis.get(node_info and node_info[3])
+            )
+            ssh_user = (
+                cloud and cloud.ssh_user or self.config.get("remote", "user")
+            )
             with SSH_Connection(
-                host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key, connect_timeout=5
+                host=ip,
+                user=ssh_user,
+                connect_kwargs=self.ssh_custom_key,
+                connect_timeout=5,
             ) as conn:
                 result = str( conn.run(get_engines_check_cmd(self.engines), hide=True) )
                 for engine_name in self.engines:
                     if self.engines[engine_name]['run_marker'] in result:
-                        logging.error("Cannot add a busy with %s resourse %s@%s" % (engine_name, ssh_user, ip))
+                        logging.error(
+                            "Cannot add a busy with %s resourse %s@%s"
+                            % (engine_name, ssh_user, ip)
+                        )
                         return False
 
         except Exception as err:

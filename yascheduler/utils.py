@@ -96,16 +96,23 @@ def check_status():
                 "JOIN yascheduler_nodes AS n ON n.ip=t.ip "
                 "WHERE status=%s AND task_id IN (%s);"
             ),
-            (yac.STATUS_RUNNING, ", ".join([str(task["task_id"]) for task in tasks])),
+            (
+                yac.STATUS_RUNNING,
+                ", ".join([str(task["task_id"]) for task in tasks]),
+            ),
         )
         for row in yac.cursor.fetchall():
-            ssh_user = config.get("clouds", f"{row[4]}", fallback=config.get("remote", "user"))
+            ssh_user = config.get(
+                "clouds", f"{row[4]}", fallback=config.get("remote", "user")
+            )
             print(
                 "." * 50
                 + "ID%s %s at %s@%s:%s"
                 % (row[0], row[1], ssh_user, row[3], row[2]["remote_folder"])
             )
-            ssh_conn = SSH_Connection(host=row[3], user=ssh_user, connect_kwargs=ssh_custom_key)
+            ssh_conn = SSH_Connection(
+                host=row[3], user=ssh_user, connect_kwargs=ssh_custom_key
+            )
             try:
                 result = ssh_conn.run('tail -n15 %s/OUTPUT' % row[2]['remote_folder'], hide=True)
             except UnexpectedExit:

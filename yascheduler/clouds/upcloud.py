@@ -22,7 +22,9 @@ class UpCloudAPI(AbstractCloudAPI):
     def init_key(self):
         super().init_key()
         self.login_user = login_user_block(
-            username=self.ssh_user, ssh_keys=[self.public_key], create_password=False
+            username=self.ssh_user,
+            ssh_keys=[self.public_key],
+            create_password=False,
         )
 
     def create_node(self):
