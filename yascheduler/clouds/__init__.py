@@ -77,11 +77,13 @@ class AbstractCloudAPI(object):
             ''.join([random.choice(string.ascii_lowercase) for _ in range(8)])
 
     def setup_node(self, ip):
-        ssh_conn.run('apt-get -y update && apt-get -y upgrade', hide=True)
-        ssh_conn.run('apt-get -y install openmpi-bin', hide=True)
         ssh_conn = SSH_Connection(
             host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
         )
+        sudo_prefix = "" if self.ssh_user == "root" else "sudo "
+        apt_cmd = f"{sudo_prefix}apt-get"
+        ssh_conn.run(f'{apt_cmd} -y update && {apt_cmd} -y upgrade', hide=True)
+        ssh_conn.run(f'{apt_cmd} -y install openmpi-bin', hide=True)
 
         ssh_conn.run('mkdir -p ~/bin', hide=True)
         if self.config.get('local', 'deployable').startswith('http'):
