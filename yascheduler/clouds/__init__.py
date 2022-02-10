@@ -7,7 +7,7 @@ import logging
 import subprocess
 from importlib import import_module
 import inspect
-from configparser import NoSectionError
+from configparser import NoSectionError, ConfigParser
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
@@ -22,12 +22,23 @@ logging.basicConfig(level=logging.INFO)
 
 class AbstractCloudAPI(object):
 
+    name = "abstract"
+    config: ConfigParser
+
     def __init__(self, max_nodes=None):
         self.max_nodes = int(max_nodes if max_nodes is not None else DEFAULT_NODES_PER_PROVIDER)
         self.yascheduler = None
 
         self.public_key = None
         self.ssh_custom_key = None
+
+    @property
+    def ssh_user(self):
+        return self.config.get(
+            "clouds",
+            f"{self.name}_user",
+            fallback=self.config.get("remote", "user", fallback="root"),
+        )
 
     def init_key(self):
         if self.ssh_custom_key:
@@ -66,10 +77,11 @@ class AbstractCloudAPI(object):
             ''.join([random.choice(string.ascii_lowercase) for _ in range(8)])
 
     def setup_node(self, ip):
-        ssh_conn = SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
-            connect_kwargs=self.ssh_custom_key)
         ssh_conn.run('apt-get -y update && apt-get -y upgrade', hide=True)
         ssh_conn.run('apt-get -y install openmpi-bin', hide=True)
+        ssh_conn = SSH_Connection(
+            host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
+        )
 
         ssh_conn.run('mkdir -p ~/bin', hide=True)
         if self.config.get('local', 'deployable').startswith('http'):

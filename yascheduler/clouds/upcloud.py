@@ -22,9 +22,7 @@ class UpCloudAPI(AbstractCloudAPI):
     def init_key(self):
         super().init_key()
         self.login_user = login_user_block(
-            username=self.config.get('remote', 'user'),
-            ssh_keys=[self.public_key],
-            create_password=False
+            username=self.ssh_user, ssh_keys=[self.public_key], create_password=False
         )
 
     def create_node(self):
@@ -47,8 +45,9 @@ class UpCloudAPI(AbstractCloudAPI):
 
         # warm up
         for _ in range(10):
-            ssh_conn = SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
-                connect_kwargs=self.ssh_custom_key)
+            ssh_conn = SSH_Connection(
+                host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
+            )
             try: ssh_conn.run('whoami', hide=True)
             except: time.sleep(5)
             else: break

@@ -38,6 +38,10 @@ class Yascheduler(object):
         self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;')
         return self.cursor.fetchall()
 
+    def queue_get_resource(self, ip):
+        self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes WHERE ip=(%S);', (ip))
+        return self.cursor.fetchone()
+
     def queue_get_task(self, task_id):
         self.cursor.execute('SELECT label, metadata, ip, status FROM yascheduler_tasks WHERE task_id=%s;' % task_id)
         row = self.cursor.fetchone()
@@ -106,12 +110,21 @@ class Yascheduler(object):
     def ssh_connect(self, new_nodes):
         old_nodes = self.ssh_conn_pool.keys()
 
+        ip_cloud_map = {}
+        resources = self.queue_get_resources()
+        for row in resources:
+            if row[0] in new_nodes:
+                ip_cloud_map[row[0]] = row[3]
+
         for ip in set(old_nodes) - set(new_nodes):
             self.ssh_conn_pool[ip].close()
             del self.ssh_conn_pool[ip]
         for ip in set(new_nodes) - set(old_nodes):
-            self.ssh_conn_pool[ip] = SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
-                connect_kwargs=self.ssh_custom_key)
+            cloud = self.clouds and self.clouds.apis.get(ip_cloud_map.get(ip))
+            ssh_user = cloud and cloud.ssh_user or self.config.get("remote", "user")
+            self.ssh_conn_pool[ip] = SSH_Connection(
+                host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key
+            )
 
         logging.info('Nodes to watch: %s' % ', '.join(self.ssh_conn_pool.keys()))
         if not self.ssh_conn_pool:
@@ -156,13 +169,16 @@ class Yascheduler(object):
 
     def ssh_check_node(self, ip):
         try:
-            with SSH_Connection(host=ip, user=self.config.get('remote', 'user'),
-                connect_kwargs=self.ssh_custom_key, connect_timeout=5
+            node_info = self.queue_get_resource(ip)
+            cloud = self.clouds and self.clouds.apis.get(node_info and node_info[3])
+            ssh_user = cloud and cloud.ssh_user or self.config.get("remote", "user")
+            with SSH_Connection(
+                host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key, connect_timeout=5
             ) as conn:
                 result = str( conn.run(get_engines_check_cmd(self.engines), hide=True) )
                 for engine_name in self.engines:
                     if self.engines[engine_name]['run_marker'] in result:
-                        logging.error('Cannot add a busy with %s resourse %s@%s' % (engine_name, self.config.get('remote', 'user'), ip))
+                        logging.error("Cannot add a busy with %s resourse %s@%s" % (engine_name, ssh_user, ip))
                         return False
 
         except Exception as err:
