@@ -81,7 +81,7 @@ class AbstractCloudAPI(object):
             host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
         )
         sudo_prefix = "" if self.ssh_user == "root" else "sudo "
-        apt_cmd = f"{sudo_prefix}apt-get"
+        apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
         ssh_conn.run(f'{apt_cmd} -y update && {apt_cmd} -y upgrade', hide=True)
         ssh_conn.run(f'{apt_cmd} -y install openmpi-bin', hide=True)
 
