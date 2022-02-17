@@ -35,7 +35,6 @@ az_vm_param_location = westeurope
 
 import json
 import logging
-import os
 import random
 import string
 from pathlib import Path
@@ -68,11 +67,11 @@ from azure.core.exceptions import HttpResponseError
 from yascheduler.clouds import AbstractCloudAPI
 
 # Azure SDK is too noisy
-for l in [
+for logger_name in [
     "azure.core.pipeline.policies.http_logging_policy",
     "azure.identity._internal.get_token_mixin",
 ]:
-    logging.getLogger(l).setLevel(logging.ERROR)
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
 _log = logging.getLogger(__name__)
 
 

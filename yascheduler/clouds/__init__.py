@@ -111,13 +111,19 @@ class AbstractCloudAPI(object):
                 )
 
     def _run_ssh_cmd_with_backoff(
-        self, host: str, cmd: str, max_time: float = 60, max_wait_time: float = 10
+        self,
+        host: str,
+        cmd: str,
+        max_time: float = 60,
+        max_wait_time: float = 10,
     ):
         "Run ssh command with retries on errors"
 
         def run_cmd():
             ssh_conn = SSH_Connection(
-                host=host, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
+                host=host,
+                user=self.ssh_user,
+                connect_kwargs=self.ssh_custom_key,
             )
             return ssh_conn.run(cmd, hide=True)
 
