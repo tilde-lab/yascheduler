@@ -110,7 +110,7 @@ class AzureRGReadRBACError(AzureRBACError):
     resource_type = "Resource Group"
 
 
-class AzurePIPReadRBACError(AzureRBACError):
+class AzurePubIPReadRBACError(AzureRBACError):
     operation = "read"
     resource_type = "Public IP Address"
 
@@ -133,7 +133,7 @@ class AzureRGNotFoundError(AzureNotFoundError):
     resource_type = "Resource Group"
 
 
-class AzurePIPNotFoundError(AzureNotFoundError):
+class AzurePubIPNotFoundError(AzureNotFoundError):
     resource_type = "Public IP Address"
 
 
@@ -272,8 +272,8 @@ class AzureAPI(AbstractCloudAPI):
         except HttpResponseError as e:
             code = getattr(e, "error", None) and getattr(e.error, "code", None)
             if code == "AuthorizationFailed":
-                raise AzurePIPReadRBACError(name) from e
-            raise AzurePIPNotFoundError(name) from e
+                raise AzurePubIPReadRBACError(name) from e
+            raise AzurePubIPNotFoundError(name) from e
 
     def create_deployment(
         self, name: str, tmpl: object, params: Dict[str, Any]
