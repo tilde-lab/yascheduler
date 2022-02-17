@@ -157,7 +157,7 @@ class AzureCreatedVMPublicIPNotFoundError(Exception):
 
 class AzureAPI(AbstractCloudAPI):
 
-    name = "az"
+    name = "azure"
     client_id: str
     location: str
     rg_name: str
