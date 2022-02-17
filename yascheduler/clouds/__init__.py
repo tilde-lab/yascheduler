@@ -5,7 +5,10 @@ import string
 import random
 import logging
 import subprocess
+from datetime import timedelta, datetime
 from importlib import import_module
+from time import sleep
+from typing import Any, Callable, Dict, TypeVar
 import inspect
 from configparser import NoSectionError, ConfigParser
 
@@ -17,12 +20,13 @@ from paramiko.rsakey import RSAKey
 
 from yascheduler import DEFAULT_NODES_PER_PROVIDER
 
+T = TypeVar('T')
 
 logging.basicConfig(level=logging.INFO)
 
 class AbstractCloudAPI(object):
 
-    name = "abstract"
+    name: str = "abstract"
     config: ConfigParser
 
     def __init__(self, max_nodes=None):
@@ -33,7 +37,8 @@ class AbstractCloudAPI(object):
         self.ssh_custom_key = None
 
     @property
-    def ssh_user(self):
+    def ssh_user(self) -> str:
+        "Default SSH user"
         return self.config.get(
             "clouds",
             f"{self.name}_user",
@@ -75,6 +80,48 @@ class AbstractCloudAPI(object):
     def get_rnd_name(self, prefix):
         return prefix + '-' + \
             ''.join([random.choice(string.ascii_lowercase) for _ in range(8)])
+
+    @property
+    def cloud_config_data(self) -> Dict[str, Any]:
+        "Common cloud-config"
+        return {
+            "package_upgrade": True,
+            "packages": ["openmpi-bin"],
+        }
+
+    def _retry_with_backoff(
+        self,
+        fn: Callable[[], T],
+        max_time: float = 60,
+        max_wait_interval: float = 10,
+    ) -> T:
+        "Retry with random backoff"
+        end_time = datetime.now() + timedelta(seconds=max_time)
+        while True:
+            try:
+                return fn()
+            except Exception as e:
+                if datetime.now() >= end_time:
+                    raise e
+                sleep(
+                    min(
+                        random.random() * max_wait_interval,
+                        max(0, (datetime.now() - end_time).total_seconds()),
+                    )
+                )
+
+    def _run_ssh_cmd_with_backoff(
+        self, host: str, cmd: str, max_time: float = 60, max_wait_time: float = 10
+    ):
+        "Run ssh command with retries on errors"
+
+        def run_cmd():
+            ssh_conn = SSH_Connection(
+                host=host, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
+            )
+            return ssh_conn.run(cmd, hide=True)
+
+        return self._retry_with_backoff(run_cmd, max_time, max_wait_time)
 
     def setup_node(self, ip):
         ssh_conn = SSH_Connection(

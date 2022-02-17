@@ -4,3 +4,7 @@ python-daemon
 
 hcloud
 upcloud_api
+azure-identity~=1.7.1
+azure-mgmt-compute~=24.0.1
+azure-mgmt-network~=19.3.0
+azure-mgmt-resource~=20.1.0
