@@ -49,11 +49,15 @@ if __name__ == '__main__':
         packages=find_packages(),
         package_data={'yascheduler': ['data/*']},
         install_requires=[
-            "pg8000",
+            "azure-identity",
+            "azure-mgmt-compute",
+            "azure-mgmt-network",
+            "azure-mgmt-resource",
             "fabric",
-            "python-daemon",
             "hcloud",
-            "upcloud_api"
+            "pg8000",
+            "python-daemon",
+            "upcloud_api",
         ],
         entry_points={
             "console_scripts": [
