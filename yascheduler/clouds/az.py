@@ -6,11 +6,12 @@ Azure setup:
 - Create a dedicated Resource Group:
   `az group create --location "{location}" --resource-group "{rg_name}"`
 - Create a dedicated application for yascheduler service
-- Assign roles to app in the created Resource Group:
+- Assign roles "Network Contributor" and "Virtual Machine Contributor"
+  to the app in the created Resource Group:
   ```
   az role assignment create \
     --assignee "{client_id}" \
-    --role "{r}" \
+    --role "{role_name}" \
     --resource-group "{rg_name}
   ```
 
