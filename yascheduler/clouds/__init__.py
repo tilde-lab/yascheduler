@@ -93,7 +93,7 @@ class AbstractCloudAPI(object):
         self,
         fn: Callable[[], T],
         max_time: float = 60,
-        max_wait_interval: float = 10,
+        max_interval: float = 10,
     ) -> T:
         "Retry with random backoff"
         end_time = datetime.now() + timedelta(seconds=max_time)
@@ -105,7 +105,7 @@ class AbstractCloudAPI(object):
                     raise e
                 sleep(
                     min(
-                        random.random() * max_wait_interval,
+                        random.random() * max_interval,
                         max(0, (datetime.now() - end_time).total_seconds()),
                     )
                 )
@@ -115,7 +115,7 @@ class AbstractCloudAPI(object):
         host: str,
         cmd: str,
         max_time: float = 60,
-        max_wait_time: float = 10,
+        max_interval: float = 10,
     ):
         "Run ssh command with retries on errors"
 
@@ -127,7 +127,7 @@ class AbstractCloudAPI(object):
             )
             return ssh_conn.run(cmd, hide=True)
 
-        return self._retry_with_backoff(run_cmd, max_time, max_wait_time)
+        return self._retry_with_backoff(run_cmd, max_time, max_interval)
 
     def setup_node(self, ip):
         ssh_conn = SSH_Connection(

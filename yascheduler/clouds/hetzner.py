@@ -47,7 +47,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
 
         # wait node up and ready
         self._run_ssh_cmd_with_backoff(
-            ip, cmd="cloud-init status --wait", max_wait_time=600
+            ip, cmd="cloud-init status --wait", max_interval=5
         )
 
         return ip

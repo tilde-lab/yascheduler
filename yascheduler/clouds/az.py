@@ -354,7 +354,7 @@ class AzureAPI(AbstractCloudAPI):
 
         # wait node up and ready
         self._run_ssh_cmd_with_backoff(
-            ip_address, cmd="cloud-init status --wait", max_wait_time=600
+            ip_address, cmd="cloud-init status --wait", max_time=600
         )
 
         return ip_address
