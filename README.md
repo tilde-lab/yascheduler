@@ -42,9 +42,9 @@ print(result)
 
 ### Providers
 
-All cloud provider settings are set in the `yascheduler.conf` file in the `[cloud]` group. Each provider has its own settings prefix.
+All cloud providers settings are set in the `yascheduler.conf` file in the `[cloud]` group. Each provider has its own settings prefix.
 
-These settings are common to all providers:
+These settings are common to all the providers:
 
 |               |                                                   |
 |---------------|---------------------------------------------------|
@@ -63,7 +63,7 @@ Settings prefix is `hetzner`.
 
 #### Azure
 
-Azure Cloud should configured for `yascheduler`.
+Azure Cloud should be pre-configured for `yascheduler`.
 
 Create a dedicated Enterprise Application for service. Create an Application Registration. Add Client Secret to the Application Registration.
 
@@ -100,6 +100,7 @@ Settings prefix is `upcloud`.
 |--------------------|----------|
 | `upcloud_login`    | Username |
 | `upcloud_password` | Password |
+
 
 AiiDA integration
 ------------
