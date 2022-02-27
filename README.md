@@ -40,13 +40,76 @@ result = yac.queue_submit_task(label, {'fort.34': struct_input, 'INPUT': setup_i
 print(result)
 ```
 
-File paths can be set using environment variables:
+File paths can be set using the environment variables:
 
 |                    | Environment variable    | Default                             |
 |--------------------|-------------------------|-------------------------------------|
 | Configuration file | `YASCHEDULER_CONF_PATH` | `/etc/yascheduler/yascheduler.conf` |
 | Log file path      | `YASCHEDULER_LOG_PATH`  | `/var/log/yascheduler.log`          |
 | PID file           | `YASCHEDULER_PID_PATH`  | `/var/run/yascheduler.pid`          |
+
+
+### Providers
+
+All cloud providers settings are set in the `yascheduler.conf` file in the `[cloud]` group. Each provider has its own settings prefix.
+
+These settings are common to all the providers:
+
+| Param.        | Meaning                                           |
+|---------------|---------------------------------------------------|
+| `*_max_nodes` | The maximum number of nodes for a given provider. |
+| `*_user`      | Per provider override of `remote.user`            |
+
+#### Hetzner
+
+Create an API token with Read & Write permissions for the project.
+
+Settings prefix is `hetzner`.
+
+| Param.          | Meaning   |
+|-----------------|-----------|
+| `hetzner_token` | API token |
+
+#### Azure
+
+Azure Cloud should be pre-configured for `yascheduler`.
+
+Create a dedicated Enterprise Application for service. Create an Application Registration. Add Client Secret to the Application Registration.
+
+Create a dedicated Resource Group. Assign Roles "Network Contributor" and "Virtual Machine Contributor" in the Resource Group.
+
+Settings prefix is `az`.
+
+| Param.                           | Req. | Default                 | Meaning                                            |
+|----------------------------------|------|-------------------------|----------------------------------------------------|
+| `az_tenant_id`                   | ✔️   |                         | Tenant ID of Azure Active Directory                |
+| `az_client_id`                   | ✔️   |                         | Application ID                                     |
+| `az_client_secret`               | ✔️   |                         | Client Secret value from Application Registration. |
+| `az_subscription_id`             | ✔️   |                         | Subscription ID                                    |
+| `az_resource_group`              |      | `YaScheduler-VM-rg`     | Resource Group name                                |
+| `az_user`                        |      | `yascheduler`           | `root` is not supported                            |
+| `az_location`                    |      | `westeurope`            | Default location for resources                     |
+| `az_infra_tmpl_path`             |      | `azure_infra_tmpl.json` | Path to deployment template of common parts        |
+| `az_infra_param_subnetMask`      |      | 24 (max 250 VMs)        | Subnet mask of VMs network                         |
+| `az_infra_param_*`               |      |                         | Any input of deployment template of common parts   |
+| `az_vm_tmpl_path`                |      | `azure_vm_tmpl.json`    | Path to deployment template of VM                  |
+| `az_vm_param_virtualMachineSize` |      | `Standard_B1s`          | Machine type                                       |
+| `az_vm_param_osDiskSize`         |      | `StandardSSD_LRS`       | Root disk type                                     |
+| `az_vm_param_imagePublisher`     |      | `debian`                | OS image publisher                                 |
+| `az_vm_param_imageOffer`         |      | `debian-10`             | OS image offer                                     |
+| `az_vm_param_imageSku`           |      | `10-backports-gen2`     | OS image SKU                                       |
+| `az_vm_param_imageVersion`       |      | `latest`                | OS image version                                   |
+| `az_vm_param_*`                  |      |                         | Any input of deployment template of VM             |
+
+#### UpCloud
+
+Settings prefix is `upcloud`.
+
+| Param.             | Meaning  |
+|--------------------|----------|
+| `upcloud_login`    | Username |
+| `upcloud_password` | Password |
+
 
 AiiDA integration
 ------------
