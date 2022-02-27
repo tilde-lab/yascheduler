@@ -46,7 +46,7 @@ All cloud providers settings are set in the `yascheduler.conf` file in the `[clo
 
 These settings are common to all the providers:
 
-|               |                                                   |
+| Param.        | Meaning                                           |
 |---------------|---------------------------------------------------|
 | `*_max_nodes` | The maximum number of nodes for a given provider. |
 | `*_user`      | Per provider override of `remote.user`            |
@@ -57,7 +57,7 @@ Create an API token with Read & Write permissions for the project.
 
 Settings prefix is `hetzner`.
 
-|                 |           |
+| Param.          | Meaning   |
 |-----------------|-----------|
 | `hetzner_token` | API token |
 
@@ -71,12 +71,12 @@ Create a dedicated Resource Group. Assign Roles "Network Contributor" and "Virtu
 
 Settings prefix is `az`.
 
-|                                  | Req. | Default                 |                                                    |
+| Param.                           | Req. | Default                 | Meaning                                            |
 |----------------------------------|------|-------------------------|----------------------------------------------------|
-| `az_tenant_id`                   | X    |                         | Tenant ID of Azure Active Directory                |
-| `az_client_id`                   | X    |                         | Application ID                                     |
-| `az_client_secret`               | X    |                         | Client Secret value from Application Registration. |
-| `az_subscription_id`             | X    |                         | Subscription ID                                    |
+| `az_tenant_id`                   | ✔️   |                         | Tenant ID of Azure Active Directory                |
+| `az_client_id`                   | ✔️   |                         | Application ID                                     |
+| `az_client_secret`               | ✔️   |                         | Client Secret value from Application Registration. |
+| `az_subscription_id`             | ✔️   |                         | Subscription ID                                    |
 | `az_resource_group`              |      | `YaScheduler-VM-rg`     | Resource Group name                                |
 | `az_user`                        |      | `yascheduler`           | `root` is not supported                            |
 | `az_location`                    |      | `westeurope`            | Default location for resources                     |
@@ -96,7 +96,7 @@ Settings prefix is `az`.
 
 Settings prefix is `upcloud`.
 
-|                    |          |
+| Param.             | Meaning  |
 |--------------------|----------|
 | `upcloud_login`    | Username |
 | `upcloud_password` | Password |
