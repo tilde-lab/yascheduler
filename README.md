@@ -40,6 +40,15 @@ result = yac.queue_submit_task(label, {'fort.34': struct_input, 'INPUT': setup_i
 print(result)
 ```
 
+File paths can be set using the environment variables:
+
+|                    | Environment variable    | Default                             |
+|--------------------|-------------------------|-------------------------------------|
+| Configuration file | `YASCHEDULER_CONF_PATH` | `/etc/yascheduler/yascheduler.conf` |
+| Log file path      | `YASCHEDULER_LOG_PATH`  | `/var/log/yascheduler.log`          |
+| PID file           | `YASCHEDULER_PID_PATH`  | `/var/run/yascheduler.pid`          |
+
+
 ### Providers
 
 All cloud providers settings are set in the `yascheduler.conf` file in the `[cloud]` group. Each provider has its own settings prefix.
