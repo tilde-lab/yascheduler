@@ -1,13 +1,11 @@
 
-import time
+import json
 import logging
 
 from hcloud import Client, APIException
 from hcloud.images.domain import Image
 from hcloud.server_types.domain import ServerType
 from hcloud.ssh_keys.domain import SSHKey
-
-from fabric import Connection as SSH_Connection
 
 from yascheduler.clouds import AbstractCloudAPI
 
@@ -40,22 +38,17 @@ class HetznerCloudAPI(AbstractCloudAPI):
         response = self.client.servers.create(
             name=self.get_rnd_name('node'),
             server_type=ServerType('cx51'), image=Image(name='debian-10'),
-            ssh_keys=[SSHKey(name=self.key_name)]
+            ssh_keys=[SSHKey(name=self.key_name)],
+            user_data="#cloud-config\n" + json.dumps(self.cloud_config_data),
         )
         server = response.server
         ip = server.public_net.ipv4.ip
         logging.info('CREATED %s' % ip)
 
-        time.sleep(5)
-
-        # warm up
-        for _ in range(10):
-            ssh_conn = SSH_Connection(
-                host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
-            )
-            try: ssh_conn.run('whoami', hide=True)
-            except: time.sleep(5)
-            else: break
+        # wait node up and ready
+        self._run_ssh_cmd_with_backoff(
+            ip, cmd="cloud-init status --wait", max_interval=5
+        )
 
         return ip
 
