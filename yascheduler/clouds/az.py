@@ -45,9 +45,9 @@ from configparser import ConfigParser
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute.v2021_07_01 import ComputeManagementClient
 from azure.mgmt.compute.v2021_07_01.operations import VirtualMachinesOperations
-from azure.mgmt.network.v2021_03_01 import NetworkManagementClient
-from azure.mgmt.network.v2021_03_01.models import PublicIPAddress
-from azure.mgmt.network.v2021_03_01.operations import (
+from azure.mgmt.network.v2020_06_01 import NetworkManagementClient
+from azure.mgmt.network.v2020_06_01.models import PublicIPAddress
+from azure.mgmt.network.v2020_06_01.operations import (
     PublicIPAddressesOperations,
     NetworkInterfacesOperations,
 )
