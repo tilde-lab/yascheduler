@@ -1,6 +1,6 @@
 from os import getenv
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 CONFIG_FILE = getenv(
     "YASCHEDULER_CONF_PATH", "/etc/yascheduler/yascheduler.conf"
