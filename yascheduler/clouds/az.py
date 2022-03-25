@@ -39,6 +39,7 @@ import logging
 import random
 import string
 from pathlib import Path
+from threading import Lock
 from typing import cast, Any, Dict, List, NamedTuple, Optional, Union
 
 from configparser import ConfigParser
@@ -73,8 +74,8 @@ for logger_name in [
     "azure.identity._internal.get_token_mixin",
 ]:
     logging.getLogger(logger_name).setLevel(logging.ERROR)
-_log = logging.getLogger(__name__)
 
+infra_deployment_lock = Lock()
 
 RG_LOCATION_MISMATCH_TMPL = (
     "Resource Group '{}' location mismatch: got '{}' instead of '{}'"
@@ -221,7 +222,7 @@ class AzureAPI(AbstractCloudAPI):
         "Default SSH user for azure"
         ssh_user = super().ssh_user
         if ssh_user == "root":
-            _log.warn("Root user not supported on Azure")
+            self._log.warn("Root user not supported on Azure")
             ssh_user = "yascheduler"
         return ssh_user
 
@@ -242,7 +243,11 @@ class AzureAPI(AbstractCloudAPI):
             lambda x: x[0].startswith(prefix), self.config.items(section)
         )
         prefix_removed = map(
-            lambda x: (x[0].removeprefix(prefix), x[1]), filtered
+            lambda x: (
+                x[0][len(prefix):] if x[0].startswith(prefix) else x[0],
+                x[1],
+            ),
+            filtered,
         )
         return dict(prefix_removed)
 
@@ -254,7 +259,7 @@ class AzureAPI(AbstractCloudAPI):
                 msg = RG_LOCATION_MISMATCH_TMPL.format(
                     self.rg_name, rg_result.location, self.location
                 )
-                _log.warning(msg)
+                self._log.warning(msg)
             return rg_result
         except HttpResponseError as e:
             code = getattr(e, "error", None) and getattr(e.error, "code", None)
@@ -291,12 +296,13 @@ class AzureAPI(AbstractCloudAPI):
                 deployment_name=name,
                 parameters=Deployment(properties=properties),
             ).result()
-            _log.info(f"Deployment {name} created/updated")
+            self._log.info(f"Deployment {name} created/updated")
             return res
         except HttpResponseError as e:
             code = getattr(e, "error", None) and getattr(e.error, "code", None)
             if code == "AuthorizationFailed":
                 raise AzureDeploymentCreateRBACError(name) from e
+            self._log.error(e)
             raise AzureDeploymentCreateError(name) from e
 
     def create_infra_deployment(self) -> Dict[str, Any]:
@@ -340,10 +346,14 @@ class AzureAPI(AbstractCloudAPI):
         return res.properties and res.properties.outputs or {}
 
     def create_node(self):
-        infra_outputs = self.create_infra_deployment()
+        infra_deployment_lock.acquire()
+        try:
+            infra_outputs = self.create_infra_deployment()
+        finally:
+            infra_deployment_lock.release()
         vm_outputs = self.create_vm_deployment(infra_outputs)
 
-        ip_name: str | None = vm_outputs.get("publicIpAddressName", {}).get(
+        ip_name: Optional[str] = vm_outputs.get("publicIpAddressName", {}).get(
             "value"
         )
         if not ip_name:
@@ -361,12 +371,12 @@ class AzureAPI(AbstractCloudAPI):
 
     def _run_del_reqs(self, reqs: List[DeleteRequest]) -> None:
         for req in sorted(reqs, key=lambda x: x[0]):
-            _log.info(f"Removing {req.name}...")
+            self._log.info(f"Removing {req.name}...")
             try:
                 req.operations.begin_delete(self.rg_name, req.name).result()
-                _log.info(f"{req.name} removed")
+                self._log.info(f"{req.name} removed")
             except Exception as e:
-                _log.info(f"Can't remove {req.name}: {str(e)}")
+                self._log.info(f"Can't remove {req.name}: {str(e)}")
 
     def delete_node(self, ip):
         del_reqs: List[DeleteRequest] = []
@@ -384,14 +394,14 @@ class AzureAPI(AbstractCloudAPI):
             del_reqs.append(req)
 
         if not pip_obj:
-            _log.error(f"Public IP {ip} not found")
+            self._log.error(f"Public IP {ip} not found")
             return
         pip_tags = cast(Dict[str, str], pip_obj.tags) or {}
 
         # find Deployment
         deployment_id = pip_tags.get("DeploymentId")
         if not deployment_id:
-            _log.error("Deployment ID not found in Public IP tags")
+            self._log.error("Deployment ID not found in Public IP tags")
             return self._run_del_reqs(del_reqs)
 
         deployment_name = self.vm_deployment_name_tmpl.format(
@@ -406,7 +416,9 @@ class AzureAPI(AbstractCloudAPI):
             )
             del_reqs.append(req)
         except Exception as e:
-            _log.error(f"Can't get deployment {deployment_name}: {str(e)}")
+            self._log.error(
+                f"Can't get deployment {deployment_name}: {str(e)}"
+            )
             return self._run_del_reqs(del_reqs)
 
         deps = (
