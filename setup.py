@@ -38,6 +38,10 @@ class CustomInstall(install):
 
 
 if __name__ == '__main__':
+
+    with open('requirements.txt') as f:
+        requirements = f.read().splitlines()
+
     setup(
         name=package_name,
         version=package_version,
@@ -48,17 +52,7 @@ if __name__ == '__main__':
         license="MIT",
         packages=find_packages(),
         package_data={'yascheduler': ['data/*']},
-        install_requires=[
-            "azure-identity",
-            "azure-mgmt-compute",
-            "azure-mgmt-network",
-            "azure-mgmt-resource",
-            "fabric",
-            "hcloud",
-            "pg8000",
-            "python-daemon",
-            "upcloud_api",
-        ],
+        install_requires=requirements,
         entry_points={
             "console_scripts": [
                 "yasubmit = yascheduler.utils:submit",
