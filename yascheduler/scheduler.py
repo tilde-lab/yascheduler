@@ -13,12 +13,10 @@ from collections import Counter
 
 from fabric import Connection as SSH_Connection
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
-from yascheduler.clouds import CloudAPIManager
+import yascheduler.clouds
 from yascheduler.engines import init_engines, get_engines_check_cmd
 
-
-logging.basicConfig(level=logging.DEBUG)
-
+logging.basicConfig(level=logging.INFO)
 
 class Yascheduler(object):
 
@@ -26,7 +24,13 @@ class Yascheduler(object):
     STATUS_RUNNING = 1
     STATUS_DONE = 2
 
-    def __init__(self, config):
+    _log: logging.Logger
+
+    def __init__(self, config, logger: logging.Logger = None):
+        if logger:
+            self._log = logger.getChild(self.__class__.__name__)
+        else:
+            self._log = logging.getLogger(self.__class__.__name__)
         self.config = config
         self.connection, self.cursor = connect_db(config)
         self.ssh_conn_pool = {}
@@ -110,7 +114,7 @@ class Yascheduler(object):
             status=self.STATUS_TO_DO
         ))
         self.connection.commit()
-        logging.info(':::submitted: %s' % label)
+        self._log.info(':::submitted: %s' % label)
         return self.cursor.fetchone()[0]
 
     def ssh_connect(self, new_nodes):
@@ -134,9 +138,11 @@ class Yascheduler(object):
                 host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key
             )
 
-        logging.info('Nodes to watch: %s' % ', '.join(self.ssh_conn_pool.keys()))
+        self._log.info(
+            "Nodes to watch: %s" % ", ".join(self.ssh_conn_pool.keys())
+        )
         if not self.ssh_conn_pool:
-            logging.warning('No nodes set!')
+            self._log.warning('No nodes set!')
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
         assert not self.ssh_check_task(ip), \
@@ -149,7 +155,7 @@ class Yascheduler(object):
         try:
             self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['remote_folder'], hide=True)
         except Exception as err:
-            logging.error('SSH spawn cmd error: %s' % err)
+            self._log.error('SSH spawn cmd error: %s' % err)
             return False
 
         with tempfile.NamedTemporaryFile() as tmp: # NB beware overflown remote
@@ -165,12 +171,12 @@ class Yascheduler(object):
             path=metadata['remote_folder'],
             ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`'
         )
-        logging.debug(run_cmd)
+        self._log.debug(run_cmd)
 
         try:
             self.ssh_conn_pool[ip].run(run_cmd, hide=True, disown=True)
         except Exception as err:
-            logging.error('SSH spawn cmd error: %s' % err)
+            self._log.error('SSH spawn cmd error: %s' % err)
             return False
 
         return True
@@ -193,14 +199,17 @@ class Yascheduler(object):
                 result = str( conn.run(get_engines_check_cmd(self.engines), hide=True) )
                 for engine_name in self.engines:
                     if self.engines[engine_name]['run_marker'] in result:
-                        logging.error(
+                        self._log.error(
                             "Cannot add a busy with %s resourse %s@%s"
                             % (engine_name, ssh_user, ip)
                         )
                         return False
 
         except Exception as err:
-            logging.error('Host %s@%s is unreachable due to: %s' % (self.config.get('remote', 'user'), ip, err))
+            self._log.error(
+                "Host %s@%s is unreachable due to: %s"
+                % (self.config.get("remote", "user"), ip, err)
+            )
             return False
 
         return True
@@ -210,7 +219,7 @@ class Yascheduler(object):
         try:
             result = str( self.ssh_conn_pool[ip].run(get_engines_check_cmd(self.engines), hide=True) )
         except Exception as err:
-            logging.error('SSH status cmd error: %s' % err)
+            self._log.error('SSH status cmd error: %s' % err)
             # TODO handle that situation properly, re-assign ip, etc.
             result = ""
 
@@ -226,7 +235,9 @@ class Yascheduler(object):
                 self.ssh_conn_pool[ip].get(work_folder + '/' + output_file, store_folder + '/' + output_file)
             except IOError as err:
                 # TODO handle that situation properly
-                logging.error('Cannot scp %s: %s' % (work_folder + '/' + output_file, err))
+                self._log.error(
+                    "Cannot scp %s/%s: %s" % (work_folder, output_file, err)
+                )
                 if 'Connection timed out' in str(err): break
 
         if remove:
@@ -251,15 +262,17 @@ def daemonize(log_file=None):
     config = ConfigParser()
     config.read(CONFIG_FILE)
 
-    yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(config), CloudAPIManager(config)
+    yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(
+        config
+    ), yascheduler.clouds.CloudAPIManager(config, logger=logger)
+    logging.getLogger('Yascheduler').setLevel(logging.DEBUG)
     clouds.initialize()
 
     chilling_nodes = Counter() # ips vs. their occurences
 
     logger.debug('Available computing engines: %s' % ', '.join([engine_name for engine_name in yac.engines]))
 
-    # The main scheduler loop
-    while True:
+    def step():
         resources = yac.queue_get_resources()
         all_nodes = [item[0] for item in resources if '.' in item[0]] # NB provision nodes have fake ips
         if sorted(yac.ssh_conn_pool.keys()) != sorted(all_nodes):
@@ -314,7 +327,31 @@ def daemonize(log_file=None):
                 yac.clouds_deallocate(list(deallocatable.elements()))
                 chilling_nodes.subtract(deallocatable)
 
-        time.sleep(SLEEP_INTERVAL)
+        # process results of allocators
+        clouds.do_async_work()
+
+        # print stats
+        nodes = yac.queue_get_resources()
+        enabled_nodes = list(filter(lambda x: x[2], nodes))
+        logger.info(
+            "NODES:\tenabled: %s\ttotal: %s",
+            str(len(enabled_nodes)),
+            str(len(nodes))
+        )
+        logger.info(
+            "TASKS:\trunning: %s\tto do: %s\tdone: %s",
+            len(yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))),
+            len(yac.queue_get_tasks(status=(yac.STATUS_TO_DO,))),
+            len(yac.queue_get_tasks(status=(yac.STATUS_DONE,))),
+        )
+
+    # The main scheduler loop
+    try:
+        while True:
+            step()
+            time.sleep(SLEEP_INTERVAL)
+    except KeyboardInterrupt:
+        clouds.stop()
 
 
 def get_logger(log_file):

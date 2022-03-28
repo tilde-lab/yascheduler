@@ -1,6 +1,5 @@
 
 import json
-import logging
 
 from hcloud import Client, APIException
 from hcloud.images.domain import Image
@@ -43,7 +42,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
         )
         server = response.server
         ip = server.public_net.ipv4.ip
-        logging.info('CREATED %s' % ip)
+        self._log.info('CREATED %s' % ip)
 
         # wait node up and ready
         self._run_ssh_cmd_with_backoff(
@@ -65,7 +64,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
 
         if server:
             server.delete()
-            logging.info('DELETED %s' % ip)
+            self._log.info('DELETED %s' % ip)
 
         else:
-            logging.info('NODE %s NOT DELETED AS UNKNOWN' % ip)
+            self._log.info('NODE %s NOT DELETED AS UNKNOWN' % ip)

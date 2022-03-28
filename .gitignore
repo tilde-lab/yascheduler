@@ -127,3 +127,6 @@ dmypy.json
 
 # Project-specific files
 example/
+
+# working files
+/aiida

@@ -1,6 +1,5 @@
 
 import time
-import logging
 
 from upcloud_api import CloudManager, Server, Storage, ZONE, login_user_block
 
@@ -41,8 +40,8 @@ class UpCloudAPI(AbstractCloudAPI):
             login_user=self.login_user
         ))
         ip = server.get_public_ip()
-        logging.info('CREATED %s' % ip)
-        logging.info('WAITING FOR START...')
+        self._log.info('CREATED %s' % ip)
+        self._log.info('WAITING FOR START...')
         time.sleep(30)
 
         # warm up
@@ -60,7 +59,7 @@ class UpCloudAPI(AbstractCloudAPI):
         for server in self.client.get_servers():
             if server.get_public_ip() == ip:
                 server.stop()
-                logging.info('WAITING FOR STOP...')
+                self._log.info('WAITING FOR STOP...')
                 time.sleep(20)
                 while True:
                     try: server.destroy()
@@ -68,7 +67,7 @@ class UpCloudAPI(AbstractCloudAPI):
                     else: break
                 for storage in server.storage_devices:
                       storage.destroy()
-                logging.info('DELETED %s' % ip)
+                self._log.info('DELETED %s' % ip)
                 break
         else:
-            logging.info('NODE %s NOT DELETED AS UNKNOWN' % ip)
+            self._log.info('NODE %s NOT DELETED AS UNKNOWN' % ip)

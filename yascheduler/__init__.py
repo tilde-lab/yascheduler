@@ -34,18 +34,6 @@ def has_node(config, ip):
     return result
 
 
-def provision_node(config, cloud):
-    connection, cursor = connect_db(config)
-    cursor.execute("""INSERT INTO yascheduler_nodes (ip, enabled, cloud) VALUES (
-        'prov' || SUBSTR(MD5(RANDOM()::TEXT), 0, 11),
-        FALSE,
-        %s
-    );""", [cloud])
-    connection.commit()
-    connection.close()
-    return True
-
-
 def add_node(config, ip, ncpus=None, cloud=None, provisioned=False):
     connection, cursor = connect_db(config)
     if cloud and provisioned:

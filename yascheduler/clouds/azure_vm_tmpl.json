@@ -184,7 +184,7 @@
         },
         "storageProfile": {
           "osDisk": {
-            "createOption": "fromImage",
+            "createOption": "FromImage",
             "deleteOption": "Delete",
             "managedDisk": {
               "storageAccountType": "[parameters('osDiskType')]"

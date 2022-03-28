@@ -37,7 +37,7 @@
       "type": "int",
       "minValue": 0,
       "maxValue": 32,
-      "defaultValue": 24
+      "defaultValue": 20
     },
     "subnetName": {
       "type": "string",
@@ -86,7 +86,7 @@
     },
     {
       "name": "[parameters('virtualNetworkName')]",
-      "type": "Microsoft.Network/VirtualNetworks",
+      "type": "Microsoft.Network/virtualNetworks",
       "apiVersion": "2020-06-01",
       "location": "[parameters('location')]",
       "dependsOn": [],
