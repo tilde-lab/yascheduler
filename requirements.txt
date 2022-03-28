@@ -1,4 +1,5 @@
 pg8000
+paramiko~=2.10.1
 fabric
 python-daemon
 
