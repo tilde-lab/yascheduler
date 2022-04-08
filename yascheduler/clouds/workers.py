@@ -1,56 +1,31 @@
 #!/usr/bin/env python3
 
-import logging
-import threading
 import queue
 from configparser import ConfigParser
 from dataclasses import dataclass
-from time import sleep
 from typing import Dict, List, Optional
 from .abstract_cloud_api import AbstractCloudAPI, load_cloudapi
 from yascheduler import SLEEP_INTERVAL
+from yascheduler.background_worker import BackgroundWorker
 
 
-class BackgroundWorker(threading.Thread):
-    _kill: threading.Event
-    _log: logging.Logger
+class CloudWorker(BackgroundWorker):
     _cfg: ConfigParser
     _apis: Dict[str, AbstractCloudAPI]
-    _sleep_interval: float = SLEEP_INTERVAL
 
     def __init__(
         self,
         config: ConfigParser,
         use_apis: List[str],
-        logger: Optional[logging.Logger] = None,
         **kwargs,
     ):
-        super().__init__(target=self.run, **kwargs)
-        if logger:
-            self._log = logger.getChild(self.name)
-        else:
-            self._log = logging.getLogger(self.name)
-        self._kill = threading.Event()
+        super().__init__(**kwargs)
         self._cfg = config
 
         self._apis = {}
         for api_name in use_apis:
             self._apis[api_name] = load_cloudapi(api_name)(config)
             self._apis[api_name]._log = self._log.getChild(api_name)
-
-    def stop(self):
-        self._log.info("Stopping thread...")
-        self._kill.set()
-
-    def do_work(self):
-        raise NotImplementedError()
-
-    def run(self):
-        self._log.info("Thread started")
-        while not self._kill.is_set():
-            self.do_work()
-            sleep(self._sleep_interval)
-        self._log.info("Thread stopped")
 
 
 @dataclass
@@ -68,7 +43,7 @@ class AllocateResult:
     ncpus: Optional[int] = None
 
 
-class AllocatorWorker(BackgroundWorker):
+class AllocatorWorker(CloudWorker):
     _task_queue: "queue.Queue[AllocateTask]"
     _result_queue: "queue.Queue[AllocateResult]"
 
@@ -125,7 +100,7 @@ class DeallocateResult:
     ip: str
 
 
-class DeallocatorWorker(BackgroundWorker):
+class DeallocatorWorker(CloudWorker):
     _task_queue: "queue.Queue[DeallocateTask]"
     _result_queue: "queue.Queue[DeallocateResult]"
 
