@@ -8,7 +8,7 @@ import tempfile
 import string
 import logging
 from configparser import ConfigParser
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import Counter
 from typing import Optional
 
@@ -16,6 +16,7 @@ from fabric import Connection as SSH_Connection
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
 from yascheduler.engines import init_engines, get_engines_check_cmd
+from yascheduler.utils import sleep_until
 
 logging.basicConfig(level=logging.INFO)
 
@@ -349,8 +350,9 @@ def daemonize(log_file=None):
     # The main scheduler loop
     try:
         while True:
+            end_time = datetime.now() + timedelta(seconds=SLEEP_INTERVAL)
             step()
-            time.sleep(SLEEP_INTERVAL)
+            sleep_until(end_time)
     except KeyboardInterrupt:
         clouds.stop()
 
