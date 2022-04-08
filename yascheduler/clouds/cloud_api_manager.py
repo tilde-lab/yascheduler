@@ -34,7 +34,7 @@ class CloudAPIManager(object):
     _deallocate_results: "queue.Queue[DeallocateResult]"
     yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
 
-    def __init__(self, config, logger: logging.Logger = None):
+    def __init__(self, config, logger: Optional[logging.Logger] = None):
         if logger:
             self._log = logger.getChild(self.__class__.__name__)
         else:

@@ -10,6 +10,7 @@ import logging
 from configparser import ConfigParser
 from datetime import datetime
 from collections import Counter
+from typing import Optional
 
 from fabric import Connection as SSH_Connection
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
@@ -26,7 +27,7 @@ class Yascheduler(object):
 
     _log: logging.Logger
 
-    def __init__(self, config, logger: logging.Logger = None):
+    def __init__(self, config, logger: Optional[logging.Logger] = None):
         if logger:
             self._log = logger.getChild(self.__class__.__name__)
         else:

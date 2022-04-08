@@ -22,7 +22,7 @@ class BackgroundWorker(threading.Thread):
         self,
         config: ConfigParser,
         use_apis: List[str],
-        logger: logging.Logger = None,
+        logger: Optional[logging.Logger] = None,
         **kwargs,
     ):
         super().__init__(target=self.run, **kwargs)

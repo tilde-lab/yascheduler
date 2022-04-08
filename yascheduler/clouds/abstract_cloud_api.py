@@ -31,7 +31,7 @@ class AbstractCloudAPI(object):
     config: ConfigParser
     yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
 
-    def __init__(self, max_nodes: int = None, logger: logging.Logger = None):
+    def __init__(self, max_nodes: int = None, logger: Optional[logging.Logger] = None):
         if logger:
             self.log = logger.getChild(self.name)
         else:
