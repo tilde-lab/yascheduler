@@ -5,8 +5,8 @@ from configparser import ConfigParser
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from .abstract_cloud_api import AbstractCloudAPI, load_cloudapi
-from yascheduler import SLEEP_INTERVAL
-from yascheduler.background_worker import BackgroundWorker
+from .. import SLEEP_INTERVAL
+from ..background_worker import BackgroundWorker
 
 
 class CloudWorker(BackgroundWorker):

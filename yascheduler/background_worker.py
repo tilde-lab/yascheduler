@@ -4,8 +4,8 @@ import logging
 import threading
 from datetime import datetime, timedelta
 from typing import Optional
-from yascheduler import SLEEP_INTERVAL
-from yascheduler.utils import sleep_until
+from yascheduler.variables import SLEEP_INTERVAL
+from yascheduler.time import sleep_until
 
 
 class BackgroundWorker(threading.Thread):

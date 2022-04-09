@@ -4,24 +4,15 @@ Console scripts for yascheduler
 import os
 import argparse
 from configparser import ConfigParser
-from datetime import datetime
-from time import sleep
 
 from pg8000 import ProgrammingError
 from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
 from invoke.exceptions import UnexpectedExit
 
-from yascheduler import CONFIG_FILE, has_node, add_node, remove_node
+from yascheduler import has_node, add_node, remove_node
+from yascheduler.variables import CONFIG_FILE
 from yascheduler.scheduler import Yascheduler
-
-
-def sleep_until(end: datetime) -> None:
-    "Sleep until :end:"
-    now = datetime.now()
-    if now >= end:
-        return
-    sleep((now - end).total_seconds())
 
 
 def submit():
