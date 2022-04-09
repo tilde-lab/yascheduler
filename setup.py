@@ -47,8 +47,8 @@ if __name__ == '__main__':
         version=package_version,
         author="Evgeny Blokhin",
         author_email="eb@tilde.pro",
-        description="Yet another scheduler",
-        long_description=open('README.md').read(),
+        description="Yet another computing scheduler and cloud orchestration engine",
+        long_description="*Yascheduler* is a simple job scheduler designed for submitting scientific simulations and copying back their results from the computing clouds.",
         license="MIT",
         packages=find_packages(),
         package_data={'yascheduler': ['data/*']},
@@ -66,5 +66,20 @@ if __name__ == '__main__':
             ],
         },
         cmdclass={'install': CustomInstall},
-        python_requires='>=3.5'
+        python_requires='>=3.5',
+        classifiers=[
+            'Development Status :: 4 - Beta',
+            'Intended Audience :: Science/Research',
+            'Topic :: Scientific/Engineering :: Chemistry',
+            'Topic :: Scientific/Engineering :: Physics',
+            'Topic :: Scientific/Engineering :: Information Analysis',
+            'Topic :: Software Development :: Libraries :: Python Modules',
+            'License :: OSI Approved :: MIT License',
+            'Programming Language :: Python :: 3',
+            'Programming Language :: Python :: 3.5',
+            'Programming Language :: Python :: 3.6',
+            'Programming Language :: Python :: 3.7',
+            'Programming Language :: Python :: 3.8',
+            'Programming Language :: Python :: 3.9'
+        ]
     )
