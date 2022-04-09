@@ -50,6 +50,7 @@ if __name__ == '__main__':
         description="Yet another computing scheduler and cloud orchestration engine",
         long_description="*Yascheduler* is a simple job scheduler designed for submitting scientific simulations and copying back their results from the computing clouds.",
         license="MIT",
+        url='https://github.com/tilde-lab/yascheduler',
         packages=find_packages(),
         package_data={'yascheduler': ['data/*']},
         install_requires=requirements,

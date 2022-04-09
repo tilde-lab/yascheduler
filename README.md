@@ -8,7 +8,9 @@ Currently it has been used for the _ab initio_ [CRYSTAL](http://www.crystal.unit
 
 Installation
 ------------
-Use `pip` and PyPI: `pip install yascheduler`. The last updates and bugfixes can be obtained cloning the repository:
+Use `pip` and PyPI: `pip install yascheduler`.
+
+The last updates and bugfixes can be obtained cloning the repository:
 ```
     git clone https://github.com/tilde-lab/yascheduler.git
     pip install yascheduler/
