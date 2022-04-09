@@ -1,4 +1,9 @@
-from .variables import *
+
+from .variables import (
+    __version__,
+    CONFIG_FILE, LOG_FILE, PID_FILE,
+    SLEEP_INTERVAL, N_IDLE_PASSES, DEFAULT_NODES_PER_PROVIDER
+)
 
 
 def connect_db(config):
