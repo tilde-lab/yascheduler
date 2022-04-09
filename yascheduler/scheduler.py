@@ -1,22 +1,26 @@
 #!/usr/bin/env python
 
-import os
-import random
 import json
-import time
-import tempfile
-import string
 import logging
+import os
+import queue
+import random
+import string
+import tempfile
 from configparser import ConfigParser
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import Counter
+from typing import List, Optional
 
 from fabric import Connection as SSH_Connection
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
 from yascheduler.engines import init_engines, get_engines_check_cmd
+from yascheduler.time import sleep_until
+from yascheduler.webhook_worker import WebhookWorker, WebhookTask
 
 logging.basicConfig(level=logging.INFO)
+
 
 class Yascheduler(object):
 
@@ -25,8 +29,10 @@ class Yascheduler(object):
     STATUS_DONE = 2
 
     _log: logging.Logger
+    _webhook_queue: "queue.Queue[WebhookTask]"
+    _webhook_threads: List[WebhookWorker]
 
-    def __init__(self, config, logger: logging.Logger = None):
+    def __init__(self, config, logger: Optional[logging.Logger] = None):
         if logger:
             self._log = logger.getChild(self.__class__.__name__)
         else:
@@ -37,6 +43,22 @@ class Yascheduler(object):
         self.ssh_custom_key = {}
         self.clouds = None
         self.engines = init_engines(config)
+        self._webhook_queue = queue.Queue()
+        webhook_thread_num = int(
+            config.get("local", "webhook_threads", fallback=2)
+        )
+        self._webhook_threads = []
+        for i in range(webhook_thread_num):
+            t = WebhookWorker(
+                name=f"WebhookThread[{i}]",
+                logger=self._log,
+                task_queue=self._webhook_queue,
+            )
+            self._webhook_threads.append(t)
+
+    def start(self) -> None:
+        for t in self._webhook_threads:
+            t.start()
 
     def queue_get_resources(self):
         self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;')
@@ -80,15 +102,22 @@ class Yascheduler(object):
         self.cursor.execute(sql_statement, params)
         return [dict(task_id=row[0], label=row[1], ip=row[2], status=row[3]) for row in self.cursor.fetchall()]
 
+    def enqueue_task_event(self, task_id: int) -> None:
+        task = self.queue_get_task(task_id) or {}
+        wt = WebhookTask.from_dict(task)
+        self._webhook_queue.put(wt)
+
     def queue_set_task_running(self, task_id, ip):
         self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip=%s WHERE task_id=%s;",
                             (self.STATUS_RUNNING, ip, task_id))
         self.connection.commit()
+        self.enqueue_task_event(task_id)
 
     def queue_set_task_done(self, task_id, metadata):
         self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata=%s WHERE task_id=%s;",
                             (self.STATUS_DONE, json.dumps(metadata), task_id))
         self.connection.commit()
+        self.enqueue_task_event(task_id)
         #if self.clouds:
         # TODO: free-up CloudAPIManager().tasks
 
@@ -256,6 +285,12 @@ class Yascheduler(object):
             return self.clouds.get_capacity(resources)
         return 0
 
+    def stop(self):
+        self._log.info("Stopping threads...")
+        for t in self._webhook_threads:
+            t.stop()
+            t.join()
+
 
 def daemonize(log_file=None):
     logger = get_logger(log_file)
@@ -267,6 +302,7 @@ def daemonize(log_file=None):
     ), yascheduler.clouds.CloudAPIManager(config, logger=logger)
     logging.getLogger('Yascheduler').setLevel(logging.DEBUG)
     clouds.initialize()
+    yac.start()
 
     chilling_nodes = Counter() # ips vs. their occurences
 
@@ -290,13 +326,18 @@ def daemonize(log_file=None):
                 except ValueError: pass
             else:
                 ready_task = yac.queue_get_task(task['task_id'])
+                webhook_url = ready_task['metadata'].get('webhook_url')
                 store_folder = ready_task['metadata'].get('local_folder') or \
                     os.path.join(config.get('local', 'data_dir'),
                                  os.path.basename(ready_task['metadata']['remote_folder']))
                 os.makedirs(store_folder, exist_ok=True) # TODO OSError if restart or invalid data_dir
                 yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['engine'], ready_task['metadata']['remote_folder'], store_folder)
-                ready_task['metadata'] = dict(remote_folder=ready_task['metadata']['remote_folder'],
-                                              local_folder=store_folder)
+                ready_task['metadata'] = dict(
+                    remote_folder=ready_task['metadata']['remote_folder'],
+                    local_folder=store_folder,
+                )
+                if webhook_url:
+                    ready_task['metadata']['webhook_url'] = webhook_url
                 yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
                 logger.info(':::task_id={} {} done and saved in {}'.format(task['task_id'], ready_task['label'],
                                                                 ready_task['metadata'].get('local_folder')))
@@ -348,10 +389,12 @@ def daemonize(log_file=None):
     # The main scheduler loop
     try:
         while True:
+            end_time = datetime.now() + timedelta(seconds=SLEEP_INTERVAL)
             step()
-            time.sleep(SLEEP_INTERVAL)
+            sleep_until(end_time)
     except KeyboardInterrupt:
         clouds.stop()
+        yac.stop()
 
 
 def get_logger(log_file):

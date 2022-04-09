@@ -2,6 +2,7 @@ pg8000
 paramiko~=2.10.1
 fabric
 python-daemon
+requests>=2.21
 
 hcloud
 upcloud_api

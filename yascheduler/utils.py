@@ -10,7 +10,8 @@ from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
 from invoke.exceptions import UnexpectedExit
 
-from yascheduler import CONFIG_FILE, has_node, add_node, remove_node
+from yascheduler import has_node, add_node, remove_node
+from yascheduler.variables import CONFIG_FILE
 from yascheduler.scheduler import Yascheduler
 
 
