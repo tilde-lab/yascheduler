@@ -70,7 +70,7 @@ class Yascheduler(object):
                 "SELECT ip, ncpus, enabled, cloud "
                 "FROM yascheduler_nodes WHERE ip=%s;"
             ),
-            (ip),
+            [ip],
         )
         return self.cursor.fetchone()
 
