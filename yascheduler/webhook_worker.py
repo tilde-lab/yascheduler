@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
+import logging
 import inspect
 import queue
 import dataclasses
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
@@ -34,6 +36,7 @@ class WebhookTaskMetadata:
 
 @dataclass
 class WebhookTask:
+    task_id: int
     status: int
     metadata: WebhookTaskMetadata
 
@@ -48,6 +51,7 @@ class WebhookTask:
 
 @dataclass
 class WebhookPayload:
+    task_id: int
     status: int
 
 
@@ -79,11 +83,11 @@ class WebhookWorker(BackgroundWorker):
             return
 
         self._log.info(f"Executing webhook to {t.metadata.webhook_url}")
-        payload = WebhookPayload(status=t.status)
+        payload = WebhookPayload(task_id=t.task_id, status=t.status)
         try:
             response = self.http.post(
                 url=t.metadata.webhook_url,
-                json=dataclasses.asdict(payload),
+                data=dataclasses.asdict(payload),
             )
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
