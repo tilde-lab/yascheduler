@@ -68,7 +68,7 @@ class Yascheduler(object):
         self.cursor.execute(
             (
                 "SELECT ip, ncpus, enabled, cloud "
-                "FROM yascheduler_nodes WHERE ip=(%S);"
+                "FROM yascheduler_nodes WHERE ip=%s;"
             ),
             (ip),
         )
