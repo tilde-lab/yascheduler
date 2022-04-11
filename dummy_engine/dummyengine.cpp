@@ -3,6 +3,8 @@
 #include <iostream>
 #include <fstream>
 #include <unistd.h>
+#include <time.h>
+#include <stdlib.h>
 using namespace std;
 
 // g++ -o dummyengine dummyengine.cpp
@@ -38,7 +40,10 @@ int main(int argc, char *argv[])
         delete[] outfname;
     }
 
-sleep(4);
+srand(time(NULL));
+int sleep_time = rand() % 8;
+printf("sleeping %d seconds\n", sleep_time);
+sleep(sleep_time);
 
 return 0;
 }
