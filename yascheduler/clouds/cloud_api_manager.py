@@ -89,7 +89,7 @@ class CloudAPIManager(object):
         )
         self._deallocators = [
             DeallocatorWorker(
-                name=f"DellocatorThread[{x}]",
+                name=f"DeallocatorThread[{x}]",
                 logger=self._log,
                 config=config,
                 use_apis=self.apis.keys(),
