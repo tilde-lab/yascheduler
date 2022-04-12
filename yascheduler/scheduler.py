@@ -172,17 +172,25 @@ class Yascheduler:
         self._webhook_queue.put(wt)
 
     def queue_set_task_running(self, task_id, ip):
-        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, ip=%s WHERE task_id=%s;",
-                            (self.STATUS_RUNNING, ip, task_id))
+        self.cursor.execute(
+            "UPDATE yascheduler_tasks SET status=%s, ip=%s WHERE task_id=%s;",
+            (self.STATUS_RUNNING, ip, task_id),
+        )
         self.connection.commit()
         self.enqueue_task_event(task_id)
 
     def queue_set_task_done(self, task_id, metadata):
-        self.cursor.execute("UPDATE yascheduler_tasks SET status=%s, metadata=%s WHERE task_id=%s;",
-                            (self.STATUS_DONE, json.dumps(metadata), task_id))
+        self.cursor.execute(
+            """
+            UPDATE yascheduler_tasks
+            SET status=%s, metadata=%s
+            WHERE task_id=%s;
+            """,
+            (self.STATUS_DONE, json.dumps(metadata), task_id),
+        )
         self.connection.commit()
         self.enqueue_task_event(task_id)
-        #if self.clouds:
+        # if self.clouds:
         # TODO: free-up CloudAPIManager().tasks
 
     def queue_submit_task(
@@ -195,22 +203,31 @@ class Yascheduler:
 
         for input_file in self.engines[engine_name].input_files:
             if input_file not in metadata:
-                raise RuntimeError("Input file %s was not provided" % input_file)
+                raise RuntimeError(
+                    "Input file %s was not provided" % input_file
+                )
 
-        metadata['remote_folder'] = os.path.join(self.config.get('remote', 'data_dir'),
-                                                 '_'.join([datetime.now().strftime('%Y%m%d_%H%M%S'),
-                                                           ''.join([random.choice(string.ascii_lowercase) for _ in range(4)])]))
         metadata["engine"] = engine_name
+        rnd_str = "".join(
+            [random.choice(string.ascii_lowercase) for _ in range(4)]
+        )
+        metadata["remote_folder"] = os.path.join(
+            self.config.get("remote", "data_dir"),
+            "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str),
+        )
 
-        self.cursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
+        self.cursor.execute(
+            """
+            INSERT INTO yascheduler_tasks (label, metadata, ip, status)
             VALUES ('{label}', '{metadata}', NULL, {status})
             RETURNING task_id;""".format(
-            label=label,
-            metadata=json.dumps(metadata),
-            status=self.STATUS_TO_DO
-        ))
+                label=label,
+                metadata=json.dumps(metadata),
+                status=self.STATUS_TO_DO,
+            )
+        )
         self.connection.commit()
-        self._log.info(':::submitted: %s' % label)
+        self._log.info(":::submitted: %s" % label)
         return self.cursor.fetchone()[0]
 
     def ssh_connect(self, new_nodes):
@@ -238,42 +255,51 @@ class Yascheduler:
             "Nodes to watch: %s" % ", ".join(self.ssh_conn_pool.keys())
         )
         if not self.ssh_conn_pool:
-            self._log.warning('No nodes set!')
+            self._log.warning("No nodes set!")
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
-        assert not self.ssh_check_task(ip), \
-            "Cannot run the task %s at host %s, as this host is already occupied with another task!" % (
-            label, ip) # TODO handle this situation
+        # TODO handle this situation
+        assert not self.ssh_check_task(
+            ip
+        ), f"""
+            Cannot run the task {label} at host {ip}, as this host is already
+            occupied with another task!
+            """
 
-        assert metadata['remote_folder']
-        assert metadata['engine'] in self.engines
+        assert metadata["remote_folder"]
+        assert metadata["engine"] in self.engines
         engine = self.engines[metadata["engine"]]
 
         try:
-            self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['remote_folder'], hide=True)
+            self.ssh_conn_pool[ip].run(
+                "mkdir -p %s" % metadata["remote_folder"], hide=True
+            )
         except Exception as err:
-            self._log.error('SSH spawn cmd error: %s' % err)
+            self._log.error("SSH spawn cmd error: %s" % err)
             return False
 
-        with tempfile.NamedTemporaryFile() as tmp: # NB beware overflown remote
-                tmp.write(metadata[input_file].encode('utf-8'))
+        with tempfile.NamedTemporaryFile() as tmp:  # NB beware overflown remote
             for input_file in engine.input_files:
+                tmp.write(metadata[input_file].encode("utf-8"))
                 tmp.flush()
-                self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/' + input_file)
+                self.ssh_conn_pool[ip].put(
+                    tmp.name,
+                    os.path.join(metadata["remote_folder"], input_file),
+                )
                 tmp.seek(0)
                 tmp.truncate()
 
         # placeholders {path} and {ncpus} are supported
-            path=metadata['remote_folder'],
-            ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`'
         run_cmd = engine.spawn.format(
+            path=metadata["remote_folder"],
+            ncpus=ncpus or "`grep -c ^processor /proc/cpuinfo`",
         )
         self._log.debug(run_cmd)
 
         try:
             self.ssh_conn_pool[ip].run(run_cmd, hide=True, disown=True)
         except Exception as err:
-            self._log.error('SSH spawn cmd error: %s' % err)
+            self._log.error("SSH spawn cmd error: %s" % err)
             return False
 
         return True
@@ -281,8 +307,8 @@ class Yascheduler:
     def ssh_check_node(self, ip):
         try:
             node_info = self.queue_get_resource(ip)
-            cloud = (
-                self.clouds and self.clouds.apis.get(node_info and node_info[3])
+            cloud = self.clouds and self.clouds.apis.get(
+                node_info and node_info[3]
             )
             ssh_user = (
                 cloud and cloud.ssh_user or self.config.get("remote", "user")
@@ -301,7 +327,7 @@ class Yascheduler:
                     if engine.run_marker in result:
                         self._log.error(
                             "Cannot add a busy with %s resourse %s@%s"
-                            % (engine_name, ssh_user, ip)
+                            % (engine.name, ssh_user, ip)
                         )
                         return False
 
@@ -315,12 +341,15 @@ class Yascheduler:
         return True
 
     def ssh_check_task(self, ip):
-        assert ip in self.ssh_conn_pool, "Node %s was referred by active task, however absent in node list" % ip
+        assert ip in self.ssh_conn_pool, (
+            f"Node {ip} was referred by active task, however absent in node list"
+            % ip
+        )
         try:
             check_cmd = " && ".join([x.check for x in self.engines.values()])
             result = str(self.ssh_conn_pool[ip].run(check_cmd, hide=True))
         except Exception as err:
-            self._log.error('SSH status cmd error: %s' % err)
+            self._log.error("SSH status cmd error: %s" % err)
             # TODO handle that situation properly, re-assign ip, etc.
             result = ""
 
@@ -333,16 +362,20 @@ class Yascheduler:
     def ssh_get_task(self, ip, engine, work_folder, store_folder, remove=True):
         for output_file in self.engines[engine].output_files:
             try:
-                self.ssh_conn_pool[ip].get(work_folder + '/' + output_file, store_folder + '/' + output_file)
+                self.ssh_conn_pool[ip].get(
+                    os.path.join(work_folder, output_file),
+                    os.path.join(store_folder, output_file),
+                )
             except IOError as err:
                 # TODO handle that situation properly
                 self._log.error(
                     "Cannot scp %s/%s: %s" % (work_folder, output_file, err)
                 )
-                if 'Connection timed out' in str(err): break
+                if "Connection timed out" in str(err):
+                    break
 
         if remove:
-            self.ssh_conn_pool[ip].run('rm -rf %s' % work_folder, hide=True)
+            self.ssh_conn_pool[ip].run("rm -rf %s" % work_folder, hide=True)
 
     def clouds_allocate(self, on_task):
         if self.clouds:
@@ -369,20 +402,30 @@ def daemonize(log_file=None):
     config = ConfigParser()
     config.read(CONFIG_FILE)
 
-    yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(
-        config
-    ), yascheduler.clouds.CloudAPIManager(config, logger=logger)
-    logging.getLogger('Yascheduler').setLevel(logging.DEBUG)
+    yac = Yascheduler(config)
+    clouds = yascheduler.clouds.CloudAPIManager(config, logger=logger)
+    yac.clouds = clouds
+    clouds.yascheduler = yac
+
+    # yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(
+    #     config
+    # ), yascheduler.clouds.CloudAPIManager(config, logger=logger)
+    logging.getLogger("Yascheduler").setLevel(logging.DEBUG)
     clouds.initialize()
     yac.start()
 
-    chilling_nodes = Counter() # ips vs. their occurences
+    chilling_nodes = Counter()  # ips vs. their occurences
 
-    logger.debug('Available computing engines: %s' % ', '.join([engine_name for engine_name in yac.engines]))
+    logger.debug(
+        "Available computing engines: %s"
+        % ", ".join([engine_name for engine_name in yac.engines])
+    )
 
     def step():
         resources = yac.queue_get_resources()
-        all_nodes = [item[0] for item in resources if '.' in item[0]] # NB provision nodes have fake ips
+        all_nodes = [
+            item[0] for item in resources if "." in item[0]
+        ]  # NB provision nodes have fake ips
         if sorted(yac.ssh_conn_pool.keys()) != sorted(all_nodes):
             yac.ssh_connect(all_nodes)
 
@@ -391,51 +434,85 @@ def daemonize(log_file=None):
 
         # (I.) Tasks de-allocation clause
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
-        logger.debug('running %s tasks: %s' % (len(tasks_running), tasks_running))
+        logger.debug(
+            "running %s tasks: %s" % (len(tasks_running), tasks_running)
+        )
         for task in tasks_running:
-            if yac.ssh_check_task(task['ip']):
-                try: free_nodes.remove(task['ip'])
-                except ValueError: pass
+            if yac.ssh_check_task(task["ip"]):
+                try:
+                    free_nodes.remove(task["ip"])
+                except ValueError:
+                    pass
             else:
-                ready_task = yac.queue_get_task(task['task_id'])
-                webhook_url = ready_task['metadata'].get('webhook_url')
-                store_folder = ready_task['metadata'].get('local_folder') or \
-                    os.path.join(config.get('local', 'data_dir'),
-                                 os.path.basename(ready_task['metadata']['remote_folder']))
-                os.makedirs(store_folder, exist_ok=True) # TODO OSError if restart or invalid data_dir
-                yac.ssh_get_task(ready_task['ip'], ready_task['metadata']['engine'], ready_task['metadata']['remote_folder'], store_folder)
-                ready_task['metadata'] = dict(
-                    remote_folder=ready_task['metadata']['remote_folder'],
+                ready_task = yac.queue_get_task(task["task_id"])
+                webhook_url = ready_task["metadata"].get("webhook_url")
+                store_folder = ready_task["metadata"].get(
+                    "local_folder"
+                ) or os.path.join(
+                    config.get("local", "data_dir"),
+                    os.path.basename(ready_task["metadata"]["remote_folder"]),
+                )
+                os.makedirs(
+                    store_folder, exist_ok=True
+                )  # TODO OSError if restart or invalid data_dir
+                yac.ssh_get_task(
+                    ready_task["ip"],
+                    ready_task["metadata"]["engine"],
+                    ready_task["metadata"]["remote_folder"],
+                    store_folder,
+                )
+                ready_task["metadata"] = dict(
+                    remote_folder=ready_task["metadata"]["remote_folder"],
                     local_folder=store_folder,
                 )
                 if webhook_url:
-                    ready_task['metadata']['webhook_url'] = webhook_url
-                yac.queue_set_task_done(ready_task['task_id'], ready_task['metadata'])
-                logger.info(':::task_id={} {} done and saved in {}'.format(task['task_id'], ready_task['label'],
-                                                                ready_task['metadata'].get('local_folder')))
+                    ready_task["metadata"]["webhook_url"] = webhook_url
+                yac.queue_set_task_done(
+                    ready_task["task_id"], ready_task["metadata"]
+                )
+                logger.info(
+                    ":::task_id={} {} done and saved in {}".format(
+                        task["task_id"],
+                        ready_task["label"],
+                        ready_task["metadata"].get("local_folder"),
+                    )
+                )
                 # TODO here we might want to notify our data consumers in an event-driven manner
                 # TODO but how to do it quickly or in the background?
 
         # (II.) Resourses and tasks allocation clause
         clouds_capacity = yac.clouds_get_capacity(resources)
         if free_nodes or clouds_capacity:
-            for task in yac.queue_get_tasks_to_do(clouds_capacity + len(free_nodes)):
+            for task in yac.queue_get_tasks_to_do(
+                clouds_capacity + len(free_nodes)
+            ):
                 if not free_nodes:
-                    yac.clouds_allocate(task['task_id'])
+                    yac.clouds_allocate(task["task_id"])
                     continue
                 random.shuffle(free_nodes)
                 ip = free_nodes.pop()
-                logger.info(':::submitting task_id=%s %s to %s' % (task['task_id'], task['label'], ip))
+                logger.info(
+                    ":::submitting task_id=%s %s to %s"
+                    % (task["task_id"], task["label"], ip)
+                )
 
-                if yac.ssh_run_task(ip, enabled_nodes[ip], task['label'], task['metadata']):
-                    yac.queue_set_task_running(task['task_id'], ip)
+                if yac.ssh_run_task(
+                    ip, enabled_nodes[ip], task["label"], task["metadata"]
+                ):
+                    yac.queue_set_task_running(task["task_id"], ip)
 
         # (III.) Resourses de-allocation clause
-        if free_nodes: # candidates for removal
+        if free_nodes:  # candidates for removal
             chilling_nodes.update(free_nodes)
-            deallocatable = Counter([
-                x[0] for x in filter(lambda x: x[1] >= N_IDLE_PASSES, chilling_nodes.most_common())
-            ])
+            deallocatable = Counter(
+                [
+                    x[0]
+                    for x in filter(
+                        lambda x: x[1] >= N_IDLE_PASSES,
+                        chilling_nodes.most_common(),
+                    )
+                ]
+            )
             if deallocatable:
                 yac.clouds_deallocate(list(deallocatable.elements()))
                 chilling_nodes.subtract(deallocatable)
@@ -449,7 +526,7 @@ def daemonize(log_file=None):
         logger.info(
             "NODES:\tenabled: %s\ttotal: %s",
             str(len(enabled_nodes)),
-            str(len(nodes))
+            str(len(nodes)),
         )
         logger.info(
             "TASKS:\trunning: %s\tto do: %s\tdone: %s",
@@ -470,13 +547,15 @@ def daemonize(log_file=None):
 
 
 def get_logger(log_file):
-    logger = logging.getLogger('yascheduler')
+    logger = logging.getLogger("yascheduler")
     logger.setLevel(logging.DEBUG)
 
     if log_file:
         fh = logging.FileHandler(log_file)
         fh.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         fh.setFormatter(formatter)
         logger.addHandler(fh)
 
