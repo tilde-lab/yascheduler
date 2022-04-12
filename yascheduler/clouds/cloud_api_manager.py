@@ -4,9 +4,9 @@ import logging
 import queue
 import random
 from configparser import NoSectionError
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from .abstract_cloud_api import load_cloudapi
+from .abstract_cloud_api import AbstractCloudAPI, load_cloudapi
 from .workers import (
     AllocateResult,
     AllocateTask,
@@ -32,6 +32,7 @@ class CloudAPIManager(object):
     _deallocators: List[DeallocatorWorker]
     _deallocate_tasks: "queue.Queue[DeallocateTask]"
     _deallocate_results: "queue.Queue[DeallocateResult]"
+    apis: Dict[str, AbstractCloudAPI]
     yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
 
     def __init__(self, config, logger: Optional[logging.Logger] = None):

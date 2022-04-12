@@ -10,19 +10,22 @@ import tempfile
 from configparser import ConfigParser
 from datetime import datetime, timedelta
 from collections import Counter
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
+import pg8000
 from fabric import Connection as SSH_Connection
+from paramiko.rsakey import RSAKey
+
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
-from yascheduler.engines import init_engines, get_engines_check_cmd
+from yascheduler.engine import Engine
 from yascheduler.time import sleep_until
 from yascheduler.webhook_worker import WebhookWorker, WebhookTask
 
 logging.basicConfig(level=logging.INFO)
 
 
-class Yascheduler(object):
+class Yascheduler:
 
     STATUS_TO_DO = 0
     STATUS_RUNNING = 1
@@ -31,8 +34,17 @@ class Yascheduler(object):
     _log: logging.Logger
     _webhook_queue: "queue.Queue[WebhookTask]"
     _webhook_threads: List[WebhookWorker]
+    clouds: Optional["yascheduler.clouds.CloudAPIManager"] = None
+    config: ConfigParser
+    connection: pg8000.Connection
+    cursor: pg8000.Cursor
+    engines: Dict[str, Engine]
+    ssh_conn_pool: Dict[str, SSH_Connection]
+    ssh_custom_key: Dict[str, RSAKey]
 
-    def __init__(self, config, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self, config: ConfigParser, logger: Optional[logging.Logger] = None
+    ):
         if logger:
             self._log = logger.getChild(self.__class__.__name__)
         else:
@@ -41,8 +53,8 @@ class Yascheduler(object):
         self.connection, self.cursor = connect_db(config)
         self.ssh_conn_pool = {}
         self.ssh_custom_key = {}
-        self.clouds = None
-        self.engines = init_engines(config)
+        self.engines = self._load_engines()
+
         self._webhook_queue = queue.Queue()
         webhook_thread_num = int(
             config.get("local", "webhook_threads", fallback=2)
@@ -56,51 +68,103 @@ class Yascheduler(object):
             )
             self._webhook_threads.append(t)
 
+    def _load_engines(self) -> Dict[str, Engine]:
+        engines = {}
+        for section_name in self.config.sections():
+            if not section_name.startswith("engine."):
+                continue
+            section = self.config[section_name]
+            engine = Engine.from_config(section)
+            engines[engine.name] = engine
+
+        if not engines:
+            raise RuntimeError("No engines were set up")
+
+        return engines
+
     def start(self) -> None:
         for t in self._webhook_threads:
             t.start()
 
     def queue_get_resources(self):
-        self.cursor.execute('SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;')
+        self.cursor.execute(
+            "SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;"
+        )
         return self.cursor.fetchall()
 
     def queue_get_resource(self, ip):
         self.cursor.execute(
-            (
-                "SELECT ip, ncpus, enabled, cloud "
-                "FROM yascheduler_nodes WHERE ip=%s;"
-            ),
+            """
+            SELECT ip, ncpus, enabled, cloud
+            FROM yascheduler_nodes
+            WHERE ip=%s;
+            """,
             [ip],
         )
         return self.cursor.fetchone()
 
     def queue_get_task(self, task_id):
-        self.cursor.execute('SELECT label, metadata, ip, status FROM yascheduler_tasks WHERE task_id=%s;' % task_id)
+        self.cursor.execute(
+            """
+            SELECT label, metadata, ip, status
+            FROM yascheduler_tasks
+            WHERE task_id=%s;
+            """,
+            [task_id],
+        )
         row = self.cursor.fetchone()
         if not row:
             return None
-        return dict(task_id=task_id, label=row[0], metadata=row[1], ip=row[2], status=row[3])
+        return dict(
+            task_id=task_id,
+            label=row[0],
+            metadata=row[1],
+            ip=row[2],
+            status=row[3],
+        )
 
     def queue_get_tasks_to_do(self, num_nodes):
-        self.cursor.execute('SELECT task_id, label, metadata FROM yascheduler_tasks WHERE status=%s LIMIT %s;',
-                            (self.STATUS_TO_DO, num_nodes))
-        return [dict(task_id=row[0], label=row[1], metadata=row[2]) for row in self.cursor.fetchall()]
+        self.cursor.execute(
+            """
+            SELECT task_id, label, metadata
+            FROM yascheduler_tasks
+            WHERE status=%s LIMIT %s;
+            """,
+            (self.STATUS_TO_DO, num_nodes),
+        )
+        return [
+            dict(task_id=row[0], label=row[1], metadata=row[2])
+            for row in self.cursor.fetchall()
+        ]
 
     def queue_get_tasks(self, jobs=None, status=None):
         if jobs is not None and status is not None:
-            raise ValueError("jobs can be selected only by status or by task ids")
+            raise ValueError(
+                "jobs can be selected only by status or by task ids"
+            )
         if jobs is None and status is None:
-            raise ValueError("jobs can only be selected by status or by task ids")
+            raise ValueError(
+                "jobs can only be selected by status or by task ids"
+            )
         if status is not None:
-            query_string = 'status IN ({})'.format(', '.join(['%s'] * len(status)))
+            query_string = "status IN ({})".format(
+                ", ".join(["%s"] * len(status))
+            )
             params = status
         else:
-            query_string = 'task_id IN ({})'.format(', '.join(['%s'] * len(jobs)))
+            query_string = "task_id IN ({})".format(
+                ", ".join(["%s"] * len(jobs))
+            )
             params = jobs
 
-        sql_statement = 'SELECT task_id, label, ip, status FROM yascheduler_tasks WHERE {};'.format(query_string)
+        sql_statement = "SELECT task_id, label, ip, status FROM yascheduler_tasks WHERE {};".format(
+            query_string
+        )
         self.cursor.execute(sql_statement, params)
-        return [dict(task_id=row[0], label=row[1], ip=row[2], status=row[3]) for row in self.cursor.fetchall()]
+        return [
+            dict(task_id=row[0], label=row[1], ip=row[2], status=row[3])
+            for row in self.cursor.fetchall()
+        ]
 
     def enqueue_task_event(self, task_id: int) -> None:
         task = self.queue_get_task(task_id) or {}
@@ -121,19 +185,22 @@ class Yascheduler(object):
         #if self.clouds:
         # TODO: free-up CloudAPIManager().tasks
 
-    def queue_submit_task(self, label, metadata, engine):
+    def queue_submit_task(
+        self, label: str, metadata: Dict[str, Any], engine_name: str
+    ):
+        if engine_name not in self.engines:
+            raise RuntimeError(
+                "Engine %s requested, but not supported" % engine_name
+            )
 
-        if engine not in self.engines:
-            raise RuntimeError("Engine %s requested, but not supported" % engine)
-
-        for input_file in self.engines[engine]['input_files']:
+        for input_file in self.engines[engine_name].input_files:
             if input_file not in metadata:
                 raise RuntimeError("Input file %s was not provided" % input_file)
 
-        metadata['engine'] = engine
         metadata['remote_folder'] = os.path.join(self.config.get('remote', 'data_dir'),
                                                  '_'.join([datetime.now().strftime('%Y%m%d_%H%M%S'),
                                                            ''.join([random.choice(string.ascii_lowercase) for _ in range(4)])]))
+        metadata["engine"] = engine_name
 
         self.cursor.execute("""INSERT INTO yascheduler_tasks (label, metadata, ip, status)
             VALUES ('{label}', '{metadata}', NULL, {status})
@@ -180,6 +247,7 @@ class Yascheduler(object):
 
         assert metadata['remote_folder']
         assert metadata['engine'] in self.engines
+        engine = self.engines[metadata["engine"]]
 
         try:
             self.ssh_conn_pool[ip].run('mkdir -p %s' % metadata['remote_folder'], hide=True)
@@ -188,17 +256,17 @@ class Yascheduler(object):
             return False
 
         with tempfile.NamedTemporaryFile() as tmp: # NB beware overflown remote
-            for input_file in self.engines[metadata['engine']]['input_files']:
                 tmp.write(metadata[input_file].encode('utf-8'))
+            for input_file in engine.input_files:
                 tmp.flush()
                 self.ssh_conn_pool[ip].put(tmp.name, metadata['remote_folder'] + '/' + input_file)
                 tmp.seek(0)
                 tmp.truncate()
 
         # placeholders {path} and {ncpus} are supported
-        run_cmd = self.engines[metadata['engine']]['spawn'].format(
             path=metadata['remote_folder'],
             ncpus=ncpus or '`grep -c ^processor /proc/cpuinfo`'
+        run_cmd = engine.spawn.format(
         )
         self._log.debug(run_cmd)
 
@@ -225,9 +293,12 @@ class Yascheduler(object):
                 connect_kwargs=self.ssh_custom_key,
                 connect_timeout=5,
             ) as conn:
-                result = str( conn.run(get_engines_check_cmd(self.engines), hide=True) )
-                for engine_name in self.engines:
-                    if self.engines[engine_name]['run_marker'] in result:
+                check_cmd = " && ".join(
+                    [x.check for x in self.engines.values()]
+                )
+                result = str(conn.run(check_cmd, hide=True))
+                for engine in self.engines.values():
+                    if engine.run_marker in result:
                         self._log.error(
                             "Cannot add a busy with %s resourse %s@%s"
                             % (engine_name, ssh_user, ip)
@@ -246,20 +317,21 @@ class Yascheduler(object):
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool, "Node %s was referred by active task, however absent in node list" % ip
         try:
-            result = str( self.ssh_conn_pool[ip].run(get_engines_check_cmd(self.engines), hide=True) )
+            check_cmd = " && ".join([x.check for x in self.engines.values()])
+            result = str(self.ssh_conn_pool[ip].run(check_cmd, hide=True))
         except Exception as err:
             self._log.error('SSH status cmd error: %s' % err)
             # TODO handle that situation properly, re-assign ip, etc.
             result = ""
 
         for engine in self.engines.values():
-            if engine['run_marker'] in result:
+            if engine.run_marker in result:
                 return True
 
         return False
 
     def ssh_get_task(self, ip, engine, work_folder, store_folder, remove=True):
-        for output_file in self.engines[engine]['output_files']:
+        for output_file in self.engines[engine].output_files:
             try:
                 self.ssh_conn_pool[ip].get(work_folder + '/' + output_file, store_folder + '/' + output_file)
             except IOError as err:
