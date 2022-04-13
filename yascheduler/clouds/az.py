@@ -38,11 +38,11 @@ import json
 import logging
 import random
 import string
+from configparser import ConfigParser
 from pathlib import Path
 from threading import Lock
 from typing import cast, Any, Dict, List, NamedTuple, Optional, Union
 
-from configparser import ConfigParser
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute.v2021_07_01 import ComputeManagementClient
 from azure.mgmt.compute.v2021_07_01.operations import VirtualMachinesOperations
@@ -66,7 +66,7 @@ from azure.mgmt.resource.resources.v2021_04_01.operations import (
 )
 from azure.core.exceptions import HttpResponseError
 
-from yascheduler.clouds import AbstractCloudAPI
+from yascheduler.clouds import AbstractCloudAPI, CloudConfig
 
 # Azure SDK is too noisy
 for logger_name in [
@@ -227,14 +227,14 @@ class AzureAPI(AbstractCloudAPI):
         return ssh_user
 
     @property
-    def cloud_config_data(self) -> Dict[str, Any]:
+    def cloud_config_data(self) -> CloudConfig:
         "cloud-config for azure"
-        my_boot_cmds = [
+        my_boot_cmds: List[Union[str, List[str]]] = [
             # see https://github.com/MicrosoftDocs/azure-docs/issues/82500
             "systemctl mask waagent-apt.service",
         ]
         data = super().cloud_config_data
-        data["bootcmd"] = my_boot_cmds + data.get("bootcmd", [])
+        data.bootcmd = my_boot_cmds + data.bootcmd
         return data
 
     def _get_conf_by_prefix(self, section: str, prefix: str) -> Dict[str, str]:
@@ -323,8 +323,7 @@ class AzureAPI(AbstractCloudAPI):
         params = {
             "namePrefix": rnd_id,
             "adminPublicKey": self.public_key,
-            "customData": "#cloud-config\n"
-            + json.dumps(self.cloud_config_data),
+            "customData": self.cloud_config_data.render(),
         }
         # inherit params from infra deployment outputs
         inherit_infra_params = [

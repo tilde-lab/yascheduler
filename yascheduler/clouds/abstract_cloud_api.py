@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import inspect
+import json
 import logging
 import os
 import random
@@ -11,10 +12,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import (
     default_backend as crypto_default_backend,
 )
+from dataclasses import asdict, dataclass, field
 from datetime import timedelta, datetime
 from importlib import import_module
+from itertools import chain
 from time import sleep
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Callable, List, Optional, TypeVar, Union
 
 from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
@@ -22,6 +25,17 @@ import yascheduler.scheduler
 from yascheduler import DEFAULT_NODES_PER_PROVIDER
 
 T = TypeVar("T")
+
+
+@dataclass
+class CloudConfig:
+    bootcmd: List[Union[str, List[str]]] = field(default_factory=lambda: [])
+    package_upgrade: bool = False
+    packages: List[str] = field(default_factory=lambda: [])
+
+    def render(self) -> str:
+        "Render to user-data format"
+        return "#cloud-config\n" + json.dumps(asdict(self))
 
 
 class AbstractCloudAPI(object):
@@ -104,12 +118,20 @@ class AbstractCloudAPI(object):
         )
 
     @property
-    def cloud_config_data(self) -> Dict[str, Any]:
+    def cloud_config_data(self) -> CloudConfig:
         "Common cloud-config"
-        return {
-            "package_upgrade": True,
-            "packages": ["openmpi-bin"],
-        }
+        # currently we support only debian-like platforms
+        engines = self.yascheduler and self.yascheduler.engines or {}
+        supported_engines = filter(
+            lambda x: x.platform in ["debian", "ubuntu"], engines.values()
+        )
+        pkgs = list(
+            chain(*map(lambda x: x.platform_packages, supported_engines))
+        )
+        return CloudConfig(
+            package_upgrade=True,
+            packages=pkgs,
+        )
 
     def _retry_with_backoff(
         self,
@@ -155,13 +177,15 @@ class AbstractCloudAPI(object):
         raise NotImplementedError()
 
     def setup_node(self, ip):
+        """Provision a debian-like node"""
         ssh_conn = SSH_Connection(
             host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
         )
         sudo_prefix = "" if self.ssh_user == "root" else "sudo "
         apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
         ssh_conn.run(f"{apt_cmd} -y update && {apt_cmd} -y upgrade", hide=True)
-        ssh_conn.run(f"{apt_cmd} -y install openmpi-bin", hide=True)
+        pkgs = self.cloud_config_data.packages
+        ssh_conn.run(f"{apt_cmd} -y install {' '.join(pkgs)}", hide=True)
 
         ssh_conn.run("mkdir -p ~/bin", hide=True)
         if self.config.get("local", "deployable").startswith("http"):

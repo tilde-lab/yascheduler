@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 from configparser import SectionProxy
 
@@ -8,12 +8,19 @@ from configparser import SectionProxy
 @dataclass
 class Engine:
     name: str
+
     deployable: str
     spawn: str
-    check: str
-    run_marker: str
+
     input_files: List[str]
     output_files: List[str]
+
+    # TODO: this is stupid - change to pid tracking
+    check: str
+    run_marker: str
+
+    platform: str = "debian"
+    platform_packages: List[str] = field(default_factory=lambda: [])
 
     # TODO: not used actually
     sleep_interval: int = 1
@@ -48,6 +55,11 @@ class Engine:
         output_files = [
             x.strip() for x in filter(None, cfg.get("output_files").split())
         ]
+
+        platform_packages = [
+            x.strip()
+            for x in filter(None, cfg.get("platform_packages", "").split())
+        ]
         return cls(
             name=cfg.name[7:],
             deployable=deployable,
@@ -57,12 +69,15 @@ class Engine:
             input_files=input_files,
             output_files=output_files,
             sleep_interval=cfg.getint("sleep_interval", cls.sleep_interval),
+            platform=cfg.get("platform", cls.platform),
+            platform_packages=platform_packages,
         )
 
 
 if __name__ == "__main__":
-    from yascheduler import CONFIG_FILE
     import pprint
+    from configparser import ConfigParser
+    from yascheduler import CONFIG_FILE
 
     pp = pprint.PrettyPrinter()
     config = ConfigParser()

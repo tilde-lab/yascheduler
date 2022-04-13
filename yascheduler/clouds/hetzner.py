@@ -1,5 +1,4 @@
-
-import json
+#!/usr/bin/env python3
 
 from hcloud import Client, APIException
 from hcloud.images.domain import Image
@@ -38,7 +37,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
             name=self.get_rnd_name('node'),
             server_type=ServerType('cx51'), image=Image(name='debian-10'),
             ssh_keys=[SSHKey(name=self.key_name)],
-            user_data="#cloud-config\n" + json.dumps(self.cloud_config_data),
+            user_data=self.cloud_config_data.render(),
         )
         server = response.server
         ip = server.public_net.ipv4.ip
