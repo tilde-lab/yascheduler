@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 
+from collections import UserDict
 from dataclasses import dataclass, field
-from typing import List
+from itertools import chain
+from typing import Callable, Dict, List, TypeVar
 from configparser import SectionProxy
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -74,6 +78,37 @@ class Engine:
         )
 
 
+class EngineRepository(UserDict, Dict[str, Engine]):
+    def __setitem__(self, key: str, value: Engine):
+        if not isinstance(key, str):
+            raise TypeError(
+                f"Invalid type for dictionary key: "
+                f'expected "str", got "{type(key).__name__}"'
+            )
+        if not isinstance(value, Engine):
+            raise TypeError(
+                f"Invalid type for dictionary value: "
+                f'expected "Engine", got "{type(value).__name__}"'
+            )
+        return super().__setitem__(key, value)
+
+    def filter(
+        self, filter_func: Callable[[Engine], bool]
+    ) -> "EngineRepository":
+        repo = EngineRepository()
+        for k, v in self.items():
+            if filter_func(v):
+                repo[k] = v
+        return repo
+
+    def filter_platforms(self, platforms: List[str]) -> "EngineRepository":
+        return self.filter(lambda x: x.platform in platforms)
+
+    def get_platform_packages(self) -> List[str]:
+        mapped = map(lambda x: x.platform_packages, self.values())
+        return list(set(chain(*mapped)))
+
+
 if __name__ == "__main__":
     import pprint
     from configparser import ConfigParser
@@ -82,9 +117,11 @@ if __name__ == "__main__":
     pp = pprint.PrettyPrinter()
     config = ConfigParser()
     config.read(CONFIG_FILE)
+
+    engines = EngineRepository()
     for section_name in config.sections():
         if not section_name.startswith("engine."):
             continue
         engine = Engine.from_config(config[section_name])
-        # pp.pprint(engine)
-        pp.pprint(engine.__dict__)
+        engines[engine.name] = engine
+    pp.pprint(engines)

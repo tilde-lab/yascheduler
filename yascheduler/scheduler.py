@@ -18,7 +18,7 @@ from paramiko.rsakey import RSAKey
 
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
-from yascheduler.engine import Engine
+from yascheduler.engine import Engine, EngineRepository
 from yascheduler.time import sleep_until
 from yascheduler.webhook_worker import WebhookWorker, WebhookTask
 
@@ -38,7 +38,7 @@ class Yascheduler:
     config: ConfigParser
     connection: pg8000.Connection
     cursor: pg8000.Cursor
-    engines: Dict[str, Engine]
+    engines: EngineRepository
     ssh_conn_pool: Dict[str, SSH_Connection]
     ssh_custom_key: Dict[str, RSAKey]
 
@@ -68,8 +68,8 @@ class Yascheduler:
             )
             self._webhook_threads.append(t)
 
-    def _load_engines(self) -> Dict[str, Engine]:
-        engines = {}
+    def _load_engines(self) -> EngineRepository:
+        engines = EngineRepository()
         for section_name in self.config.sections():
             if not section_name.startswith("engine."):
                 continue
@@ -390,6 +390,54 @@ class Yascheduler:
             return self.clouds.get_capacity(resources)
         return 0
 
+    def setup_node(self, ip: str, user: str) -> None:
+        """Provision a debian-like node"""
+        ssh_conn = SSH_Connection(
+            host=ip, user=user, connect_kwargs=self.ssh_custom_key
+        )
+        sudo_prefix = "" if user == "root" else "sudo "
+        apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
+        ssh_conn.run(f"{apt_cmd} -y update && {apt_cmd} -y upgrade", hide=True)
+        pkgs = self.engines.filter_platforms(
+            ["debian", "ubuntu"]
+        ).get_platform_packages()
+        ssh_conn.run(f"{apt_cmd} -y install {' '.join(pkgs)}", hide=True)
+
+        ssh_conn.run("mkdir -p ~/bin", hide=True)
+
+        if self.config.get("local", "deployable").startswith("http"):
+            # downloading binary from a trusted non-public address
+            ssh_conn.run(
+                "cd ~/bin && wget %s" % self.config.get("local", "deployable"),
+                hide=True,
+            )
+        else:
+            # uploading binary from local; requires broadband connection
+            # ssh_conn.put(
+            #     self.config.get('local', 'deployable'), 'bin/dummyengine'
+            # ) # TODO
+            ssh_conn.put(
+                self.config.get("local", "deployable"), "bin/Pcrystal"
+            )  # TODO
+
+        if self.config.get("local", "deployable").endswith(".gz"):
+            # binary may be gzipped, without subfolders, with an arbitrary
+            # archive name, but the name of the binary must remain Pcrystal
+            ssh_conn.run(
+                "cd ~/bin && tar xvf %s"
+                % self.config.get("local", "deployable").split("/")[-1],
+                hide=True,
+            )
+        # ssh_conn.run('ln -sf ~/bin/Pcrystal /usr/bin/Pcrystal', hide=True)
+
+        # print and ensure versions
+        result = ssh_conn.run("/usr/bin/mpirun --allow-run-as-root -V", hide=True)
+        self._log.info(result.stdout)
+        result = ssh_conn.run("cat /etc/issue", hide=True)
+        self._log.info(result.stdout)
+        result = ssh_conn.run("grep -c ^processor /proc/cpuinfo", hide=True)
+        self._log.info(result.stdout)
+
     def stop(self):
         self._log.info("Stopping threads...")
         for t in self._webhook_threads:
@@ -407,9 +455,6 @@ def daemonize(log_file=None):
     yac.clouds = clouds
     clouds.yascheduler = yac
 
-    # yac, clouds = clouds.yascheduler, yac.clouds = Yascheduler(
-    #     config
-    # ), yascheduler.clouds.CloudAPIManager(config, logger=logger)
     logging.getLogger("Yascheduler").setLevel(logging.DEBUG)
     clouds.initialize()
     yac.start()

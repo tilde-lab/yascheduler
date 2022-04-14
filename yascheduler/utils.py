@@ -318,4 +318,8 @@ def manage_node():
         return False
 
     print('Added host to yascheduler: {}'.format(args.host))
+
+    print('Setup host...')
+    yac.setup_node(args.host, "root")
+    print('Done')
     return True

@@ -21,6 +21,7 @@ from typing import Callable, List, Optional, TypeVar, Union
 
 from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
+from yascheduler.engine import EngineRepository
 import yascheduler.scheduler
 from yascheduler import DEFAULT_NODES_PER_PROVIDER
 
@@ -121,13 +122,12 @@ class AbstractCloudAPI(object):
     def cloud_config_data(self) -> CloudConfig:
         "Common cloud-config"
         # currently we support only debian-like platforms
-        engines = self.yascheduler and self.yascheduler.engines or {}
-        supported_engines = filter(
-            lambda x: x.platform in ["debian", "ubuntu"], engines.values()
+        engines = (
+            self.yascheduler and self.yascheduler.engines or EngineRepository()
         )
-        pkgs = list(
-            chain(*map(lambda x: x.platform_packages, supported_engines))
-        )
+        pkgs = engines.filter_platforms(
+            ["debian", "ubuntu"]
+        ).get_platform_packages()
         return CloudConfig(
             package_upgrade=True,
             packages=pkgs,
@@ -178,50 +178,8 @@ class AbstractCloudAPI(object):
 
     def setup_node(self, ip):
         """Provision a debian-like node"""
-        ssh_conn = SSH_Connection(
-            host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
-        )
-        sudo_prefix = "" if self.ssh_user == "root" else "sudo "
-        apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
-        ssh_conn.run(f"{apt_cmd} -y update && {apt_cmd} -y upgrade", hide=True)
-        pkgs = self.cloud_config_data.packages
-        ssh_conn.run(f"{apt_cmd} -y install {' '.join(pkgs)}", hide=True)
-
-        ssh_conn.run("mkdir -p ~/bin", hide=True)
-        if self.config.get("local", "deployable").startswith("http"):
-            # downloading binary from a trusted non-public address
-            ssh_conn.run(
-                "cd ~/bin && wget %s" % self.config.get("local", "deployable"),
-                hide=True,
-            )
-        else:
-            # uploading binary from local; requires broadband connection
-            # ssh_conn.put(
-            #     self.config.get('local', 'deployable'), 'bin/dummyengine'
-            # ) # TODO
-            ssh_conn.put(
-                self.config.get("local", "deployable"), "bin/Pcrystal"
-            )  # TODO
-
-        if self.config.get("local", "deployable").endswith(".gz"):
-            # binary may be gzipped, without subfolders, with an arbitrary
-            # archive name, but the name of the binary must remain Pcrystal
-            ssh_conn.run(
-                "cd ~/bin && tar xvf %s"
-                % self.config.get("local", "deployable").split("/")[-1],
-                hide=True,
-            )
-        # ssh_conn.run('ln -sf ~/bin/Pcrystal /usr/bin/Pcrystal', hide=True)
-
-        # print and ensure versions
-        result = ssh_conn.run(
-            "/usr/bin/mpirun --allow-run-as-root -V", hide=True
-        )
-        self._log.info(result.stdout)
-        result = ssh_conn.run("cat /etc/issue", hide=True)
-        self._log.info(result.stdout)
-        result = ssh_conn.run("grep -c ^processor /proc/cpuinfo", hide=True)
-        self._log.info(result.stdout)
+        if self.yascheduler:
+            return self.yascheduler.setup_node(ip, self.ssh_user)
 
     def delete_node(self, ip: str):
         raise NotImplementedError()
