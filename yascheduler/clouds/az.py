@@ -168,14 +168,16 @@ class AzureAPI(AbstractCloudAPI):
     compute_client: ComputeManagementClient
     infra_tmpl_path: Path
     infra_deployment_name_tmpl: str = "{}-infra-deployment"
+    infra_params: Dict[str, str]
     vm_tmpl_path: Path
     vm_deployment_name_tmpl: str = "{}-vm-{}-deployment"
+    vm_params: Dict[str, str]
 
     def __init__(self, config: ConfigParser):
         super().__init__(
-            max_nodes=config.getint("clouds", "az_max_nodes", fallback=None)
+            config=config,
+            max_nodes=config.getint("clouds", "az_max_nodes", fallback=None),
         )
-        self.config = config
         self.client_id = config.get("clouds", "az_client_id")
         self.location = config.get(
             "clouds", "az_location", fallback="westeurope"
@@ -198,6 +200,12 @@ class AzureAPI(AbstractCloudAPI):
                 fallback=Path(__file__).parent.absolute()
                 / Path("azure_vm_tmpl.json"),
             )
+        )
+        self.infra_params = self._get_conf_by_prefix(
+            config, "clouds", "az_infra_param_"
+        )
+        self.vm_params = self._get_conf_by_prefix(
+            config, "clouds", "az_vm_param_"
         )
         credential = ClientSecretCredential(
             tenant_id=config.get("clouds", "az_tenant_id"),
@@ -237,10 +245,13 @@ class AzureAPI(AbstractCloudAPI):
         data.bootcmd = my_boot_cmds + data.bootcmd
         return data
 
-    def _get_conf_by_prefix(self, section: str, prefix: str) -> Dict[str, str]:
+    @staticmethod
+    def _get_conf_by_prefix(
+        config: ConfigParser, section: str, prefix: str
+    ) -> Dict[str, str]:
         "Get part of config by section and prefix as dict"
         filtered = filter(
-            lambda x: x[0].startswith(prefix), self.config.items(section)
+            lambda x: x[0].startswith(prefix), config.items(section)
         )
         prefix_removed = map(
             lambda x: (
@@ -307,11 +318,10 @@ class AzureAPI(AbstractCloudAPI):
 
     def create_infra_deployment(self) -> Dict[str, Any]:
         "Create deployment with common infrastructure parts"
-        params = self._get_conf_by_prefix("clouds", "az_infra_param_")
         name = self.infra_deployment_name_tmpl.format(self.rg_name)
         with open(self.infra_tmpl_path, "r") as fd:
             tmpl = json.load(fd)
-        res = self.create_deployment(name, tmpl, params)
+        res = self.create_deployment(name, tmpl, self.infra_params)
         return res.properties and res.properties.outputs or {}
 
     def create_vm_deployment(self, infra_outputs) -> Dict[str, Any]:
@@ -337,7 +347,7 @@ class AzureAPI(AbstractCloudAPI):
             if k in inherit_infra_params and type(v) == dict:
                 params[k] = v.get("value")
         # load from config
-        params.update(self._get_conf_by_prefix("clouds", "az_vm_param_"))
+        params.update(self.vm_params)
 
         with open(self.vm_tmpl_path, "r") as fd:
             tmpl = json.load(fd)

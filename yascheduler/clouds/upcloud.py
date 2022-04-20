@@ -1,5 +1,6 @@
 
 import time
+from configparser import ConfigParser
 
 from upcloud_api import CloudManager, Server, Storage, ZONE, login_user_block
 
@@ -12,17 +13,24 @@ class UpCloudAPI(AbstractCloudAPI):
 
     name = 'upcloud'
 
-    def __init__(self, config):
-        super().__init__(max_nodes=config.getint('clouds', 'upcloud_max_nodes', fallback=None))
-        self.client = CloudManager(config.get('clouds', 'upcloud_login'), config.get('clouds', 'upcloud_pass'))
+    client: CloudManager
+
+    def __init__(self, config: ConfigParser):
+        super().__init__(
+            config=config,
+            max_nodes=config.getint("clouds", "upcloud_max_nodes", fallback=None),
+        )
+        self.client = CloudManager(
+            config.get('clouds', 'upcloud_login'),
+            config.get('clouds', 'upcloud_pass'),
+        )
         self.client.authenticate()
-        self.config = config
 
     def init_key(self):
         super().init_key()
         self.login_user = login_user_block(
             username=self.ssh_user,
-            ssh_keys=[self.public_key],
+            ssh_keys=[self.public_key] if self.public_key else [],
             create_password=False,
         )
 

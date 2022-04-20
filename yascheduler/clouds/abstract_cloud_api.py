@@ -3,7 +3,6 @@
 import inspect
 import json
 import logging
-import os
 import random
 import string
 
@@ -15,7 +14,7 @@ from cryptography.hazmat.backends import (
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta, datetime
 from importlib import import_module
-from itertools import chain
+from pathlib import Path
 from time import sleep
 from typing import Callable, List, Optional, TypeVar, Union
 
@@ -43,11 +42,15 @@ class AbstractCloudAPI(object):
 
     _log: logging.Logger
     name: str = "abstract"
-    config: ConfigParser
     yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
+    ssh_user: str
+    local_keys_dir: Path
+    key_name: Optional[str]
+    public_key: Optional[str]
 
     def __init__(
         self,
+        config: ConfigParser,
         max_nodes: Optional[int] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -62,33 +65,33 @@ class AbstractCloudAPI(object):
 
         self.public_key = None
         self.ssh_custom_key = None
-
-    @property
-    def ssh_user(self) -> str:
-        "Default SSH user"
-        return self.config.get(
+        self.ssh_user = config.get(
             "clouds",
             f"{self.name}_user",
-            fallback=self.config.get("remote", "user", fallback="root"),
+            fallback=config.get("remote", "user", fallback="root"),
+        )
+
+        local_data_dir = Path(
+            config.get("local", "data_dir", fallback="./data")
+        )
+        self.local_keys_dir = Path(
+            config.get("local", "keys_dir") or local_data_dir / "keys"
         )
 
     def init_key(self):
         if self.ssh_custom_key:
             return
 
-        for filename in os.listdir(self.config.get("local", "data_dir")):
-            if not filename.startswith("yakey") or not os.path.isfile(
-                os.path.join(self.config.get("local", "data_dir"), filename)
-            ):
+        # try to load
+        for filepath in self.local_keys_dir.iterdir():
+            if not filepath.name.startswith("yakey") or not filepath.is_file():
                 continue
-            key_path = os.path.join(
-                self.config.get("local", "data_dir"), filename
-            )
-            self.key_name = key_path.split(os.sep)[-1]
-            pmk_key = RSAKey.from_private_key_file(key_path)
-            self._log.info("LOADED KEY %s" % key_path)
+            self.key_name = filepath.name
+            pmk_key = RSAKey.from_private_key_file(str(filepath))
+            self._log.info("LOADED KEY %s" % filepath)
             break
 
+        # generate new
         else:
             self.key_name = self.get_rnd_name("yakey")
             key = rsa.generate_private_key(
@@ -97,10 +100,8 @@ class AbstractCloudAPI(object):
                 key_size=2048,
             )
             pmk_key = RSAKey(key=key)
-            key_path = os.path.join(
-                self.config.get("local", "data_dir"), self.key_name
-            )
-            pmk_key.write_private_key_file(key_path)
+            key_path = self.local_keys_dir / self.key_name
+            pmk_key.write_private_key_file(str(key_path))
             self._log.info("WRITTEN KEY %s" % key_path)
 
         self.public_key = "%s %s" % (pmk_key.get_name(), pmk_key.get_base64())
@@ -109,7 +110,7 @@ class AbstractCloudAPI(object):
         if self.yascheduler:
             self.yascheduler.ssh_custom_key = self.ssh_custom_key
 
-    def get_rnd_name(self, prefix):
+    def get_rnd_name(self, prefix: str) -> str:
         return (
             prefix
             + "-"
