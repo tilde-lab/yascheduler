@@ -22,10 +22,13 @@ class CloudWorker(BackgroundWorker):
         super().__init__(**kwargs)
         self._cfg = config
 
+        from ..scheduler import Yascheduler
+        yac = Yascheduler(config, logger=self._log)
         self._apis = {}
         for api_name in use_apis:
             self._apis[api_name] = load_cloudapi(api_name)(config)
             self._apis[api_name]._log = self._log.getChild(api_name)
+            self._apis[api_name].yascheduler = yac
 
 
 @dataclass
