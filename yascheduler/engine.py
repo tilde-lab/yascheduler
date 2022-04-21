@@ -3,27 +3,49 @@
 from collections import UserDict
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import Callable, Dict, List, TypeVar
+from pathlib import Path
+from typing import Callable, Dict, List, Union
 from configparser import SectionProxy
 
-T = TypeVar("T")
+
+@dataclass
+class LocalFilesDeploy:
+    files: List[Path]
+
+
+@dataclass
+class LocalArchiveDeploy:
+    filename: Path
+
+
+@dataclass
+class RemoteArchiveDeploy:
+    url: str
+
+
+Deploy = Union[
+    LocalFilesDeploy,
+    LocalArchiveDeploy,
+    RemoteArchiveDeploy,
+]
 
 
 @dataclass
 class Engine:
     name: str
 
-    deployable: str
-    spawn: str
-
+    # task i/o
     input_files: List[str]
     output_files: List[str]
+
+    deployable: List[Deploy]
+    spawn: str
 
     # TODO: this is stupid - change to pid tracking
     check: str
     run_marker: str
 
-    platform: str = "debian"
+    platforms: List[str]
     platform_packages: List[str] = field(default_factory=lambda: [])
 
     # TODO: not used actually
@@ -36,34 +58,49 @@ class Engine:
 
     @classmethod
     def from_config(cls, cfg: SectionProxy):
-        deployable = cfg.get("deployable")
-        assert deployable and len(deployable.strip()), (
-            "Engine %s has no *deployable* config set, cloud usage is impossible"
-            % cfg.name
-        )
+        def getlist(key: str) -> List[str]:
+            return [
+                x.strip()
+                for x in filter(None, cfg.get(key, fallback="").split())
+            ]
+
+        deployable: List[Deploy] = []
+        deploy_local_files = [
+            Path(x.strip()) for x in getlist("deploy_local_files")
+        ]
+        if deploy_local_files:
+            deployable.append(LocalFilesDeploy(files=deploy_local_files))
+        deploy_local_archive = cfg.get("deploy_local_archive", None)
+        if deploy_local_archive:
+            d = LocalArchiveDeploy(filename=Path(deploy_local_archive))
+            deployable.append(d)
+        deploy_remote_archive = cfg.get("deploy_remote_archive", None)
+        if deploy_remote_archive:
+            d = RemoteArchiveDeploy(url=deploy_remote_archive)
+            deployable.append(d)
 
         spawn = cfg.get("spawn")
-        assert spawn
+        assert spawn, "Engine %s has no *spawn* config set" % cfg.name
 
         check = cfg.get("check")
-        assert check
+        assert check, "Engine %s has no *check* config set" % cfg.name
 
         run_marker = cfg.get("run_marker")
-        assert run_marker
+        assert run_marker, "Engine %s has no *run_maker* config set" % cfg.name
 
-        assert "input_files" in cfg.keys()
-        input_files = [
-            x.strip() for x in filter(None, cfg.get("input_files").split())
-        ]
-        assert "output_files" in cfg.keys()
-        output_files = [
-            x.strip() for x in filter(None, cfg.get("output_files").split())
-        ]
+        assert "input_files" in cfg.keys(), (
+            "Engine %s has no *input_files* config set" % cfg.name
+        )
+        input_files = getlist("input_files")
 
-        platform_packages = [
-            x.strip()
-            for x in filter(None, cfg.get("platform_packages", "").split())
-        ]
+        assert "output_files" in cfg.keys(), (
+            "Engine %s has no *input_files* config set" % cfg.name
+        )
+        output_files = getlist("output_files")
+
+        platforms = getlist("platforms") or ["debian-10"]
+        platform_packages = getlist("platform_packages")
+
         return cls(
             name=cfg.name[7:],
             deployable=deployable,
@@ -73,7 +110,7 @@ class Engine:
             input_files=input_files,
             output_files=output_files,
             sleep_interval=cfg.getint("sleep_interval", cls.sleep_interval),
-            platform=cfg.get("platform", cls.platform),
+            platforms=platforms,
             platform_packages=platform_packages,
         )
 
@@ -102,7 +139,7 @@ class EngineRepository(UserDict, Dict[str, Engine]):
         return repo
 
     def filter_platforms(self, platforms: List[str]) -> "EngineRepository":
-        return self.filter(lambda x: x.platform in platforms)
+        return self.filter(lambda x: bool(set(x.platforms) & set(platforms)))
 
     def get_platform_packages(self) -> List[str]:
         mapped = map(lambda x: x.platform_packages, self.values())

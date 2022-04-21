@@ -10,6 +10,7 @@ import tempfile
 from configparser import ConfigParser
 from datetime import datetime, timedelta
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pg8000
@@ -18,7 +19,13 @@ from paramiko.rsakey import RSAKey
 
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
-from yascheduler.engine import Engine, EngineRepository
+from yascheduler.engine import (
+    Engine,
+    EngineRepository,
+    LocalFilesDeploy,
+    LocalArchiveDeploy,
+    RemoteArchiveDeploy,
+)
 from yascheduler.time import sleep_until
 from yascheduler.webhook_worker import WebhookWorker, WebhookTask
 
@@ -35,12 +42,19 @@ class Yascheduler:
     _webhook_queue: "queue.Queue[WebhookTask]"
     _webhook_threads: List[WebhookWorker]
     clouds: Optional["yascheduler.clouds.CloudAPIManager"] = None
-    config: ConfigParser
     connection: pg8000.Connection
     cursor: pg8000.Cursor
     engines: EngineRepository
+    local_bin_dir: Path
+    local_data_dir: Path
+    local_keys_dir: Path
+    local_tasks_dir: Path
+    remote_bin_dir: Path
+    remote_data_dir: Path
+    remote_tasks_dir: Path
     ssh_conn_pool: Dict[str, SSH_Connection]
     ssh_custom_key: Dict[str, RSAKey]
+    ssh_user: str
 
     def __init__(
         self, config: ConfigParser, logger: Optional[logging.Logger] = None
@@ -49,16 +63,38 @@ class Yascheduler:
             self._log = logger.getChild(self.__class__.__name__)
         else:
             self._log = logging.getLogger(self.__class__.__name__)
-        self.config = config
+
+        local_cfg = config["local"]
+        self.local_data_dir = Path(
+            local_cfg.get("data_dir", "./data")
+        ).resolve()
+        self.local_bin_dir = Path(
+            local_cfg.get("bin_dir", str(self.local_data_dir / "bins"))
+        ).resolve()
+        self.local_tasks_dir = Path(
+            local_cfg.get("tasks_dir", str(self.local_data_dir / "tasks"))
+        ).resolve()
+        self.local_keys_dir = Path(
+            local_cfg.get("keys_dir", str(self.local_data_dir / "keys"))
+        ).resolve()
+
+        remote_cfg = config["remote"]
+        self.remote_data_dir = Path(remote_cfg.get("data_dir", "./data"))
+        self.remote_bin_dir = Path(
+            remote_cfg.get("bin_dir", str(self.remote_data_dir / "bins"))
+        )
+        self.remote_tasks_dir = Path(
+            remote_cfg.get("tasks_dir", str(self.remote_data_dir / "tasks"))
+        )
+
         self.connection, self.cursor = connect_db(config)
         self.ssh_conn_pool = {}
         self.ssh_custom_key = {}
-        self.engines = self._load_engines()
+        self.ssh_user = remote_cfg.get("user", fallback="root")
+        self.engines = self._load_engines(config)
 
         self._webhook_queue = queue.Queue()
-        webhook_thread_num = int(
-            config.get("local", "webhook_threads", fallback=2)
-        )
+        webhook_thread_num = int(local_cfg.get("webhook_threads", "2"))
         self._webhook_threads = []
         for i in range(webhook_thread_num):
             t = WebhookWorker(
@@ -68,12 +104,12 @@ class Yascheduler:
             )
             self._webhook_threads.append(t)
 
-    def _load_engines(self) -> EngineRepository:
+    def _load_engines(self, cfg: ConfigParser) -> EngineRepository:
         engines = EngineRepository()
-        for section_name in self.config.sections():
+        for section_name in cfg.sections():
             if not section_name.startswith("engine."):
                 continue
-            section = self.config[section_name]
+            section = cfg[section_name]
             engine = Engine.from_config(section)
             engines[engine.name] = engine
 
@@ -211,9 +247,9 @@ class Yascheduler:
         rnd_str = "".join(
             [random.choice(string.ascii_lowercase) for _ in range(4)]
         )
-        metadata["remote_folder"] = os.path.join(
-            self.config.get("remote", "data_dir"),
-            "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str),
+        metadata["remote_folder"] = str(
+            self.remote_tasks_dir
+            / "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str)
         )
 
         self.cursor.execute(
@@ -244,9 +280,7 @@ class Yascheduler:
             del self.ssh_conn_pool[ip]
         for ip in set(new_nodes) - set(old_nodes):
             cloud = self.clouds and self.clouds.apis.get(ip_cloud_map.get(ip))
-            ssh_user = (
-                cloud and cloud.ssh_user or self.config.get("remote", "user")
-            )
+            ssh_user = cloud and cloud.ssh_user or self.ssh_user
             self.ssh_conn_pool[ip] = SSH_Connection(
                 host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key
             )
@@ -267,8 +301,8 @@ class Yascheduler:
             """
 
         assert metadata["remote_folder"]
-        assert metadata["engine"] in self.engines
-        engine = self.engines[metadata["engine"]]
+        engine = self.engines.get(metadata["engine"])
+        assert engine
 
         try:
             self.ssh_conn_pool[ip].run(
@@ -289,9 +323,10 @@ class Yascheduler:
                 tmp.seek(0)
                 tmp.truncate()
 
-        # placeholders {path} and {ncpus} are supported
+        # placeholders {task_path}, {engine_path} and {ncpus} are supported
         run_cmd = engine.spawn.format(
-            path=metadata["remote_folder"],
+            engine_path=self.remote_bin_dir / engine.name,
+            task_path=metadata["remote_folder"],
             ncpus=ncpus or "`grep -c ^processor /proc/cpuinfo`",
         )
         self._log.debug(run_cmd)
@@ -310,9 +345,7 @@ class Yascheduler:
             cloud = self.clouds and self.clouds.apis.get(
                 node_info and node_info[3]
             )
-            ssh_user = (
-                cloud and cloud.ssh_user or self.config.get("remote", "user")
-            )
+            ssh_user = cloud and cloud.ssh_user or self.ssh_user
             with SSH_Connection(
                 host=ip,
                 user=ssh_user,
@@ -334,7 +367,7 @@ class Yascheduler:
         except Exception as err:
             self._log.error(
                 "Host %s@%s is unreachable due to: %s"
-                % (self.config.get("remote", "user"), ip, err)
+                % (self.ssh_user, ip, err)
             )
             return False
 
@@ -392,51 +425,81 @@ class Yascheduler:
 
     def setup_node(self, ip: str, user: str) -> None:
         """Provision a debian-like node"""
+
+        engines = self.engines.filter_platforms(["debian-10"])
+        if not engines:
+            self._log.error("There is not supported engines!")
+            return
+
         ssh_conn = SSH_Connection(
             host=ip, user=user, connect_kwargs=self.ssh_custom_key
         )
         sudo_prefix = "" if user == "root" else "sudo "
+
+        # print OS version
+        result = ssh_conn.run(
+            "source /etc/os-release; echo $PRETTY_NAME", hide=True
+        )
+        self._log.info("OS: {}".format(result.stdout.split("\n")[0]))
+
+        # print CPU count
+        result = ssh_conn.run("grep -c ^processor /proc/cpuinfo", hide=True)
+        self._log.info("CPUs count: {}".format(result.stdout.split("\n")[0]))
+
+        # install packages
         apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
+        pkgs = engines.get_platform_packages()
+        self._log.info(f"Update packages...")
         ssh_conn.run(f"{apt_cmd} -y update && {apt_cmd} -y upgrade", hide=True)
-        pkgs = self.engines.filter_platforms(
-            ["debian", "ubuntu"]
-        ).get_platform_packages()
+        self._log.info(f"Install packages: {' '.join(pkgs)} ...")
         ssh_conn.run(f"{apt_cmd} -y install {' '.join(pkgs)}", hide=True)
 
-        ssh_conn.run("mkdir -p ~/bin", hide=True)
+        # print MPI version
+        if filter(lambda x: "mpi" in x, pkgs):
+            result = ssh_conn.run("mpirun --allow-run-as-root -V", hide=True)
+            self._log.info(result.stdout.split("\n")[0])
 
-        if self.config.get("local", "deployable").startswith("http"):
-            # downloading binary from a trusted non-public address
-            ssh_conn.run(
-                "cd ~/bin && wget %s" % self.config.get("local", "deployable"),
-                hide=True,
-            )
-        else:
-            # uploading binary from local; requires broadband connection
-            # ssh_conn.put(
-            #     self.config.get('local', 'deployable'), 'bin/dummyengine'
-            # ) # TODO
-            ssh_conn.put(
-                self.config.get("local", "deployable"), "bin/Pcrystal"
-            )  # TODO
+        for engine in engines.values():
+            self._log.info(f"Setup {engine.name} engine...")
+            local_engine_dir = self.local_bin_dir / engine.name
+            remote_engine_dir = self.remote_bin_dir / engine.name
+            ssh_conn.run(f"mkdir -p {remote_engine_dir}")
+            for deployment in engine.deployable:
+                # uploading binary from local; requires broadband connection
+                if isinstance(deployment, LocalFilesDeploy):
+                    for filepath in deployment.files:
+                        fpath = local_engine_dir / filepath
+                        rfpath = remote_engine_dir / filepath
+                        self._log.info(f"Uploading {filepath} to {rfpath}")
+                        ssh_conn.put(fpath, str(rfpath))
 
-        if self.config.get("local", "deployable").endswith(".gz"):
-            # binary may be gzipped, without subfolders, with an arbitrary
-            # archive name, but the name of the binary must remain Pcrystal
-            ssh_conn.run(
-                "cd ~/bin && tar xvf %s"
-                % self.config.get("local", "deployable").split("/")[-1],
-                hide=True,
-            )
-        # ssh_conn.run('ln -sf ~/bin/Pcrystal /usr/bin/Pcrystal', hide=True)
+                # upload local archive
+                # binary may be gzipped, without subfolders,
+                # with an arbitrary archive name
+                if isinstance(deployment, LocalArchiveDeploy):
+                    fn = deployment.filename
+                    apath = local_engine_dir / fn
+                    rpath = remote_engine_dir / fn
+                    self._log.info(f"Uploading {fn} to {rpath}...")
+                    ssh_conn.put(apath, str(rpath))
+                    self._log.info(f"Unarchiving {fn}...")
+                    ssh_conn.run(
+                        f"cd {remote_engine_dir} && tar xfv {fn}", hide=True
+                    )
+                    ssh_conn.run(f"rm {rpath}", hide=True)
 
-        # print and ensure versions
-        result = ssh_conn.run("/usr/bin/mpirun --allow-run-as-root -V", hide=True)
-        self._log.info(result.stdout)
-        result = ssh_conn.run("cat /etc/issue", hide=True)
-        self._log.info(result.stdout)
-        result = ssh_conn.run("grep -c ^processor /proc/cpuinfo", hide=True)
-        self._log.info(result.stdout)
+                # downloading binary from a trusted non-public address
+                if isinstance(deployment, RemoteArchiveDeploy):
+                    url = deployment.url
+                    fn = "archive.tar.gz"
+                    rpath = remote_engine_dir / fn
+                    self._log.info(f"Downloading {url} to {rpath}...")
+                    ssh_conn.run(f'wget "{url}" -O {rpath}', hide=False)
+                    self._log.info(f"Unarchiving {fn}...")
+                    ssh_conn.run(
+                        f"cd {remote_engine_dir} && tar xfv {fn}", hide=True
+                    )
+                    ssh_conn.run(f"rm {rpath}", hide=True)
 
     def stop(self):
         self._log.info("Stopping threads...")
@@ -494,7 +557,7 @@ def daemonize(log_file=None):
                 store_folder = ready_task["metadata"].get(
                     "local_folder"
                 ) or os.path.join(
-                    config.get("local", "data_dir"),
+                    yac.local_tasks_dir,
                     os.path.basename(ready_task["metadata"]["remote_folder"]),
                 )
                 os.makedirs(
