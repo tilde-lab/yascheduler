@@ -4,6 +4,7 @@ Console scripts for yascheduler
 import os
 import argparse
 from configparser import ConfigParser
+from pathlib import Path
 
 from pg8000 import ProgrammingError
 from fabric import Connection as SSH_Connection
@@ -72,14 +73,12 @@ def check_status():
             print('NO MATCHING TASKS FOUND')
             return
         ssh_custom_key = {}
-        for filename in os.listdir(config.get('local', 'data_dir')):
-            if not filename.startswith('yakey') or not os.path.isfile(
-                os.path.join(config.get('local', 'data_dir'), filename)):
+        for key_path in yac.local_keys_dir.glob("yakey-*"):
+            if not key_path.is_file():
                 continue
-            key_path = os.path.join(config.get('local', 'data_dir'), filename)
-            pmk_key = RSAKey.from_private_key_file(key_path)
-            print('LOADED KEY %s' % key_path)
-            ssh_custom_key = {'pkey': pmk_key}
+            pmk_key = RSAKey.from_private_key_file(str(key_path))
+            print("LOADED KEY %s" % str(key_path))
+            ssh_custom_key = {"pkey": pmk_key}
             break
 
     if args.convergence:
@@ -261,6 +260,15 @@ def manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument('host',
         help='IP[~ncpus]')
+    parser.add_argument(
+        "--skip-setup",
+        required=False,
+        default=False,
+        nargs="?",
+        type=bool,
+        const=True,
+        help="Skip node setup",
+    )
     parser.add_argument('--remove-soft', required=False, default=None, nargs='?', type=bool, const=True,
         help='Remove IP delayed')
     parser.add_argument('--remove-hard', required=False, default=None, nargs='?', type=bool, const=True,
@@ -318,4 +326,10 @@ def manage_node():
         return False
 
     print('Added host to yascheduler: {}'.format(args.host))
+
+    if not args.skip_setup:
+        print('Setup host...')
+        yac.setup_node(args.host, "root")
+
+    print('Done')
     return True

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 import inspect
+import json
 import logging
-import os
 import random
 import string
 
@@ -11,28 +11,47 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import (
     default_backend as crypto_default_backend,
 )
+from dataclasses import asdict, dataclass, field
 from datetime import timedelta, datetime
 from importlib import import_module
+from pathlib import Path
 from time import sleep
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Callable, List, Optional, TypeVar, Union
 
 from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
+from yascheduler.engine import EngineRepository
 import yascheduler.scheduler
 from yascheduler import DEFAULT_NODES_PER_PROVIDER
 
 T = TypeVar("T")
 
 
+@dataclass
+class CloudConfig:
+    bootcmd: List[Union[str, List[str]]] = field(default_factory=lambda: [])
+    package_upgrade: bool = False
+    packages: List[str] = field(default_factory=lambda: [])
+
+    def render(self) -> str:
+        "Render to user-data format"
+        return "#cloud-config\n" + json.dumps(asdict(self))
+
+
 class AbstractCloudAPI(object):
 
     _log: logging.Logger
     name: str = "abstract"
-    config: ConfigParser
     yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
+    key_name: Optional[str]
+    local_keys_dir: Path
+    max_nodes: Optional[int]
+    public_key: Optional[str]
+    ssh_user: str
 
     def __init__(
         self,
+        config: ConfigParser,
         max_nodes: Optional[int] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -47,33 +66,33 @@ class AbstractCloudAPI(object):
 
         self.public_key = None
         self.ssh_custom_key = None
-
-    @property
-    def ssh_user(self) -> str:
-        "Default SSH user"
-        return self.config.get(
+        self.ssh_user = config.get(
             "clouds",
             f"{self.name}_user",
-            fallback=self.config.get("remote", "user", fallback="root"),
+            fallback=config.get("remote", "user", fallback="root"),
+        )
+
+        local_data_dir = Path(
+            config.get("local", "data_dir", fallback="./data")
+        )
+        self.local_keys_dir = Path(
+            config.get("local", "keys_dir", fallback=local_data_dir / "keys")
         )
 
     def init_key(self):
         if self.ssh_custom_key:
             return
 
-        for filename in os.listdir(self.config.get("local", "data_dir")):
-            if not filename.startswith("yakey") or not os.path.isfile(
-                os.path.join(self.config.get("local", "data_dir"), filename)
-            ):
+        # try to load
+        for filepath in self.local_keys_dir.iterdir():
+            if not filepath.name.startswith("yakey") or not filepath.is_file():
                 continue
-            key_path = os.path.join(
-                self.config.get("local", "data_dir"), filename
-            )
-            self.key_name = key_path.split(os.sep)[-1]
-            pmk_key = RSAKey.from_private_key_file(key_path)
-            self._log.info("LOADED KEY %s" % key_path)
+            self.key_name = filepath.name
+            pmk_key = RSAKey.from_private_key_file(str(filepath))
+            self._log.info("LOADED KEY %s" % filepath)
             break
 
+        # generate new
         else:
             self.key_name = self.get_rnd_name("yakey")
             key = rsa.generate_private_key(
@@ -82,10 +101,8 @@ class AbstractCloudAPI(object):
                 key_size=2048,
             )
             pmk_key = RSAKey(key=key)
-            key_path = os.path.join(
-                self.config.get("local", "data_dir"), self.key_name
-            )
-            pmk_key.write_private_key_file(key_path)
+            key_path = self.local_keys_dir / self.key_name
+            pmk_key.write_private_key_file(str(key_path))
             self._log.info("WRITTEN KEY %s" % key_path)
 
         self.public_key = "%s %s" % (pmk_key.get_name(), pmk_key.get_base64())
@@ -94,7 +111,7 @@ class AbstractCloudAPI(object):
         if self.yascheduler:
             self.yascheduler.ssh_custom_key = self.ssh_custom_key
 
-    def get_rnd_name(self, prefix):
+    def get_rnd_name(self, prefix: str) -> str:
         return (
             prefix
             + "-"
@@ -104,12 +121,19 @@ class AbstractCloudAPI(object):
         )
 
     @property
-    def cloud_config_data(self) -> Dict[str, Any]:
+    def cloud_config_data(self) -> CloudConfig:
         "Common cloud-config"
-        return {
-            "package_upgrade": True,
-            "packages": ["openmpi-bin"],
-        }
+        # currently we support only debian-like platforms
+        engines = (
+            self.yascheduler and self.yascheduler.engines or EngineRepository()
+        )
+        pkgs = engines.filter_platforms(
+            ["debian", "ubuntu"]
+        ).get_platform_packages()
+        return CloudConfig(
+            package_upgrade=True,
+            packages=pkgs,
+        )
 
     def _retry_with_backoff(
         self,
@@ -155,49 +179,9 @@ class AbstractCloudAPI(object):
         raise NotImplementedError()
 
     def setup_node(self, ip):
-        ssh_conn = SSH_Connection(
-            host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
-        )
-        sudo_prefix = "" if self.ssh_user == "root" else "sudo "
-        apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
-        ssh_conn.run(f"{apt_cmd} -y update && {apt_cmd} -y upgrade", hide=True)
-        ssh_conn.run(f"{apt_cmd} -y install openmpi-bin", hide=True)
-
-        ssh_conn.run("mkdir -p ~/bin", hide=True)
-        if self.config.get("local", "deployable").startswith("http"):
-            # downloading binary from a trusted non-public address
-            ssh_conn.run(
-                "cd ~/bin && wget %s" % self.config.get("local", "deployable"),
-                hide=True,
-            )
-        else:
-            # uploading binary from local; requires broadband connection
-            # ssh_conn.put(
-            #     self.config.get('local', 'deployable'), 'bin/dummyengine'
-            # ) # TODO
-            ssh_conn.put(
-                self.config.get("local", "deployable"), "bin/Pcrystal"
-            )  # TODO
-
-        if self.config.get("local", "deployable").endswith(".gz"):
-            # binary may be gzipped, without subfolders, with an arbitrary
-            # archive name, but the name of the binary must remain Pcrystal
-            ssh_conn.run(
-                "cd ~/bin && tar xvf %s"
-                % self.config.get("local", "deployable").split("/")[-1],
-                hide=True,
-            )
-        # ssh_conn.run('ln -sf ~/bin/Pcrystal /usr/bin/Pcrystal', hide=True)
-
-        # print and ensure versions
-        result = ssh_conn.run(
-            "/usr/bin/mpirun --allow-run-as-root -V", hide=True
-        )
-        self._log.info(result.stdout)
-        result = ssh_conn.run("cat /etc/issue", hide=True)
-        self._log.info(result.stdout)
-        result = ssh_conn.run("grep -c ^processor /proc/cpuinfo", hide=True)
-        self._log.info(result.stdout)
+        """Provision a debian-like node"""
+        if self.yascheduler:
+            return self.yascheduler.setup_node(ip, self.ssh_user)
 
     def delete_node(self, ip: str):
         raise NotImplementedError()

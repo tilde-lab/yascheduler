@@ -38,11 +38,11 @@ import json
 import logging
 import random
 import string
+from configparser import ConfigParser
 from pathlib import Path
 from threading import Lock
 from typing import cast, Any, Dict, List, NamedTuple, Optional, Union
 
-from configparser import ConfigParser
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute.v2021_07_01 import ComputeManagementClient
 from azure.mgmt.compute.v2021_07_01.operations import VirtualMachinesOperations
@@ -66,7 +66,7 @@ from azure.mgmt.resource.resources.v2021_04_01.operations import (
 )
 from azure.core.exceptions import HttpResponseError
 
-from yascheduler.clouds import AbstractCloudAPI
+from yascheduler.clouds import AbstractCloudAPI, CloudConfig
 
 # Azure SDK is too noisy
 for logger_name in [
@@ -168,14 +168,20 @@ class AzureAPI(AbstractCloudAPI):
     compute_client: ComputeManagementClient
     infra_tmpl_path: Path
     infra_deployment_name_tmpl: str = "{}-infra-deployment"
+    infra_params: Dict[str, str]
     vm_tmpl_path: Path
     vm_deployment_name_tmpl: str = "{}-vm-{}-deployment"
+    vm_params: Dict[str, str]
 
     def __init__(self, config: ConfigParser):
         super().__init__(
-            max_nodes=config.getint("clouds", "az_max_nodes", fallback=None)
+            config=config,
+            max_nodes=config.getint("clouds", "az_max_nodes", fallback=None),
         )
-        self.config = config
+        if self.ssh_user == "root":
+            self._log.warn("Root user not supported on Azure")
+            self.ssh_user = "yascheduler"
+
         self.client_id = config.get("clouds", "az_client_id")
         self.location = config.get(
             "clouds", "az_location", fallback="westeurope"
@@ -199,6 +205,12 @@ class AzureAPI(AbstractCloudAPI):
                 / Path("azure_vm_tmpl.json"),
             )
         )
+        self.infra_params = self._get_conf_by_prefix(
+            config, "clouds", "az_infra_param_"
+        )
+        self.vm_params = self._get_conf_by_prefix(
+            config, "clouds", "az_vm_param_"
+        )
         credential = ClientSecretCredential(
             tenant_id=config.get("clouds", "az_tenant_id"),
             client_id=self.client_id,
@@ -218,29 +230,23 @@ class AzureAPI(AbstractCloudAPI):
         )
 
     @property
-    def ssh_user(self) -> str:
-        "Default SSH user for azure"
-        ssh_user = super().ssh_user
-        if ssh_user == "root":
-            self._log.warn("Root user not supported on Azure")
-            ssh_user = "yascheduler"
-        return ssh_user
-
-    @property
-    def cloud_config_data(self) -> Dict[str, Any]:
+    def cloud_config_data(self) -> CloudConfig:
         "cloud-config for azure"
-        my_boot_cmds = [
+        my_boot_cmds: List[Union[str, List[str]]] = [
             # see https://github.com/MicrosoftDocs/azure-docs/issues/82500
             "systemctl mask waagent-apt.service",
         ]
         data = super().cloud_config_data
-        data["bootcmd"] = my_boot_cmds + data.get("bootcmd", [])
+        data.bootcmd = my_boot_cmds + data.bootcmd
         return data
 
-    def _get_conf_by_prefix(self, section: str, prefix: str) -> Dict[str, str]:
+    @staticmethod
+    def _get_conf_by_prefix(
+        config: ConfigParser, section: str, prefix: str
+    ) -> Dict[str, str]:
         "Get part of config by section and prefix as dict"
         filtered = filter(
-            lambda x: x[0].startswith(prefix), self.config.items(section)
+            lambda x: x[0].startswith(prefix), config.items(section)
         )
         prefix_removed = map(
             lambda x: (
@@ -307,11 +313,10 @@ class AzureAPI(AbstractCloudAPI):
 
     def create_infra_deployment(self) -> Dict[str, Any]:
         "Create deployment with common infrastructure parts"
-        params = self._get_conf_by_prefix("clouds", "az_infra_param_")
         name = self.infra_deployment_name_tmpl.format(self.rg_name)
         with open(self.infra_tmpl_path, "r") as fd:
             tmpl = json.load(fd)
-        res = self.create_deployment(name, tmpl, params)
+        res = self.create_deployment(name, tmpl, self.infra_params)
         return res.properties and res.properties.outputs or {}
 
     def create_vm_deployment(self, infra_outputs) -> Dict[str, Any]:
@@ -323,8 +328,7 @@ class AzureAPI(AbstractCloudAPI):
         params = {
             "namePrefix": rnd_id,
             "adminPublicKey": self.public_key,
-            "customData": "#cloud-config\n"
-            + json.dumps(self.cloud_config_data),
+            "customData": self.cloud_config_data.render(),
         }
         # inherit params from infra deployment outputs
         inherit_infra_params = [
@@ -338,7 +342,7 @@ class AzureAPI(AbstractCloudAPI):
             if k in inherit_infra_params and type(v) == dict:
                 params[k] = v.get("value")
         # load from config
-        params.update(self._get_conf_by_prefix("clouds", "az_vm_param_"))
+        params.update(self.vm_params)
 
         with open(self.vm_tmpl_path, "r") as fd:
             tmpl = json.load(fd)
