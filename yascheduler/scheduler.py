@@ -222,7 +222,7 @@ class Yascheduler:
             VALUES ('{label}', '{metadata}', NULL, {status})
             RETURNING task_id;""".format(
                 label=label,
-                metadata=json.dumps(metadata),
+                metadata=json.dumps(metadata).replace("'", "''"),
                 status=self.STATUS_TO_DO,
             )
         )
