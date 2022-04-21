@@ -195,7 +195,9 @@ class Yascheduler:
             )
             params = jobs
 
-        sql_statement = "SELECT task_id, label, ip, status FROM yascheduler_tasks WHERE {};".format(
+        sql_statement = """
+        SELECT task_id, label, ip, status FROM yascheduler_tasks WHERE {};
+        """.format(
             query_string
         )
         self.cursor.execute(sql_statement, params)
@@ -314,7 +316,8 @@ class Yascheduler:
             self._log.error("SSH spawn cmd error: %s" % err)
             return False
 
-        with tempfile.NamedTemporaryFile() as tmp:  # NB beware overflown remote
+        # NB beware overflown remote
+        with tempfile.NamedTemporaryFile() as tmp:
             for input_file in engine.input_files:
                 tmp.write(metadata[input_file].encode("utf-8"))
                 tmp.flush()
@@ -377,8 +380,8 @@ class Yascheduler:
 
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool, (
-            f"Node {ip} was referred by active task, however absent in node list"
-            % ip
+            f"Node {ip} was referred by active task,"
+            " however absent in node list"
         )
         try:
             check_cmd = " && ".join([x.check for x in self.engines.values()])

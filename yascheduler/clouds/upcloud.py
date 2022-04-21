@@ -18,7 +18,9 @@ class UpCloudAPI(AbstractCloudAPI):
     def __init__(self, config: ConfigParser):
         super().__init__(
             config=config,
-            max_nodes=config.getint("clouds", "upcloud_max_nodes", fallback=None),
+            max_nodes=config.getint(
+                "clouds", "upcloud_max_nodes", fallback=None
+            ),
         )
         self.client = CloudManager(
             config.get('clouds', 'upcloud_login'),
