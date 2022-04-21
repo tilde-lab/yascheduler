@@ -45,11 +45,11 @@ class Yascheduler:
     connection: pg8000.Connection
     cursor: pg8000.Cursor
     engines: EngineRepository
-    local_bin_dir: Path
+    local_engines_dir: Path
     local_data_dir: Path
     local_keys_dir: Path
     local_tasks_dir: Path
-    remote_bin_dir: Path
+    remote_engines_dir: Path
     remote_data_dir: Path
     remote_tasks_dir: Path
     ssh_conn_pool: Dict[str, SSH_Connection]
@@ -68,8 +68,8 @@ class Yascheduler:
         self.local_data_dir = Path(
             local_cfg.get("data_dir", "./data")
         ).resolve()
-        self.local_bin_dir = Path(
-            local_cfg.get("bin_dir", str(self.local_data_dir / "bins"))
+        self.local_engines_dir = Path(
+            local_cfg.get("engines_dir", str(self.local_data_dir / "engines"))
         ).resolve()
         self.local_tasks_dir = Path(
             local_cfg.get("tasks_dir", str(self.local_data_dir / "tasks"))
@@ -80,8 +80,10 @@ class Yascheduler:
 
         remote_cfg = config["remote"]
         self.remote_data_dir = Path(remote_cfg.get("data_dir", "./data"))
-        self.remote_bin_dir = Path(
-            remote_cfg.get("bin_dir", str(self.remote_data_dir / "bins"))
+        self.remote_engines_dir = Path(
+            remote_cfg.get(
+                "engines_dir", str(self.remote_data_dir / "engines")
+            )
         )
         self.remote_tasks_dir = Path(
             remote_cfg.get("tasks_dir", str(self.remote_data_dir / "tasks"))
@@ -325,7 +327,7 @@ class Yascheduler:
 
         # placeholders {task_path}, {engine_path} and {ncpus} are supported
         run_cmd = engine.spawn.format(
-            engine_path=self.remote_bin_dir / engine.name,
+            engine_path=self.remote_engines_dir / engine.name,
             task_path=metadata["remote_folder"],
             ncpus=ncpus or "`grep -c ^processor /proc/cpuinfo`",
         )
@@ -461,8 +463,8 @@ class Yascheduler:
 
         for engine in engines.values():
             self._log.info(f"Setup {engine.name} engine...")
-            local_engine_dir = self.local_bin_dir / engine.name
-            remote_engine_dir = self.remote_bin_dir / engine.name
+            local_engine_dir = self.local_engines_dir / engine.name
+            remote_engine_dir = self.remote_engines_dir / engine.name
             ssh_conn.run(f"mkdir -p {remote_engine_dir}")
             for deployment in engine.deployable:
                 # uploading binary from local; requires broadband connection
