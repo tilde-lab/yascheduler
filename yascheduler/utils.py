@@ -260,6 +260,15 @@ def manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument('host',
         help='IP[~ncpus]')
+    parser.add_argument(
+        "--skip-setup",
+        required=False,
+        default=False,
+        nargs="?",
+        type=bool,
+        const=True,
+        help="Skip node setup",
+    )
     parser.add_argument('--remove-soft', required=False, default=None, nargs='?', type=bool, const=True,
         help='Remove IP delayed')
     parser.add_argument('--remove-hard', required=False, default=None, nargs='?', type=bool, const=True,
@@ -318,7 +327,9 @@ def manage_node():
 
     print('Added host to yascheduler: {}'.format(args.host))
 
-    print('Setup host...')
-    yac.setup_node(args.host, "root")
+    if not args.skip_setup:
+        print('Setup host...')
+        yac.setup_node(args.host, "root")
+
     print('Done')
     return True
