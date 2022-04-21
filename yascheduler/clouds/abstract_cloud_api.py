@@ -75,7 +75,7 @@ class AbstractCloudAPI(object):
             config.get("local", "data_dir", fallback="./data")
         )
         self.local_keys_dir = Path(
-            config.get("local", "keys_dir") or local_data_dir / "keys"
+            config.get("local", "keys_dir", fallback=local_data_dir / "keys")
         )
 
     def init_key(self):
