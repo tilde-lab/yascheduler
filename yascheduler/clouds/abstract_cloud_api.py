@@ -43,10 +43,11 @@ class AbstractCloudAPI(object):
     _log: logging.Logger
     name: str = "abstract"
     yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
-    ssh_user: str
-    local_keys_dir: Path
     key_name: Optional[str]
+    local_keys_dir: Path
+    max_nodes: Optional[int]
     public_key: Optional[str]
+    ssh_user: str
 
     def __init__(
         self,
