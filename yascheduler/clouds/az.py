@@ -178,6 +178,10 @@ class AzureAPI(AbstractCloudAPI):
             config=config,
             max_nodes=config.getint("clouds", "az_max_nodes", fallback=None),
         )
+        if self.ssh_user == "root":
+            self._log.warn("Root user not supported on Azure")
+            self.ssh_user = "yascheduler"
+
         self.client_id = config.get("clouds", "az_client_id")
         self.location = config.get(
             "clouds", "az_location", fallback="westeurope"
@@ -224,15 +228,6 @@ class AzureAPI(AbstractCloudAPI):
         self.compute_client = ComputeManagementClient(
             credential, subscription_id
         )
-
-    @property
-    def ssh_user(self) -> str:
-        "Default SSH user for azure"
-        ssh_user = super().ssh_user
-        if ssh_user == "root":
-            self._log.warn("Root user not supported on Azure")
-            ssh_user = "yascheduler"
-        return ssh_user
 
     @property
     def cloud_config_data(self) -> CloudConfig:
