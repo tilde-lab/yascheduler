@@ -14,7 +14,7 @@ from yascheduler.clouds import AbstractCloudAPI
 
 class HetznerCloudAPI(AbstractCloudAPI):
 
-    name = 'hetzner'
+    name = "hetzner"
 
     client: Client
     ssh_key_id: Optional[BoundSSHKey]
@@ -22,11 +22,9 @@ class HetznerCloudAPI(AbstractCloudAPI):
     def __init__(self, config: ConfigParser):
         super().__init__(
             config=config,
-            max_nodes=config.getint(
-                "clouds", "hetzner_max_nodes", fallback=None
-            ),
+            max_nodes=config.getint("clouds", "hetzner_max_nodes", fallback=None),
         )
-        self.client = Client(token=config.get('clouds', 'hetzner_token'))
+        self.client = Client(token=config.get("clouds", "hetzner_token"))
 
     def init_key(self):
         super().init_key()
@@ -38,9 +36,9 @@ class HetznerCloudAPI(AbstractCloudAPI):
                 public_key=self.public_key,
             )
         except APIException as ex:
-            if 'already' in str(ex):
+            if "already" in str(ex):
                 for key in self.client.ssh_keys.get_all():
-                    if key.name.startswith('yakey') and len(key.name) == 14:
+                    if key.name.startswith("yakey") and len(key.name) == 14:
                         self.ssh_key_id = key.id
             else:
                 raise
@@ -58,7 +56,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
         )
         server = response.server
         ip = server.public_net.ipv4.ip
-        self._log.info('CREATED %s' % ip)
+        self._log.info("CREATED %s" % ip)
 
         # wait node up and ready
         self._run_ssh_cmd_with_backoff(
@@ -81,7 +79,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
 
         if server:
             server.delete()
-            self._log.info('DELETED %s' % ip)
+            self._log.info("DELETED %s" % ip)
 
         else:
-            self._log.info('NODE %s NOT DELETED AS UNKNOWN' % ip)
+            self._log.info("NODE %s NOT DELETED AS UNKNOWN" % ip)

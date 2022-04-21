@@ -23,6 +23,7 @@ class CloudWorker(BackgroundWorker):
         self._cfg = config
 
         from ..scheduler import Yascheduler
+
         yac = Yascheduler(config, logger=self._log)
         self._apis = {}
         for api_name in use_apis:

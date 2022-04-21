@@ -72,9 +72,7 @@ class AbstractCloudAPI(object):
             fallback=config.get("remote", "user", fallback="root"),
         )
 
-        local_data_dir = Path(
-            config.get("local", "data_dir", fallback="./data")
-        )
+        local_data_dir = Path(config.get("local", "data_dir", fallback="./data"))
         self.local_keys_dir = Path(
             config.get("local", "keys_dir", fallback=local_data_dir / "keys")
         )
@@ -115,21 +113,15 @@ class AbstractCloudAPI(object):
         return (
             prefix
             + "-"
-            + "".join(
-                [random.choice(string.ascii_lowercase) for _ in range(8)]
-            )
+            + "".join([random.choice(string.ascii_lowercase) for _ in range(8)])
         )
 
     @property
     def cloud_config_data(self) -> CloudConfig:
         "Common cloud-config"
         # currently we support only debian-like platforms
-        engines = (
-            self.yascheduler and self.yascheduler.engines or EngineRepository()
-        )
-        pkgs = engines.filter_platforms(
-            ["debian", "ubuntu"]
-        ).get_platform_packages()
+        engines = self.yascheduler and self.yascheduler.engines or EngineRepository()
+        pkgs = engines.filter_platforms(["debian", "ubuntu"]).get_platform_packages()
         return CloudConfig(
             package_upgrade=True,
             packages=pkgs,

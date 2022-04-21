@@ -56,18 +56,14 @@ class Yascheduler:
     ssh_custom_key: Dict[str, RSAKey]
     ssh_user: str
 
-    def __init__(
-        self, config: ConfigParser, logger: Optional[logging.Logger] = None
-    ):
+    def __init__(self, config: ConfigParser, logger: Optional[logging.Logger] = None):
         if logger:
             self._log = logger.getChild(self.__class__.__name__)
         else:
             self._log = logging.getLogger(self.__class__.__name__)
 
         local_cfg = config["local"]
-        self.local_data_dir = Path(
-            local_cfg.get("data_dir", "./data")
-        ).resolve()
+        self.local_data_dir = Path(local_cfg.get("data_dir", "./data")).resolve()
         self.local_engines_dir = Path(
             local_cfg.get("engines_dir", str(self.local_data_dir / "engines"))
         ).resolve()
@@ -81,9 +77,7 @@ class Yascheduler:
         remote_cfg = config["remote"]
         self.remote_data_dir = Path(remote_cfg.get("data_dir", "./data"))
         self.remote_engines_dir = Path(
-            remote_cfg.get(
-                "engines_dir", str(self.remote_data_dir / "engines")
-            )
+            remote_cfg.get("engines_dir", str(self.remote_data_dir / "engines"))
         )
         self.remote_tasks_dir = Path(
             remote_cfg.get("tasks_dir", str(self.remote_data_dir / "tasks"))
@@ -125,9 +119,7 @@ class Yascheduler:
             t.start()
 
     def queue_get_resources(self):
-        self.cursor.execute(
-            "SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;"
-        )
+        self.cursor.execute("SELECT ip, ncpus, enabled, cloud FROM yascheduler_nodes;")
         return self.cursor.fetchall()
 
     def queue_get_resource(self, ip):
@@ -177,22 +169,14 @@ class Yascheduler:
 
     def queue_get_tasks(self, jobs=None, status=None):
         if jobs is not None and status is not None:
-            raise ValueError(
-                "jobs can be selected only by status or by task ids"
-            )
+            raise ValueError("jobs can be selected only by status or by task ids")
         if jobs is None and status is None:
-            raise ValueError(
-                "jobs can only be selected by status or by task ids"
-            )
+            raise ValueError("jobs can only be selected by status or by task ids")
         if status is not None:
-            query_string = "status IN ({})".format(
-                ", ".join(["%s"] * len(status))
-            )
+            query_string = "status IN ({})".format(", ".join(["%s"] * len(status)))
             params = status
         else:
-            query_string = "task_id IN ({})".format(
-                ", ".join(["%s"] * len(jobs))
-            )
+            query_string = "task_id IN ({})".format(", ".join(["%s"] * len(jobs)))
             params = jobs
 
         sql_statement = """
@@ -233,24 +217,16 @@ class Yascheduler:
         # if self.clouds:
         # TODO: free-up CloudAPIManager().tasks
 
-    def queue_submit_task(
-        self, label: str, metadata: Dict[str, Any], engine_name: str
-    ):
+    def queue_submit_task(self, label: str, metadata: Dict[str, Any], engine_name: str):
         if engine_name not in self.engines:
-            raise RuntimeError(
-                "Engine %s requested, but not supported" % engine_name
-            )
+            raise RuntimeError("Engine %s requested, but not supported" % engine_name)
 
         for input_file in self.engines[engine_name].input_files:
             if input_file not in metadata:
-                raise RuntimeError(
-                    "Input file %s was not provided" % input_file
-                )
+                raise RuntimeError("Input file %s was not provided" % input_file)
 
         metadata["engine"] = engine_name
-        rnd_str = "".join(
-            [random.choice(string.ascii_lowercase) for _ in range(4)]
-        )
+        rnd_str = "".join([random.choice(string.ascii_lowercase) for _ in range(4)])
         metadata["remote_folder"] = str(
             self.remote_tasks_dir
             / "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str)
@@ -289,9 +265,7 @@ class Yascheduler:
                 host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key
             )
 
-        self._log.info(
-            "Nodes to watch: %s" % ", ".join(self.ssh_conn_pool.keys())
-        )
+        self._log.info("Nodes to watch: %s" % ", ".join(self.ssh_conn_pool.keys()))
         if not self.ssh_conn_pool:
             self._log.warning("No nodes set!")
 
@@ -347,9 +321,7 @@ class Yascheduler:
     def ssh_check_node(self, ip):
         try:
             node_info = self.queue_get_resource(ip)
-            cloud = self.clouds and self.clouds.apis.get(
-                node_info and node_info[3]
-            )
+            cloud = self.clouds and self.clouds.apis.get(node_info and node_info[3])
             ssh_user = cloud and cloud.ssh_user or self.ssh_user
             with SSH_Connection(
                 host=ip,
@@ -357,9 +329,7 @@ class Yascheduler:
                 connect_kwargs=self.ssh_custom_key,
                 connect_timeout=5,
             ) as conn:
-                check_cmd = " && ".join(
-                    [x.check for x in self.engines.values()]
-                )
+                check_cmd = " && ".join([x.check for x in self.engines.values()])
                 result = str(conn.run(check_cmd, hide=True))
                 for engine in self.engines.values():
                     if engine.run_marker in result:
@@ -371,8 +341,7 @@ class Yascheduler:
 
         except Exception as err:
             self._log.error(
-                "Host %s@%s is unreachable due to: %s"
-                % (self.ssh_user, ip, err)
+                "Host %s@%s is unreachable due to: %s" % (self.ssh_user, ip, err)
             )
             return False
 
@@ -380,8 +349,7 @@ class Yascheduler:
 
     def ssh_check_task(self, ip):
         assert ip in self.ssh_conn_pool, (
-            f"Node {ip} was referred by active task,"
-            " however absent in node list"
+            f"Node {ip} was referred by active task," " however absent in node list"
         )
         try:
             check_cmd = " && ".join([x.check for x in self.engines.values()])
@@ -442,9 +410,7 @@ class Yascheduler:
         sudo_prefix = "" if user == "root" else "sudo "
 
         # print OS version
-        result = ssh_conn.run(
-            "source /etc/os-release; echo $PRETTY_NAME", hide=True
-        )
+        result = ssh_conn.run("source /etc/os-release; echo $PRETTY_NAME", hide=True)
         self._log.info("OS: {}".format(result.stdout.split("\n")[0]))
 
         # print CPU count
@@ -488,9 +454,7 @@ class Yascheduler:
                     self._log.info(f"Uploading {fn} to {rpath}...")
                     ssh_conn.put(apath, str(rpath))
                     self._log.info(f"Unarchiving {fn}...")
-                    ssh_conn.run(
-                        f"cd {remote_engine_dir} && tar xfv {fn}", hide=True
-                    )
+                    ssh_conn.run(f"cd {remote_engine_dir} && tar xfv {fn}", hide=True)
                     ssh_conn.run(f"rm {rpath}", hide=True)
 
                 # downloading binary from a trusted non-public address
@@ -501,9 +465,7 @@ class Yascheduler:
                     self._log.info(f"Downloading {url} to {rpath}...")
                     ssh_conn.run(f'wget "{url}" -O {rpath}', hide=False)
                     self._log.info(f"Unarchiving {fn}...")
-                    ssh_conn.run(
-                        f"cd {remote_engine_dir} && tar xfv {fn}", hide=True
-                    )
+                    ssh_conn.run(f"cd {remote_engine_dir} && tar xfv {fn}", hide=True)
                     ssh_conn.run(f"rm {rpath}", hide=True)
 
     def stop(self):
@@ -547,9 +509,7 @@ def daemonize(log_file=None):
 
         # (I.) Tasks de-allocation clause
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
-        logger.debug(
-            "running %s tasks: %s" % (len(tasks_running), tasks_running)
-        )
+        logger.debug("running %s tasks: %s" % (len(tasks_running), tasks_running))
         for task in tasks_running:
             if yac.ssh_check_task(task["ip"]):
                 try:
@@ -580,9 +540,7 @@ def daemonize(log_file=None):
                 )
                 if webhook_url:
                     ready_task["metadata"]["webhook_url"] = webhook_url
-                yac.queue_set_task_done(
-                    ready_task["task_id"], ready_task["metadata"]
-                )
+                yac.queue_set_task_done(ready_task["task_id"], ready_task["metadata"])
                 logger.info(
                     ":::task_id={} {} done and saved in {}".format(
                         task["task_id"],
@@ -596,9 +554,7 @@ def daemonize(log_file=None):
         # (II.) Resourses and tasks allocation clause
         clouds_capacity = yac.clouds_get_capacity(resources)
         if free_nodes or clouds_capacity:
-            for task in yac.queue_get_tasks_to_do(
-                clouds_capacity + len(free_nodes)
-            ):
+            for task in yac.queue_get_tasks_to_do(clouds_capacity + len(free_nodes)):
                 if not free_nodes:
                     yac.clouds_allocate(task["task_id"])
                     continue

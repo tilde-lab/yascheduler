@@ -14,11 +14,7 @@ from yascheduler.background_worker import BackgroundWorker
 
 def from_dict_to_dataclass(cls, data: Dict[str, Any]):
     new_dict = {
-        key: (
-            data.get(key)
-            if val.default == val.empty
-            else data.get(key, val.default)
-        )
+        key: (data.get(key) if val.default == val.empty else data.get(key, val.default))
         for key, val in inspect.signature(cls).parameters.items()
     }
     return cls(**new_dict)
@@ -90,8 +86,6 @@ class WebhookWorker(BackgroundWorker):
             )
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            self._log.info(
-                f"Webhook to {t.metadata.webhook_url} failed: {str(e)}"
-            )
+            self._log.info(f"Webhook to {t.metadata.webhook_url} failed: {str(e)}")
 
         self._task_queue.task_done()

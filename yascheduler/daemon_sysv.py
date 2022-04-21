@@ -16,14 +16,14 @@ def start_daemon(pid_file, log_file):
         working_directory=os.path.dirname(__file__),
         umask=0o002,
         pidfile=pidfile.TimeoutPIDLockFile(pid_file),
-        ) as _:
+    ) as _:
         daemonize(log_file)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Yascheduler daemon")
-    parser.add_argument('-p', '--pid-file', default=PID_FILE)
-    parser.add_argument('-l', '--log-file', default=LOG_FILE)
+    parser.add_argument("-p", "--pid-file", default=PID_FILE)
+    parser.add_argument("-l", "--log-file", default=LOG_FILE)
 
     args = parser.parse_args()
 
