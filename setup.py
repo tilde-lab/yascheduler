@@ -6,9 +6,12 @@ import atexit
 import os
 import sys
 import shutil
+import stat
 from setuptools import setup, find_packages
 from setuptools.command.install import install
+
 from yascheduler import __version__, CONFIG_FILE
+
 
 package_name = "yascheduler"
 package_version = __version__
@@ -30,12 +33,11 @@ class CustomInstall(install):
                 os.makedirs(config_dir)
                 shutil.copy(src_config, CONFIG_FILE)
 
-            # link executable
+            # chmod and link executable
             try:
-                os.symlink(
-                    os.path.join(install_path, "scheduler.py"),
-                    "/usr/bin/yascheduler",
-                )
+                target = os.path.join(install_path, "scheduler.py")
+                os.chmod(target, os.stat(target).st_mode | stat.S_IEXEC)
+                os.symlink(target, "/usr/bin/yascheduler")
             except Exception:
                 pass
 
