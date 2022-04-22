@@ -101,9 +101,7 @@ class AzureRBACError(Exception):
 
     def __init__(self, name: str):
         fstr = "Can't {} {} '{}' - access denied. Please, setup RBAC."
-        msg = fstr.format(
-            self.operation, self.resource_type or "resource", name
-        )
+        msg = fstr.format(self.operation, self.resource_type or "resource", name)
         super().__init__(msg)
 
 
@@ -183,9 +181,7 @@ class AzureAPI(AbstractCloudAPI):
             self.ssh_user = "yascheduler"
 
         self.client_id = config.get("clouds", "az_client_id")
-        self.location = config.get(
-            "clouds", "az_location", fallback="westeurope"
-        )
+        self.location = config.get("clouds", "az_location", fallback="westeurope")
         self.rg_name = config.get(
             "clouds", "az_resource_group_name", fallback="YaScheduler-VM-rg"
         )
@@ -201,16 +197,13 @@ class AzureAPI(AbstractCloudAPI):
             config.get(
                 "clouds",
                 "az_vm_tmpl_path",
-                fallback=Path(__file__).parent.absolute()
-                / Path("azure_vm_tmpl.json"),
+                fallback=Path(__file__).parent.absolute() / Path("azure_vm_tmpl.json"),
             )
         )
         self.infra_params = self._get_conf_by_prefix(
             config, "clouds", "az_infra_param_"
         )
-        self.vm_params = self._get_conf_by_prefix(
-            config, "clouds", "az_vm_param_"
-        )
+        self.vm_params = self._get_conf_by_prefix(config, "clouds", "az_vm_param_")
         credential = ClientSecretCredential(
             tenant_id=config.get("clouds", "az_tenant_id"),
             client_id=self.client_id,
@@ -222,12 +215,8 @@ class AzureAPI(AbstractCloudAPI):
             subscription_id,
             api_version="2021-04-01",
         )
-        self.network_client = NetworkManagementClient(
-            credential, subscription_id
-        )
-        self.compute_client = ComputeManagementClient(
-            credential, subscription_id
-        )
+        self.network_client = NetworkManagementClient(credential, subscription_id)
+        self.compute_client = ComputeManagementClient(credential, subscription_id)
 
     @property
     def cloud_config_data(self) -> CloudConfig:
@@ -245,12 +234,10 @@ class AzureAPI(AbstractCloudAPI):
         config: ConfigParser, section: str, prefix: str
     ) -> Dict[str, str]:
         "Get part of config by section and prefix as dict"
-        filtered = filter(
-            lambda x: x[0].startswith(prefix), config.items(section)
-        )
+        filtered = filter(lambda x: x[0].startswith(prefix), config.items(section))
         prefix_removed = map(
             lambda x: (
-                x[0][len(prefix):] if x[0].startswith(prefix) else x[0],
+                x[0][len(prefix) :] if x[0].startswith(prefix) else x[0],
                 x[1],
             ),
             filtered,
@@ -278,9 +265,7 @@ class AzureAPI(AbstractCloudAPI):
     def get_pip(self, name: str) -> PublicIPAddress:
         "Get Public IP Address by name"
         try:
-            return self.network_client.public_ip_addresses.get(
-                self.rg_name, name
-            )
+            return self.network_client.public_ip_addresses.get(self.rg_name, name)
         except HttpResponseError as e:
             code = getattr(e, "error", None) and getattr(e.error, "code", None)
             if code == "AuthorizationFailed":
@@ -321,9 +306,7 @@ class AzureAPI(AbstractCloudAPI):
 
     def create_vm_deployment(self, infra_outputs) -> Dict[str, Any]:
         "Create deployment with VM parts"
-        rnd_id = "".join(
-            [random.choice(string.ascii_lowercase) for _ in range(8)]
-        )
+        rnd_id = "".join([random.choice(string.ascii_lowercase) for _ in range(8)])
         name = self.vm_deployment_name_tmpl.format(self.rg_name, rnd_id)
         params = {
             "namePrefix": rnd_id,
@@ -357,9 +340,7 @@ class AzureAPI(AbstractCloudAPI):
             infra_deployment_lock.release()
         vm_outputs = self.create_vm_deployment(infra_outputs)
 
-        ip_name: Optional[str] = vm_outputs.get("publicIpAddressName", {}).get(
-            "value"
-        )
+        ip_name: Optional[str] = vm_outputs.get("publicIpAddressName", {}).get("value")
         if not ip_name:
             raise AzureCreatedVMPublicIPNotFoundError()
         ip_address = self.get_pip(ip_name).ip_address
@@ -415,14 +396,10 @@ class AzureAPI(AbstractCloudAPI):
             deployment = self.resource_client.deployments.get(
                 self.rg_name, deployment_name
             )
-            req = DeleteRequest(
-                99, self.resource_client.deployments, deployment_name
-            )
+            req = DeleteRequest(99, self.resource_client.deployments, deployment_name)
             del_reqs.append(req)
         except Exception as e:
-            self._log.error(
-                f"Can't get deployment {deployment_name}: {str(e)}"
-            )
+            self._log.error(f"Can't get deployment {deployment_name}: {str(e)}")
             return self._run_del_reqs(del_reqs)
 
         deps = (

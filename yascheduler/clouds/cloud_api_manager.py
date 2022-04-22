@@ -54,16 +54,11 @@ class CloudAPIManager(object):
             pass
 
         for name in active_providers:
-            if (
-                config.getint("clouds", name + "_max_nodes", fallback=None)
-                == 0
-            ):
+            if config.getint("clouds", name + "_max_nodes", fallback=None) == 0:
                 continue
             self.apis[name] = load_cloudapi(name)(config)
 
-        self._log.info(
-            "Active cloud APIs: " + (", ".join(self.apis.keys()) or "-")
-        )
+        self._log.info("Active cloud APIs: " + (", ".join(self.apis.keys()) or "-"))
 
         self._allocate_tasks = queue.Queue()
         self._allocate_results = queue.Queue()
@@ -153,9 +148,7 @@ class CloudAPIManager(object):
 
         if len(used_providers) < len(active_providers):
             name = random.choice(
-                list(
-                    set(active_providers) - set([x[0] for x in used_providers])
-                )
+                list(set(active_providers) - set([x[0] for x in used_providers]))
             )
         else:
             name = sorted(used_providers, key=lambda x: x[1])[0][0]
@@ -248,8 +241,6 @@ class CloudAPIManager(object):
         n_busy_cloud_nodes = len(
             [item for item in resources if item[3]]
         )  # Yascheduler.queue_get_resources()
-        max_nodes = sum(
-            [self.apis[cloudapi].max_nodes for cloudapi in self.apis]
-        )
+        max_nodes = sum([self.apis[cloudapi].max_nodes for cloudapi in self.apis])
         diff = max_nodes - n_busy_cloud_nodes
         return diff if diff > 0 else 0

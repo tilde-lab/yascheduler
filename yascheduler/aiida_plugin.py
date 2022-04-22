@@ -3,17 +3,16 @@ Aiida plugin for yascheduler
 """
 
 import aiida.schedulers
-from aiida.schedulers.datastructures import (JobState, JobInfo, NodeNumberJobResource)
+from aiida.schedulers.datastructures import JobState, JobInfo, NodeNumberJobResource
 
 _MAP_STATUS_YASCHEDULER = {
-    'QUEUED': JobState.QUEUED,
-    'RUNNING': JobState.RUNNING,
-    'FINISHED': JobState.DONE
+    "QUEUED": JobState.QUEUED,
+    "RUNNING": JobState.RUNNING,
+    "FINISHED": JobState.DONE,
 }
 
 
 class YaschedJobResource(NodeNumberJobResource):
-
     def __init__(self, *_, **kwargs):
         super(YaschedJobResource, self).__init__(**kwargs)
 
@@ -22,11 +21,12 @@ class YaScheduler(aiida.schedulers.Scheduler):
     """
     Support for the YaScheduler designed specifically for MPDS
     """
-    _logger = aiida.schedulers.Scheduler._logger.getChild('yascheduler')
+
+    _logger = aiida.schedulers.Scheduler._logger.getChild("yascheduler")
 
     # Query only by list of jobs and not by user
     _features = {
-        'can_query_by_user': False,
+        "can_query_by_user": False,
     }
 
     # The class to be used for the job resource.
@@ -37,6 +37,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         The command to report full information on existing jobs.
         """
         from aiida.common.exceptions import FeatureNotAvailable
+
         if user:
             raise FeatureNotAvailable("Cannot query by user in Yascheduler")
         command = ["yastatus"]
@@ -47,17 +48,19 @@ class YaScheduler(aiida.schedulers.Scheduler):
                 joblist.append(jobs)
             else:
                 if not isinstance(jobs, (tuple, list)):
-                    raise TypeError("If provided, the 'jobs' variable must be a string or a list of strings")
+                    raise TypeError(
+                        "If provided, the 'jobs' variable must be a string or a list of strings"
+                    )
                 joblist = jobs
-            command.append('--jobs {}'.format(' '.join(joblist)))
-        return ' '.join(command)
+            command.append("--jobs {}".format(" ".join(joblist)))
+        return " ".join(command)
 
     def _get_detailed_jobinfo_command(self, jobid):
         """
         Return the command to run to get the detailed information on a job,
         even after the job has finished.
         """
-        return 'yastatus --jobs {}'.format(jobid)
+        return "yastatus --jobs {}".format(jobid)
 
     def _get_submit_script_header(self, job_tmpl):
         """
@@ -76,7 +79,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         Return the string to execute to submit a given script.
         """
-        return 'yasubmit {}'.format(submit_script)
+        return "yasubmit {}".format(submit_script)
 
     def _parse_submit_output(self, retval, stdout, stderr):
         """
@@ -85,7 +88,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         if stderr.strip():
             self.logger.warning("Stderr when submitting: {}".format(stderr.strip()))
-        return stdout.split(':')[1].strip()
+        return stdout.split(":")[1].strip()
 
     def _parse_joblist_output(self, retval, stdout, stderr):
         """
@@ -99,8 +102,10 @@ class YaScheduler(aiida.schedulers.Scheduler):
         each relevant parameters implemented.
         """
         if stderr.strip():
-            self.logger.warning("Stderr when parsing joblist: {}".format(stderr.strip()))
-        job_list = [job.split() for job in stdout.split('\n') if job]
+            self.logger.warning(
+                "Stderr when parsing joblist: {}".format(stderr.strip())
+            )
+        job_list = [job.split() for job in stdout.split("\n") if job]
         job_infos = []
         for job_id, status in job_list:
             job = JobInfo()

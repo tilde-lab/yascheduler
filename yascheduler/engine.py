@@ -52,22 +52,15 @@ class Engine:
     sleep_interval: int = 1
 
     def __post_init__(self):
-        assert self.spawn.startswith(
-            "nohup"
-        ), "spawn command should start with `nohup`"
+        assert self.spawn.startswith("nohup"), "spawn command should start with `nohup`"
 
     @classmethod
     def from_config(cls, cfg: SectionProxy):
         def getlist(key: str) -> List[str]:
-            return [
-                x.strip()
-                for x in filter(None, cfg.get(key, fallback="").split())
-            ]
+            return [x.strip() for x in filter(None, cfg.get(key, fallback="").split())]
 
         deployable: List[Deploy] = []
-        deploy_local_files = [
-            Path(x.strip()) for x in getlist("deploy_local_files")
-        ]
+        deploy_local_files = [Path(x.strip()) for x in getlist("deploy_local_files")]
         if deploy_local_files:
             deployable.append(LocalFilesDeploy(files=deploy_local_files))
         deploy_local_archive = cfg.get("deploy_local_archive", None)
@@ -129,9 +122,7 @@ class EngineRepository(UserDict, Dict[str, Engine]):
             )
         return super().__setitem__(key, value)
 
-    def filter(
-        self, filter_func: Callable[[Engine], bool]
-    ) -> "EngineRepository":
+    def filter(self, filter_func: Callable[[Engine], bool]) -> "EngineRepository":
         repo = EngineRepository()
         for k, v in self.items():
             if filter_func(v):

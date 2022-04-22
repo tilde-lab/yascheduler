@@ -4,9 +4,7 @@ from os import getenv
 
 __version__ = "0.9.0"
 
-CONFIG_FILE = getenv(
-    "YASCHEDULER_CONF_PATH", "/etc/yascheduler/yascheduler.conf"
-)
+CONFIG_FILE = getenv("YASCHEDULER_CONF_PATH", "/etc/yascheduler/yascheduler.conf")
 LOG_FILE = getenv("YASCHEDULER_LOG_PATH", "/var/log/yascheduler.log")
 PID_FILE = getenv("YASCHEDULER_PID_PATH", "/var/run/yascheduler.pid")
 SLEEP_INTERVAL = 6
