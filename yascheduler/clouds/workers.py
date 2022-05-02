@@ -76,7 +76,6 @@ class AllocatorWorker(CloudWorker):
             return
 
         try:
-            api.init_key()
             self._log.info("Creating a node...")
             r.ip = api.create_node()
             self._log.info(f"Created: {r.ip}")
@@ -133,7 +132,6 @@ class DeallocatorWorker(CloudWorker):
             return
 
         try:
-            api.init_key()
             self._log.info(f"Deleting the {r.ip} node...")
             api.delete_node(r.ip)
             self._log.info(f"Node {r.ip} is deleted")

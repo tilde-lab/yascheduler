@@ -16,11 +16,11 @@ from datetime import timedelta, datetime
 from importlib import import_module
 from pathlib import Path
 from time import sleep
-from typing import Callable, List, Optional, TypeVar, Union
+from typing import Callable, List, Optional, Tuple, TypeVar, Union
 
-from fabric import Connection as SSH_Connection
 from paramiko.rsakey import RSAKey
 from yascheduler.engine import EngineRepository
+from yascheduler.ssh import MyParamikoMachine
 import yascheduler.scheduler
 from yascheduler import DEFAULT_NODES_PER_PROVIDER
 
@@ -41,13 +41,13 @@ class CloudConfig:
 class AbstractCloudAPI(object):
 
     _log: logging.Logger
-    name: str = "abstract"
-    yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
-    key_name: Optional[str]
     local_keys_dir: Path
-    max_nodes: Optional[int]
-    public_key: Optional[str]
+    name: str = "abstract"
     ssh_user: str
+    _key_name: Optional[str] = None
+    _public_key: Optional[str] = None
+    max_nodes: Optional[int] = None
+    yascheduler: "Optional['yascheduler.scheduler.Yascheduler']" = None
 
     def __init__(
         self,
@@ -64,8 +64,6 @@ class AbstractCloudAPI(object):
         )
         self.yascheduler = None
 
-        self.public_key = None
-        self.ssh_custom_key = None
         self.ssh_user = config.get(
             "clouds",
             f"{self.name}_user",
@@ -77,37 +75,42 @@ class AbstractCloudAPI(object):
             config.get("local", "keys_dir", fallback=local_data_dir / "keys")
         )
 
-    def init_key(self):
-        if self.ssh_custom_key:
-            return
-
+    def _init_key(self) -> Tuple[str, str]:
         # try to load
         for filepath in self.local_keys_dir.iterdir():
             if not filepath.name.startswith("yakey") or not filepath.is_file():
                 continue
-            self.key_name = filepath.name
+            key_name = filepath.name
             pmk_key = RSAKey.from_private_key_file(str(filepath))
             self._log.info("LOADED KEY %s" % filepath)
             break
 
         # generate new
         else:
-            self.key_name = self.get_rnd_name("yakey")
+            key_name = self.get_rnd_name("yakey")
             key = rsa.generate_private_key(
                 backend=crypto_default_backend(),
                 public_exponent=65537,
                 key_size=2048,
             )
+            filepath = self.local_keys_dir / self.key_name
             pmk_key = RSAKey(key=key)
-            key_path = self.local_keys_dir / self.key_name
-            pmk_key.write_private_key_file(str(key_path))
-            self._log.info("WRITTEN KEY %s" % key_path)
+            pmk_key.write_private_key_file(str(filepath))
+            self._log.info("WRITTEN KEY %s" % filepath)
 
-        self.public_key = "%s %s" % (pmk_key.get_name(), pmk_key.get_base64())
+        return (key_name, "%s %s" % (pmk_key.get_name(), pmk_key.get_base64()))
 
-        self.ssh_custom_key = {"pkey": pmk_key}
-        if self.yascheduler:
-            self.yascheduler.ssh_custom_key = self.ssh_custom_key
+    @property
+    def key_name(self) -> str:
+        if not self._key_name:
+            self._key_name, self._public_key = self._init_key()
+        return self._key_name
+
+    @property
+    def public_key(self) -> str:
+        if not self._public_key:
+            self._key_name, self._public_key = self._init_key()
+        return self._public_key
 
     def get_rnd_name(self, prefix: str) -> str:
         return (
@@ -158,12 +161,13 @@ class AbstractCloudAPI(object):
         "Run ssh command with retries on errors"
 
         def run_cmd():
-            ssh_conn = SSH_Connection(
+            machine = MyParamikoMachine.create_machine(
                 host=host,
                 user=self.ssh_user,
-                connect_kwargs=self.ssh_custom_key,
+                keys_dir=self.local_keys_dir,
+                connect_timeout=max_interval,
             )
-            return ssh_conn.run(cmd, hide=True)
+            return machine.session().run(cmd)[1]
 
         return self._retry_with_backoff(run_cmd, max_time, max_interval)
 

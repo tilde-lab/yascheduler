@@ -1,6 +1,6 @@
 pg8000
 paramiko~=2.10.1
-fabric
+plumbum>=1.7.0
 python-daemon
 requests>=2.21
 

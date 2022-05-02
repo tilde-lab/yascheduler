@@ -112,7 +112,6 @@ class CloudAPIManager(object):
         assert self.yascheduler
         for cloudapi in self.apis:
             self.apis[cloudapi].yascheduler = self.yascheduler
-            self.apis[cloudapi].init_key()
 
         for t in self._allocators:
             t.start()

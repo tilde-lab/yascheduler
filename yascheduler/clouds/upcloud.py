@@ -1,9 +1,8 @@
 import time
 from configparser import ConfigParser
+from typing import Dict
 
 from upcloud_api import CloudManager, Server, Storage, ZONE, login_user_block
-
-from fabric import Connection as SSH_Connection
 
 from yascheduler.clouds import AbstractCloudAPI
 
@@ -25,17 +24,12 @@ class UpCloudAPI(AbstractCloudAPI):
         )
         self.client.authenticate()
 
-    def init_key(self):
-        super().init_key()
-        self.login_user = login_user_block(
+    def create_node(self):
+        login_user = login_user_block(
             username=self.ssh_user,
             ssh_keys=[self.public_key] if self.public_key else [],
             create_password=False,
         )
-
-    def create_node(self):
-        assert self.ssh_custom_key
-
         server = self.client.create_server(
             Server(
                 core_number=8,
@@ -43,25 +37,14 @@ class UpCloudAPI(AbstractCloudAPI):
                 hostname=self.get_rnd_name("node"),
                 zone=ZONE.London,
                 storage_devices=[Storage(os="Debian 10.0", size=40)],
-                login_user=self.login_user,
+                login_user=login_user,
             )
         )
         ip = server.get_public_ip()
         self._log.info("CREATED %s" % ip)
         self._log.info("WAITING FOR START...")
         time.sleep(30)
-
-        # warm up
-        for _ in range(10):
-            ssh_conn = SSH_Connection(
-                host=ip, user=self.ssh_user, connect_kwargs=self.ssh_custom_key
-            )
-            try:
-                ssh_conn.run("whoami", hide=True)
-            except:
-                time.sleep(5)
-            else:
-                break
+        self._run_ssh_cmd_with_backoff(ip, cmd="whoami", max_time=60, max_interval=5)
 
         return ip
 
