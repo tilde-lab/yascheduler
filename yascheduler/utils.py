@@ -7,11 +7,11 @@ from configparser import ConfigParser
 from pathlib import Path
 
 from pg8000 import ProgrammingError
-from fabric import Connection as SSH_Connection
-from paramiko.rsakey import RSAKey
-from invoke.exceptions import UnexpectedExit
+from plumbum import local
+from plumbum.commands.processes import ProcessExecutionError
 
 from yascheduler import has_node, add_node, remove_node
+from yascheduler.ssh import MyParamikoMachine
 from yascheduler.variables import CONFIG_FILE
 from yascheduler.scheduler import Yascheduler
 
@@ -85,19 +85,6 @@ def check_status():
     else:
         tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
 
-    if args.view:  # or args.kill:
-        if not tasks:
-            print("NO MATCHING TASKS FOUND")
-            return
-        ssh_custom_key = {}
-        for key_path in yac.local_keys_dir.glob("yakey-*"):
-            if not key_path.is_file():
-                continue
-            pmk_key = RSAKey.from_private_key_file(str(key_path))
-            print("LOADED KEY %s" % str(key_path))
-            ssh_custom_key = {"pkey": pmk_key}
-            break
-
     if args.convergence:
         try:
             from pycrystal import CRYSTOUT, CRYSTOUT_Error
@@ -129,26 +116,26 @@ def check_status():
                 + "ID%s %s at %s@%s:%s"
                 % (row[0], row[1], ssh_user, row[3], row[2]["remote_folder"])
             )
-            ssh_conn = SSH_Connection(
-                host=row[3], user=ssh_user, connect_kwargs=ssh_custom_key
+            machine = MyParamikoMachine.create_machine(
+                host=row[3],
+                user=ssh_user,
+                keys_dir=yac.local_keys_dir,
             )
             try:
-                result = ssh_conn.run(
-                    "tail -n15 %s/OUTPUT" % row[2]["remote_folder"], hide=True
-                )
-            except UnexpectedExit:
+                r_output = machine.path("{}/OUTPUT".format(row[2]["remote_folder"]))
+                result = machine.cmd.tail("-n15", r_output)
+            except ProcessExecutionError:
                 print("OUTDATED TASK, SKIPPING")
             else:
-                print(result.stdout)
+                print(result)
 
             if local_parsing_ready:
-                local_calc_snippet = os.path.join(
+                local_calc_snippet = Path(
                     config.get("local", "data_dir"), "local_calc_snippet.tmp"
                 )
                 try:
-                    ssh_conn.get(
-                        row[2]["remote_folder"] + "/OUTPUT", local_calc_snippet
-                    )
+                    r_output = machine.path(row[2]["remote_folder"]).join("OUTPUT")
+                    machine.download(r_output, local_calc_snippet)
                 except IOError as err:
                     continue
                 try:
@@ -220,60 +207,59 @@ def check_status():
 
 def init():
     # service initialization
-    install_path = os.path.dirname(__file__)
+    install_path = Path(__file__).parent
     # check for systemd (exit status is 0 if there is a process)
-    has_systemd = not os.system("pidof systemd")
-    if has_systemd:
+    try:
+        local.cmd.pidof("systemd")
         _init_systemd(install_path)  # NB. will be absent in *service --status-all*
-    else:
+    except ProcessExecutionError:
         _init_sysv(install_path)
     _init_db(install_path)
 
 
-def _init_systemd(install_path):
+def _init_systemd(install_path: Path):
     print("Installing systemd service")
     # create unit file in /lib/systemd/system
-    src_unit_file = os.path.join(install_path, "data/yascheduler.service")
-    unit_file = os.path.join("/lib/systemd/system/yascheduler.service")
-    if not os.path.isfile(unit_file):
-        daemon_file = os.path.join(install_path, "daemon_systemd.py")
-        systemd_script = (
-            open(src_unit_file).read().replace("%YASCHEDULER_DAEMON_FILE%", daemon_file)
+    src_unit_file = install_path / "data/yascheduler.service"
+    unit_file = Path("/lib/systemd/system/yascheduler.service")
+    if not unit_file.is_file():
+        if not os.access(unit_file, os.W_OK):
+            print("Error: cannot write to %s" % unit_file)
+            return
+        daemon_file = install_path / "daemon_systemd.py"
+        systemd_script = src_unit_file.read_text("utf-8").replace(
+            "%YASCHEDULER_DAEMON_FILE%", str(daemon_file)
         )
-        with open(unit_file, "w") as f:
-            f.write(systemd_script)
+        unit_file.write_text(systemd_script, "utf-8")
 
 
-def _init_sysv(install_path):
+def _init_sysv(install_path: Path):
 
     print("Installing SysV service")
 
     # create sysv script in /etc/init.d
-    src_startup_file = os.path.join(install_path, "data/yascheduler.sh")
-    startup_file = os.path.join("/etc/init.d/yascheduler")
-    if not os.path.isfile(startup_file):
+    src_startup_file = install_path / "data/yascheduler.sh"
+    startup_file = Path("/etc/init.d/yascheduler")
+    if not startup_file.is_file():
         if not os.access(startup_file, os.W_OK):
             print("Error: cannot write to %s" % startup_file)
             return
 
-        daemon_file = os.path.join(install_path, "daemon_sysv.py")
-        sysv_script = (
-            open(src_startup_file)
-            .read()
-            .replace("%YASCHEDULER_DAEMON_FILE%", daemon_file)
+        daemon_file = install_path / "daemon_sysv.py"
+        sysv_script = src_startup_file.read_text("utf-8").replace(
+            "%YASCHEDULER_DAEMON_FILE%", str(daemon_file)
         )
-        with open(startup_file, "w") as f:
-            f.write(sysv_script)
+        startup_file.write_text(sysv_script, "utf-8")
         # make script executable
         os.chmod(startup_file, 0o755)
 
 
-def _init_db(install_path):
+def _init_db(install_path: Path):
     # database initialization
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    schema = open(os.path.join(install_path, "data", "schema.sql")).read()
+    schema = (install_path / "data" / "schema.sql").read_text()
     try:
         for line in schema.split(";"):
             if not line:
@@ -404,15 +390,14 @@ def manage_node():
             print("Removed host from yascheduler: {}".format(args.host))
             return True
 
-    if not yac.ssh_check_node(args.host) or not add_node(config, args.host, ncpus):
-        print("Failed to add host to yascheduler: {}".format(args.host))
-        return False
-
-    print("Added host to yascheduler: {}".format(args.host))
+    # check connection
+    yac.ssh_connect([args.host])
 
     if not args.skip_setup:
         print("Setup host...")
         yac.setup_node(args.host, "root")
 
-    print("Done")
+    add_node(config, args.host, ncpus)
+
+    print("Added host to yascheduler: {}".format(args.host))
     return True

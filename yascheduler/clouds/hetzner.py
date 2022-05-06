@@ -17,7 +17,7 @@ class HetznerCloudAPI(AbstractCloudAPI):
     name = "hetzner"
 
     client: Client
-    ssh_key_id: Optional[BoundSSHKey]
+    _ssh_key_id: Optional[BoundSSHKey] = None
 
     def __init__(self, config: ConfigParser):
         super().__init__(
@@ -26,32 +26,29 @@ class HetznerCloudAPI(AbstractCloudAPI):
         )
         self.client = Client(token=config.get("clouds", "hetzner_token"))
 
-    def init_key(self):
-        super().init_key()
-        try:
-            assert self.key_name
-            assert self.public_key
-            self.ssh_key_id = self.client.ssh_keys.create(
-                name=self.key_name,
-                public_key=self.public_key,
-            )
-        except APIException as ex:
-            if "already" in str(ex):
-                for key in self.client.ssh_keys.get_all():
-                    if key.name.startswith("yakey") and len(key.name) == 14:
-                        self.ssh_key_id = key.id
-            else:
-                raise
+    @property
+    def ssh_key_id(self) -> BoundSSHKey:
+        if not self._ssh_key_id:
+            try:
+                self._ssh_key_id = self.client.ssh_keys.create(
+                    name=self.key_name,
+                    public_key=self.public_key,
+                )
+            except APIException as ex:
+                if "already" in str(ex):
+                    for key in self.client.ssh_keys.get_all():
+                        if key.name.startswith("yakey") and len(key.name) == 14:
+                            self._ssh_key_id = key.id
+                else:
+                    raise
+        return self._ssh_key_id
 
     def create_node(self):
-        assert self.ssh_key_id
-        assert self.ssh_custom_key
-
         response = self.client.servers.create(
             name=self.get_rnd_name("node"),
             server_type=ServerType("cx51"),
             image=Image(name="debian-10"),
-            ssh_keys=[SSHKey(name=self.key_name)],
+            ssh_keys=[SSHKey(id=self.ssh_key_id, name=self.key_name)],
             user_data=self.cloud_config_data.render(),
         )
         server = response.server
@@ -66,7 +63,6 @@ class HetznerCloudAPI(AbstractCloudAPI):
         return ip
 
     def delete_key(self):
-        assert self.ssh_key_id
         self.client.ssh_keys.delete(self.ssh_key_id.data_model)
 
     def delete_node(self, ip):

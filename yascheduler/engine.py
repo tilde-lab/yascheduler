@@ -4,7 +4,7 @@ from collections import UserDict
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
-from typing import Callable, Dict, List, Union
+from typing import Callable, Dict, List, Optional, Union
 from configparser import SectionProxy
 
 
@@ -39,20 +39,20 @@ class Engine:
     output_files: List[str]
 
     deployable: List[Deploy]
+    # spawn command
     spawn: str
 
-    # TODO: this is stupid - change to pid tracking
-    check: str
-    run_marker: str
+    # node is busy if command return code
+    check_cmd: Optional[str]
+    check_cmd_code: int
+    # .. or if process name in the process list
+    check_pname: Optional[str]
 
     platforms: List[str]
     platform_packages: List[str] = field(default_factory=lambda: [])
 
     # TODO: not used actually
     sleep_interval: int = 1
-
-    def __post_init__(self):
-        assert self.spawn.startswith("nohup"), "spawn command should start with `nohup`"
 
     @classmethod
     def from_config(cls, cfg: SectionProxy):
@@ -72,14 +72,14 @@ class Engine:
             d = RemoteArchiveDeploy(url=deploy_remote_archive)
             deployable.append(d)
 
-        spawn = cfg.get("spawn")
+        spawn = cfg.get("spawn", None)
         assert spawn, "Engine %s has no *spawn* config set" % cfg.name
 
-        check = cfg.get("check")
-        assert check, "Engine %s has no *check* config set" % cfg.name
-
-        run_marker = cfg.get("run_marker")
-        assert run_marker, "Engine %s has no *run_maker* config set" % cfg.name
+        check_cmd = cfg.get("check_cmd", None)
+        check_pname = cfg.get("check_pname", None)
+        assert check_cmd or check_pname, (
+            "Engine %s has no *check_cmd* or *check_pname* config set" % cfg.name
+        )
 
         assert "input_files" in cfg.keys(), (
             "Engine %s has no *input_files* config set" % cfg.name
@@ -98,8 +98,9 @@ class Engine:
             name=cfg.name[7:],
             deployable=deployable,
             spawn=spawn,
-            check=check,
-            run_marker=run_marker,
+            check_cmd=check_cmd,
+            check_cmd_code=cfg.getint("check_cmd_code", 0),
+            check_pname=check_pname,
             input_files=input_files,
             output_files=output_files,
             sleep_interval=cfg.getint("sleep_interval", cls.sleep_interval),

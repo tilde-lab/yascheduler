@@ -6,7 +6,6 @@ import os
 import queue
 import random
 import string
-import tempfile
 from configparser import ConfigParser
 from datetime import datetime, timedelta
 from collections import Counter
@@ -14,8 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pg8000
-from fabric import Connection as SSH_Connection
-from paramiko.rsakey import RSAKey
+from plumbum.commands.processes import ProcessExecutionError
 
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
@@ -26,6 +24,7 @@ from yascheduler.engine import (
     LocalArchiveDeploy,
     RemoteArchiveDeploy,
 )
+from yascheduler.ssh import MyParamikoMachine
 from yascheduler.time import sleep_until
 from yascheduler.webhook_worker import WebhookWorker, WebhookTask
 
@@ -52,8 +51,7 @@ class Yascheduler:
     remote_engines_dir: Path
     remote_data_dir: Path
     remote_tasks_dir: Path
-    ssh_conn_pool: Dict[str, SSH_Connection]
-    ssh_custom_key: Dict[str, RSAKey]
+    remote_machines: Dict[str, MyParamikoMachine]
     ssh_user: str
 
     def __init__(self, config: ConfigParser, logger: Optional[logging.Logger] = None):
@@ -84,8 +82,7 @@ class Yascheduler:
         )
 
         self.connection, self.cursor = connect_db(config)
-        self.ssh_conn_pool = {}
-        self.ssh_custom_key = {}
+        self.remote_machines = {}
         self.ssh_user = remote_cfg.get("user", fallback="root")
         self.engines = self._load_engines(config)
 
@@ -247,7 +244,7 @@ class Yascheduler:
         return self.cursor.fetchone()[0]
 
     def ssh_connect(self, new_nodes):
-        old_nodes = self.ssh_conn_pool.keys()
+        old_nodes = self.remote_machines.keys()
 
         ip_cloud_map = {}
         resources = self.queue_get_resources()
@@ -256,22 +253,25 @@ class Yascheduler:
                 ip_cloud_map[row[0]] = row[3]
 
         for ip in set(old_nodes) - set(new_nodes):
-            self.ssh_conn_pool[ip].close()
-            del self.ssh_conn_pool[ip]
+            self.remote_machines[ip].close()
+            del self.remote_machines[ip]
         for ip in set(new_nodes) - set(old_nodes):
             cloud = self.clouds and self.clouds.apis.get(ip_cloud_map.get(ip))
             ssh_user = cloud and cloud.ssh_user or self.ssh_user
-            self.ssh_conn_pool[ip] = SSH_Connection(
-                host=ip, user=ssh_user, connect_kwargs=self.ssh_custom_key
+            self.remote_machines[ip] = MyParamikoMachine.create_machine(
+                host=ip,
+                user=ssh_user,
+                keys_dir=self.local_keys_dir,
             )
 
-        self._log.info("Nodes to watch: %s" % ", ".join(self.ssh_conn_pool.keys()))
-        if not self.ssh_conn_pool:
+        self._log.info("Nodes to watch: %s" % ", ".join(self.remote_machines.keys()))
+        if not self.remote_machines:
             self._log.warning("No nodes set!")
+        return True
 
     def ssh_run_task(self, ip, ncpus, label, metadata):
         # TODO handle this situation
-        assert not self.ssh_check_task(
+        assert not self.ssh_node_busy_check(
             ip
         ), f"""
             Cannot run the task {label} at host {ip}, as this host is already
@@ -282,95 +282,70 @@ class Yascheduler:
         engine = self.engines.get(metadata["engine"])
         assert engine
 
+        machine = self.remote_machines[ip]
+        task_dir = machine.path(metadata["remote_folder"])
         try:
-            self.ssh_conn_pool[ip].run(
-                "mkdir -p %s" % metadata["remote_folder"], hide=True
-            )
-        except Exception as err:
-            self._log.error("SSH spawn cmd error: %s" % err)
-            return False
-
-        # NB beware overflown remote
-        with tempfile.NamedTemporaryFile() as tmp:
+            if not task_dir.exists():
+                task_dir.mkdir(parents=True)
             for input_file in engine.input_files:
-                tmp.write(metadata[input_file].encode("utf-8"))
-                tmp.flush()
-                self.ssh_conn_pool[ip].put(
-                    tmp.name,
-                    os.path.join(metadata["remote_folder"], input_file),
-                )
-                tmp.seek(0)
-                tmp.truncate()
+                r_input_file = task_dir.join(input_file)
+                r_input_file.write(metadata[input_file], encoding="utf-8")
 
-        # placeholders {task_path}, {engine_path} and {ncpus} are supported
-        run_cmd = engine.spawn.format(
-            engine_path=self.remote_engines_dir / engine.name,
-            task_path=metadata["remote_folder"],
-            ncpus=ncpus or "`grep -c ^processor /proc/cpuinfo`",
-        )
-        self._log.debug(run_cmd)
+            # detect cpus
+            if not ncpus:
+                ncpus = machine.cmd.nproc("--all").strip()
 
-        try:
-            self.ssh_conn_pool[ip].run(run_cmd, hide=True, disown=True)
+            # resolve paths
+            engine_path = machine.path(self.remote_engines_dir / engine.name)
+            task_path = machine.path(metadata["remote_folder"])
+
+            # placeholders {task_path}, {engine_path} and {ncpus} are supported
+            run_cmd = engine.spawn.format(
+                engine_path=str(engine_path),
+                task_path=str(task_path),
+                ncpus=ncpus,
+            )
+            self._log.debug(run_cmd)
+
+            r_nohup = machine.cmd.nohup
+            r_sh = machine.cmd.sh
+            r_nohup[r_sh, "-c", run_cmd].with_cwd(task_dir).run_bg()
         except Exception as err:
             self._log.error("SSH spawn cmd error: %s" % err)
             return False
 
         return True
 
-    def ssh_check_node(self, ip):
-        try:
-            node_info = self.queue_get_resource(ip)
-            cloud = self.clouds and self.clouds.apis.get(node_info and node_info[3])
-            ssh_user = cloud and cloud.ssh_user or self.ssh_user
-            with SSH_Connection(
-                host=ip,
-                user=ssh_user,
-                connect_kwargs=self.ssh_custom_key,
-                connect_timeout=5,
-            ) as conn:
-                check_cmd = " && ".join([x.check for x in self.engines.values()])
-                result = str(conn.run(check_cmd, hide=True))
-                for engine in self.engines.values():
-                    if engine.run_marker in result:
-                        self._log.error(
-                            "Cannot add a busy with %s resourse %s@%s"
-                            % (engine.name, ssh_user, ip)
-                        )
-                        return False
-
-        except Exception as err:
-            self._log.error(
-                "Host %s@%s is unreachable due to: %s" % (self.ssh_user, ip, err)
-            )
-            return False
-
-        return True
-
-    def ssh_check_task(self, ip):
-        assert ip in self.ssh_conn_pool, (
+    def ssh_node_busy_check(self, ip):
+        assert ip in self.remote_machines.keys(), (
             f"Node {ip} was referred by active task," " however absent in node list"
         )
-        try:
-            check_cmd = " && ".join([x.check for x in self.engines.values()])
-            result = str(self.ssh_conn_pool[ip].run(check_cmd, hide=True))
-        except Exception as err:
-            self._log.error("SSH status cmd error: %s" % err)
-            # TODO handle that situation properly, re-assign ip, etc.
-            result = ""
+        machine = self.remote_machines[ip]
 
         for engine in self.engines.values():
-            if engine.run_marker in result:
-                return True
-
+            if engine.check_pname:
+                for _ in machine.pgrep(engine.check_pname):
+                    return True
+            if engine.check_cmd:
+                try:
+                    code = machine.cmd.sh["-c", engine.check_cmd].run_retcode()
+                    if code == engine.check_cmd_code:
+                        return True
+                except ProcessExecutionError as e:
+                    self._log.info(f"Node {ip} failed command: {e}")
         return False
 
-    def ssh_get_task(self, ip, engine, work_folder, store_folder, remove=True):
-        for output_file in self.engines[engine].output_files:
+    def ssh_get_task(
+        self, ip, engine_name, work_folder, store_folder: Path, remove=True
+    ):
+        machine = self.remote_machines[ip]
+        r_work_folder = machine.path(work_folder)
+        engine = self.engines[engine_name]
+        for output_file in engine.output_files:
             try:
-                self.ssh_conn_pool[ip].get(
-                    os.path.join(work_folder, output_file),
-                    os.path.join(store_folder, output_file),
+                machine.download(
+                    r_work_folder.join(output_file),
+                    store_folder / output_file,
                 )
             except IOError as err:
                 # TODO handle that situation properly
@@ -381,7 +356,7 @@ class Yascheduler:
                     break
 
         if remove:
-            self.ssh_conn_pool[ip].run("rm -rf %s" % work_folder, hide=True)
+            r_work_folder.delete()
 
     def clouds_allocate(self, on_task):
         if self.clouds:
@@ -404,45 +379,52 @@ class Yascheduler:
             self._log.error("There is not supported engines!")
             return
 
-        ssh_conn = SSH_Connection(
-            host=ip, user=user, connect_kwargs=self.ssh_custom_key
+        machine = MyParamikoMachine.create_machine(
+            host=ip,
+            user=user,
+            keys_dir=self.local_keys_dir,
         )
-        sudo_prefix = "" if user == "root" else "sudo "
 
         # print OS version
-        result = ssh_conn.run("source /etc/os-release; echo $PRETTY_NAME", hide=True)
-        self._log.info("OS: {}".format(result.stdout.split("\n")[0]))
+        result = machine.session().run("source /etc/os-release; echo $PRETTY_NAME")
+        self._log.info("OS: {}".format(result[1].strip()))
 
         # print CPU count
-        result = ssh_conn.run("grep -c ^processor /proc/cpuinfo", hide=True)
-        self._log.info("CPUs count: {}".format(result.stdout.split("\n")[0]))
+        nproc = machine.cmd.nproc("--all").strip()
+        self._log.info("CPUs count: {}".format(nproc))
 
         # install packages
-        apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600"
-        pkgs = engines.get_platform_packages()
+        # sudo = machine.cmd.sudo
+        apt_get = machine["apt-get"]["-o", "DPkg::Lock::Timeout=600", "-y"]
+        if user != "root":
+            apt_get = machine.cmd.sudo[apt_get]
         self._log.info(f"Update packages...")
-        ssh_conn.run(f"{apt_cmd} -y update && {apt_cmd} -y upgrade", hide=True)
-        self._log.info(f"Install packages: {' '.join(pkgs)} ...")
-        ssh_conn.run(f"{apt_cmd} -y install {' '.join(pkgs)}", hide=True)
+        apt_get("update")
+        apt_get("upgrade")
+
+        pkgs = engines.get_platform_packages()
+        if pkgs:
+            self._log.info("Install packages: {} ...".format(" ".join(pkgs)))
+            apt_get("install", *pkgs)
 
         # print MPI version
         if filter(lambda x: "mpi" in x, pkgs):
-            result = ssh_conn.run("mpirun --allow-run-as-root -V", hide=True)
-            self._log.info(result.stdout.split("\n")[0])
+            result = machine.cmd.mpirun("--allow-run-as-root", "-V")
+            self._log.info(result.split("\n")[0])
 
         for engine in engines.values():
             self._log.info(f"Setup {engine.name} engine...")
             local_engine_dir = self.local_engines_dir / engine.name
-            remote_engine_dir = self.remote_engines_dir / engine.name
-            ssh_conn.run(f"mkdir -p {remote_engine_dir}")
+            remote_engine_dir = machine.path(self.remote_engines_dir).join(engine.name)
+            remote_engine_dir.mkdir(parents=True)
             for deployment in engine.deployable:
                 # uploading binary from local; requires broadband connection
                 if isinstance(deployment, LocalFilesDeploy):
                     for filepath in deployment.files:
-                        fpath = local_engine_dir / filepath
-                        rfpath = remote_engine_dir / filepath
+                        rfpath = remote_engine_dir.join(filepath)
                         self._log.info(f"Uploading {filepath} to {rfpath}")
-                        ssh_conn.put(fpath, str(rfpath))
+                        machine.upload(local_engine_dir / filepath, rfpath)
+                        machine.cmd.chmod("+x", rfpath)
 
                 # upload local archive
                 # binary may be gzipped, without subfolders,
@@ -450,23 +432,26 @@ class Yascheduler:
                 if isinstance(deployment, LocalArchiveDeploy):
                     fn = deployment.filename
                     apath = local_engine_dir / fn
-                    rpath = remote_engine_dir / fn
+                    rpath = remote_engine_dir.join(fn)
                     self._log.info(f"Uploading {fn} to {rpath}...")
-                    ssh_conn.put(apath, str(rpath))
+                    machine.upload(apath, rpath)
                     self._log.info(f"Unarchiving {fn}...")
-                    ssh_conn.run(f"cd {remote_engine_dir} && tar xfv {fn}", hide=True)
-                    ssh_conn.run(f"rm {rpath}", hide=True)
+                    tar = machine.cmd.tar
+                    tar["xfv", fn].with_cwd(remote_engine_dir).run()
+                    rpath.delete()
 
                 # downloading binary from a trusted non-public address
                 if isinstance(deployment, RemoteArchiveDeploy):
                     url = deployment.url
                     fn = "archive.tar.gz"
-                    rpath = remote_engine_dir / fn
+                    rpath = remote_engine_dir.join(fn)
                     self._log.info(f"Downloading {url} to {rpath}...")
-                    ssh_conn.run(f'wget "{url}" -O {rpath}', hide=False)
+                    wget = machine.cmd.wget
+                    wget(url, "-O", rpath)
                     self._log.info(f"Unarchiving {fn}...")
-                    ssh_conn.run(f"cd {remote_engine_dir} && tar xfv {fn}", hide=True)
-                    ssh_conn.run(f"rm {rpath}", hide=True)
+                    tar = machine.cmd.tar
+                    tar["xfv", fn].with_cwd(remote_engine_dir).run()
+                    rpath.delete()
 
     def stop(self):
         self._log.info("Stopping threads...")
@@ -501,17 +486,19 @@ def daemonize(log_file=None):
         all_nodes = [
             item[0] for item in resources if "." in item[0]
         ]  # NB provision nodes have fake ips
-        if sorted(yac.ssh_conn_pool.keys()) != sorted(all_nodes):
+        if sorted(yac.remote_machines.keys()) != sorted(all_nodes):
             yac.ssh_connect(all_nodes)
 
-        enabled_nodes = {item[0]: item[1] for item in resources if item[2]}
+        enabled_nodes: Dict[str, int] = {
+            item[0]: item[1] for item in resources if item[2]
+        }
         free_nodes = list(enabled_nodes.keys())
 
         # (I.) Tasks de-allocation clause
         tasks_running = yac.queue_get_tasks(status=(yac.STATUS_RUNNING,))
         logger.debug("running %s tasks: %s" % (len(tasks_running), tasks_running))
         for task in tasks_running:
-            if yac.ssh_check_task(task["ip"]):
+            if yac.ssh_node_busy_check(task["ip"]):
                 try:
                     free_nodes.remove(task["ip"])
                 except ValueError:
@@ -519,15 +506,13 @@ def daemonize(log_file=None):
             else:
                 ready_task = yac.queue_get_task(task["task_id"])
                 webhook_url = ready_task["metadata"].get("webhook_url")
-                store_folder = ready_task["metadata"].get(
-                    "local_folder"
-                ) or os.path.join(
-                    yac.local_tasks_dir,
-                    os.path.basename(ready_task["metadata"]["remote_folder"]),
-                )
-                os.makedirs(
-                    store_folder, exist_ok=True
-                )  # TODO OSError if restart or invalid data_dir
+                local_folder = ready_task["metadata"].get("local_folder")
+                remote_folder = ready_task["metadata"]["remote_folder"]
+                if local_folder:
+                    store_folder = Path(local_folder)
+                else:
+                    store_folder = yac.local_tasks_dir / Path(remote_folder).name
+                store_folder.mkdir(parents=True, exist_ok=True)
                 yac.ssh_get_task(
                     ready_task["ip"],
                     ready_task["metadata"]["engine"],
@@ -536,7 +521,7 @@ def daemonize(log_file=None):
                 )
                 ready_task["metadata"] = dict(
                     remote_folder=ready_task["metadata"]["remote_folder"],
-                    local_folder=store_folder,
+                    local_folder=str(store_folder),
                 )
                 if webhook_url:
                     ready_task["metadata"]["webhook_url"] = webhook_url
