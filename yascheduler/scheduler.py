@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pg8000
-from plumbum.commands.processes import ProcessExecutionError
+from plumbum.commands.processes import CommandNotFound, ProcessExecutionError
 
 from yascheduler import connect_db, CONFIG_FILE, SLEEP_INTERVAL, N_IDLE_PASSES
 import yascheduler.clouds
@@ -394,7 +394,6 @@ class Yascheduler:
         self._log.info("CPUs count: {}".format(nproc))
 
         # install packages
-        # sudo = machine.cmd.sudo
         apt_get = machine["apt-get"]["-o", "DPkg::Lock::Timeout=600", "-y"]
         if user != "root":
             apt_get = machine.cmd.sudo[apt_get]
@@ -408,9 +407,11 @@ class Yascheduler:
             apt_get("install", *pkgs)
 
         # print MPI version
-        if filter(lambda x: "mpi" in x, pkgs):
-            result = machine.cmd.mpirun("--allow-run-as-root", "-V")
+        try:
+            result = machine.get("mpirun")("--allow-run-as-root", "-V")
             self._log.info(result.split("\n")[0])
+        except CommandNotFound:
+            pass
 
         for engine in engines.values():
             self._log.info(f"Setup {engine.name} engine...")
