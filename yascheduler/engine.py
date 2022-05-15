@@ -74,6 +74,14 @@ class Engine:
 
         spawn = cfg.get("spawn", None)
         assert spawn, "Engine %s has no *spawn* config set" % cfg.name
+        try:
+            spawn.format(task_path="", engine_path="", ncpus="")
+        except KeyError as e:
+            msg = (
+                "Engine {name} has unknown template placeholder "
+                "`{placeholder}` in *spawn* command"
+            )
+            raise AssertionError(msg.format(name=cfg.name, placeholder=e.args[0]))
 
         check_cmd = cfg.get("check_cmd", None)
         check_pname = cfg.get("check_pname", None)
