@@ -7,13 +7,14 @@ import os
 import sys
 import shutil
 import stat
+import json
 from setuptools import setup, find_packages
 from setuptools.command.install import install
 
 from yascheduler import __version__, CONFIG_FILE
 
 
-package_name = "yascheduler"
+package_name = "yascheduler" # NB must be the same in setup.json
 
 class CustomInstall(install):
     def run(self):
@@ -53,7 +54,6 @@ if __name__ == "__main__":
         requirements = f.read().splitlines()
 
     setup(
-        name=package_name, # also in setup.json
         version=__version__,
         packages=find_packages(),
         install_requires=requirements,

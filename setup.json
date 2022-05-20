@@ -17,11 +17,11 @@
             "yastatus = yascheduler.utils:check_status",
             "yanodes = yascheduler.utils:show_nodes",
             "yasetnode = yascheduler.utils:manage_node",
-            "yainit = yascheduler.utils:init",
+            "yainit = yascheduler.utils:init"
         ],
         "aiida.schedulers": [
-            "yascheduler = yascheduler.aiida_plugin:YaScheduler",
-        ],
+            "yascheduler = yascheduler.aiida_plugin:YaScheduler"
+        ]
     },
     "python_requires": ">=3.7",
     "classifiers": [
