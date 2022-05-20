@@ -14,8 +14,6 @@ from yascheduler import __version__, CONFIG_FILE
 
 
 package_name = "yascheduler"
-package_version = __version__
-
 
 class CustomInstall(install):
     def run(self):
@@ -27,6 +25,7 @@ class CustomInstall(install):
 
             install_path = find_module_path()
             src_config = os.path.join(install_path, "data/yascheduler.conf")
+
             # create config file in /etc if absent
             if not os.path.isfile(CONFIG_FILE):
                 config_dir = os.path.dirname(CONFIG_FILE)
@@ -47,46 +46,17 @@ class CustomInstall(install):
 
 if __name__ == "__main__":
 
+    with open("setup.json", 'r') as info:
+        kwargs = json.load(info)
+
     with open("requirements.txt") as f:
         requirements = f.read().splitlines()
 
     setup(
-        name=package_name,
-        version=package_version,
-        author="Evgeny Blokhin",
-        author_email="eb@tilde.pro",
-        description="Yet another computing scheduler and cloud orchestration engine",
-        long_description="*Yascheduler* is a simple job scheduler designed for submitting scientific simulations and copying back their results from the computing clouds.",
-        license="MIT",
-        url="https://github.com/tilde-lab/yascheduler",
+        name=package_name, # also in setup.json
+        version=__version__,
         packages=find_packages(),
-        package_data={"yascheduler": ["data/*"]},
         install_requires=requirements,
-        entry_points={
-            "console_scripts": [
-                "yasubmit = yascheduler.utils:submit",
-                "yastatus = yascheduler.utils:check_status",
-                "yanodes = yascheduler.utils:show_nodes",
-                "yasetnode = yascheduler.utils:manage_node",
-                "yainit = yascheduler.utils:init",
-            ],
-            "aiida.schedulers": [
-                "yascheduler = yascheduler.aiida_plugin:YaScheduler",
-            ],
-        },
         cmdclass={"install": CustomInstall},
-        python_requires=">=3.7",
-        classifiers=[
-            "Development Status :: 4 - Beta",
-            "Intended Audience :: Science/Research",
-            "Topic :: Scientific/Engineering :: Chemistry",
-            "Topic :: Scientific/Engineering :: Physics",
-            "Topic :: Scientific/Engineering :: Information Analysis",
-            "Topic :: Software Development :: Libraries :: Python Modules",
-            "License :: OSI Approved :: MIT License",
-            "Programming Language :: Python :: 3",
-            "Programming Language :: Python :: 3.7",
-            "Programming Language :: Python :: 3.8",
-            "Programming Language :: Python :: 3.9",
-        ],
+        **kwargs
     )
