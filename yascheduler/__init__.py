@@ -1,4 +1,3 @@
-
 from .variables import (
     __version__,
     CONFIG_FILE,

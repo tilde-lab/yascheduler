@@ -14,7 +14,8 @@ from setuptools.command.install import install
 from yascheduler import __version__, CONFIG_FILE
 
 
-package_name = "yascheduler" # NB must be the same in setup.json
+package_name = "yascheduler"  # NB must be the same in setup.json
+
 
 class CustomInstall(install):
     def run(self):
@@ -47,7 +48,7 @@ class CustomInstall(install):
 
 if __name__ == "__main__":
 
-    with open("setup.json", 'r') as info:
+    with open("setup.json", "r") as info:
         kwargs = json.load(info)
 
     with open("requirements.txt") as f:

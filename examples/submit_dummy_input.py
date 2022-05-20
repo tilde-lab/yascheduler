@@ -18,9 +18,9 @@ result = yac.queue_submit_task(
         "1.input": "ABC" * 100,
         "2.input": "DEF" * 100,
         "3.input": "Q" * 1000,
-        "webhook_url": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+        "webhook_url": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
     },
-    "dummy"
+    "dummy",
 )
 
 print(label)
