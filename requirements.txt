@@ -1,6 +1,9 @@
+aiohttp~=3.8
+asyncssh~=2.11
+asyncstdlib~=3.10
+attrs~=21.0
+backoff~=2.1.2
 pg8000
-paramiko~=2.10.1
-plumbum>=1.7.0
 python-daemon
 requests>=2.21
 
