@@ -13,6 +13,7 @@
     },
     "entry_points": {
         "console_scripts": [
+            "yascheduler = yascheduler.utils:daemonize",
             "yasubmit = yascheduler.utils:submit",
             "yastatus = yascheduler.utils:check_status",
             "yanodes = yascheduler.utils:show_nodes",

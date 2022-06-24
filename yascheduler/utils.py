@@ -1,22 +1,27 @@
 """
 Console scripts for yascheduler
 """
-import os
 import argparse
-from configparser import ConfigParser
+import asyncio
+from functools import partial
+import os
+import random
+import signal
+import string
+from datetime import datetime
 from pathlib import Path
+from typing import Sequence
 
 from pg8000 import ProgrammingError
-from plumbum import local
-from plumbum.commands.processes import ProcessExecutionError
 
-from yascheduler import has_node, add_node, remove_node
-from yascheduler.ssh import MyParamikoMachine
-from yascheduler.variables import CONFIG_FILE
-from yascheduler.scheduler import Yascheduler
+from .config import Config
+from .db import DB, TaskModel, TaskStatus
+from .remote_machine import RemoteMachine
+from .scheduler import Yascheduler, get_logger
+from .variables import CONFIG_FILE
 
 
-def submit():
+async def _submit():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument("script")
 
@@ -32,23 +37,32 @@ def submit():
                 inputs[k.strip()] = v.strip()
             except ValueError:
                 pass
-    config = ConfigParser()
-    config.read(CONFIG_FILE)
-    yac = Yascheduler(config)
-    task_id = yac.queue_submit_task(
-        inputs["LABEL"],
-        {
+    config = Config.from_config_parser(CONFIG_FILE)
+    db = await DB.create(config.db)
+
+    rnd_str = "".join([random.choice(string.ascii_lowercase) for _ in range(4)])
+    task = await db.add_task(
+        label=inputs["LABEL"],
+        metadata={
             "structure": open(inputs["STRUCT"]).read(),
             "input": open(inputs["INPUT"]).read(),
             "local_folder": os.getcwd(),
+            "remote_folder": str(
+                config.remote.tasks_dir
+                / "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str)
+            ),
         },
-    )  # TODO
+    )
+    await db.commit()
+    await db.close()
+    print("Successfully submitted task: {}".format(task.task_id))
 
-    print("Successfully submitted task: {}".format(task_id))
-    yac.connection.close()
+
+def submit():
+    asyncio.run(_submit())
 
 
-def check_status():
+async def _check_status():
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument("-j", "--jobs", required=False, default=None, nargs="*")
     parser.add_argument(
@@ -70,20 +84,18 @@ def check_status():
     # parser.add_argument('-k', '--kill', required=False, default=None, nargs='?', type=bool, const=True)
 
     args = parser.parse_args()
-    config = ConfigParser()
-    config.read(CONFIG_FILE)
-    yac = Yascheduler(config)
-    statuses = {
-        yac.STATUS_TO_DO: "QUEUED",
-        yac.STATUS_RUNNING: "RUNNING",
-        yac.STATUS_DONE: "FINISHED",
-    }
+    config = Config.from_config_parser(CONFIG_FILE)
+    db = await DB.create(config.db)
+
     local_parsing_ready, local_calc_snippet = False, False
 
+    tasks: Sequence[TaskModel] = []
     if args.jobs:
-        tasks = yac.queue_get_tasks(jobs=args.jobs)
+        tasks = await db.get_tasks_by_jobs(jobs=args.jobs)
     else:
-        tasks = yac.queue_get_tasks(status=(yac.STATUS_RUNNING, yac.STATUS_TO_DO))
+        tasks = await db.get_tasks_by_status(
+            statuses=(TaskStatus.RUNNING, TaskStatus.TO_DO)
+        )
 
     if args.convergence:
         try:
@@ -95,47 +107,47 @@ def check_status():
             pass
 
     if args.view:
-        yac.cursor.execute(
-            (
-                "SELECT t.task_id, t.label, t.metadata, t.ip, n.cloud "
-                "FROM yascheduler_tasks AS t "
-                "JOIN yascheduler_nodes AS n ON n.ip=t.ip "
-                "WHERE status=%s AND task_id IN (%s);"
-            ),
-            (
-                yac.STATUS_RUNNING,
-                ", ".join([str(task["task_id"]) for task in tasks]),
-            ),
-        )
-        for row in yac.cursor.fetchall():
-            ssh_user = config.get(
-                "clouds", f"{row[4]}", fallback=config.get("remote", "user")
-            )
+        for task in await db.get_tasks_with_cloud_by_id_status(
+            ids=list(map(lambda x: x.task_id, tasks)), status=TaskStatus.RUNNING
+        ):
+            ssh_user = None
+            for c in config.clouds:
+                ssh_user = c.username
+            ssh_user = ssh_user or config.remote.username
             print(
                 "." * 50
                 + "ID%s %s at %s@%s:%s"
-                % (row[0], row[1], ssh_user, row[3], row[2]["remote_folder"])
+                % (
+                    task.task_id,
+                    task.label,
+                    ssh_user,
+                    task.ip,
+                    task.cloud or "",
+                    task.metadata.get("remote_folder", ""),
+                )
             )
-            machine = MyParamikoMachine.create_machine(
-                host=row[3],
-                user=ssh_user,
-                keys_dir=yac.local_keys_dir,
+            machine = await RemoteMachine.create(
+                host=task.ip,
+                username=ssh_user,
+                client_keys=config.local.get_private_keys(),
             )
-            try:
-                r_output = machine.path("{}/OUTPUT".format(row[2]["remote_folder"]))
-                result = machine.cmd.tail("-n15", r_output)
-            except ProcessExecutionError:
+            r_output = machine.path(task.metadata.get("remote_folder")) / "OUTPUT"
+            result = await machine.run(f"tail -n15 {machine.quote(str(r_output))}")
+            if result.returncode:
                 print("OUTDATED TASK, SKIPPING")
             else:
-                print(result)
+                print(result.stdout)
 
             if local_parsing_ready:
                 local_calc_snippet = Path(
-                    config.get("local", "data_dir"), "local_calc_snippet.tmp"
+                    config.local.data_dir, "local_calc_snippet.tmp"
                 )
                 try:
-                    r_output = machine.path(row[2]["remote_folder"]).join("OUTPUT")
-                    machine.download(r_output, local_calc_snippet)
+                    r_output = (
+                        machine.path(task.metadata.get("remote_folder")) / "OUTPUT"
+                    )
+                    async with machine.sftp() as sftp:
+                        await sftp.get([str(r_output)], local_calc_snippet)
                 except IOError as err:
                     continue
                 try:
@@ -188,33 +200,38 @@ def check_status():
         for task in tasks:
             print(
                 "task_id={}\tstatus={}\tlabel={}\tip={}".format(
-                    task["task_id"],
-                    statuses[task["status"]],
-                    task["label"],
-                    task["ip"] or "-",
+                    task.task_id, task.status.name, task.label, task.ip or "-"
                 )
             )
 
     else:
         for task in tasks:
-            print("{}   {}".format(task["task_id"], statuses[task["status"]]))
+            print("{}   {}".format(task.task_id, task.status.name))
 
-    yac.connection.close()
+    await db.close()
 
     if local_calc_snippet and os.path.exists(local_calc_snippet):
         os.unlink(local_calc_snippet)
 
 
-def init():
+def check_status():
+    asyncio.run(_check_status())
+
+
+async def _init():
     # service initialization
     install_path = Path(__file__).parent
     # check for systemd (exit status is 0 if there is a process)
-    try:
-        local.cmd.pidof("systemd")
+    has_systemd = not os.system("pidof systemd")
+    if has_systemd:
         _init_systemd(install_path)  # NB. will be absent in *service --status-all*
-    except ProcessExecutionError:
+    else:
         _init_sysv(install_path)
-    _init_db(install_path)
+    await _init_db(install_path)
+
+
+def init():
+    asyncio.run(_init())
 
 
 def _init_systemd(install_path: Path):
@@ -254,48 +271,45 @@ def _init_sysv(install_path: Path):
         os.chmod(startup_file, 0o755)
 
 
-def _init_db(install_path: Path):
+async def _init_db(install_path: Path):
     # database initialization
-    config = ConfigParser()
-    config.read(CONFIG_FILE)
-    yac = Yascheduler(config)
+    config = Config.from_config_parser(CONFIG_FILE)
+    db = await DB.create(config.db)
     schema = (install_path / "data" / "schema.sql").read_text()
     try:
-        for line in schema.split(";"):
-            if not line:
-                continue
-            yac.cursor.execute(line)
-        yac.connection.commit()
+        await db.run(schema)
+        await db.commit()
+        await db.close()
     except ProgrammingError as e:
         if "already exists" in str(e.args[0]):
             print("Database already initialized!")
         raise
 
 
-def show_nodes():
-    config = ConfigParser()
-    config.read(CONFIG_FILE)
-    yac = Yascheduler(config)
+async def _show_nodes():
+    config = Config.from_config_parser(CONFIG_FILE)
+    db = await DB.create(config.db)
 
-    yac.cursor.execute(
-        "SELECT ip, label, task_id FROM yascheduler_tasks WHERE status=%s;",
-        [yac.STATUS_RUNNING],
-    )
-    tasks_running = {row[0]: [row[1], row[2]] for row in yac.cursor.fetchall()}
-
-    yac.cursor.execute("SELECT ip, ncpus, enabled, cloud from yascheduler_nodes;")
-    for item in yac.cursor.fetchall():
-        print(
-            "ip=%s ncpus=%s enabled=%s occupied_by=%s (task_id=%s) %s"
-            % tuple(
-                [item[0], item[1] or "MAX", item[2]]
-                + tasks_running.get(item[0], ["-", "-"])
-                + [item[3] or ""]
-            )
+    tasks = await db.get_tasks_by_status(statuses=[TaskStatus.RUNNING])
+    nodes = await db.get_all_nodes()
+    for node in nodes:
+        node_tasks = list(filter(lambda x: x.ip == node.ip, tasks))
+        node_task = ["-", "-"]
+        for x in node_tasks:
+            node_task = [x.label, x.task_id]
+        data = tuple(
+            [node.ip, node.ncpus or "MAX", node.enabled]
+            + node_task
+            + [node.cloud or ""]
         )
+        print("ip=%s ncpus=%s enabled=%s occupied_by=%s (task_id=%s) %s" % data)
 
 
-def manage_node():
+def show_nodes():
+    asyncio.run(_show_nodes())
+
+
+async def _manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument("host", help="IP[~ncpus]")
     parser.add_argument(
@@ -327,17 +341,18 @@ def manage_node():
     )
 
     args = parser.parse_args()
-    config = ConfigParser()
-    config.read(CONFIG_FILE)
+    config = Config.from_config_parser(CONFIG_FILE)
+    db = await DB.create(config.db)
 
     ncpus = None
+    username = "root"
+    if "@" in args.host:
+        username, args.host = args.host.split("@")
     if "~" in args.host:
         args.host, ncpus = args.host.split("~")
         ncpus = int(ncpus)
 
-    yac = Yascheduler(config)
-
-    already_there = has_node(config, args.host)
+    already_there = await db.has_node(args.host)
     if already_there and not args.remove_hard and not args.remove_soft:
         print("Host already in DB: {}".format(args.host))
         return False
@@ -347,57 +362,86 @@ def manage_node():
         return False
 
     if args.remove_hard:
-        yac.cursor.execute(
-            "SELECT task_id from yascheduler_tasks WHERE ip=%s AND status=%s;",
-            [args.host, yac.STATUS_RUNNING],
-        )
-        result = yac.cursor.fetchall() or []
-        for (
-            item
-        ) in (
-            result
-        ):  # only one item is expected, but here we also account inconsistency case
-            yac.cursor.execute(
-                "UPDATE yascheduler_tasks SET status=%s WHERE task_id=%s;",
-                [yac.STATUS_DONE, item[0]],
-            )
-            yac.connection.commit()
+        task_ids = await db.get_task_ids_by_ip_and_status(args.host, TaskStatus.RUNNING)
+        for task_id in task_ids:
+            await db.update_task_status(task_id, TaskStatus.DONE)
             print(
-                "An associated task %s at %s is now marked done!" % (item[0], args.host)
+                "An associated task %s at %s is now marked done!" % (task_id, args.host)
             )
 
-        remove_node(config, args.host)
+        await db.remove_node(args.host)
+        await db.commit()
+        await db.close()
         print("Removed host from yascheduler: {}".format(args.host))
         return True
 
     elif args.remove_soft:
-        yac.cursor.execute(
-            "SELECT task_id from yascheduler_tasks WHERE ip=%s AND status=%s;",
-            [args.host, yac.STATUS_RUNNING],
-        )
-        if yac.cursor.fetchall():
+        task_ids = await db.get_task_ids_by_ip_and_status(args.host, TaskStatus.RUNNING)
+        if task_ids:
             print("A task associated, prevent from assigning the new tasks")
-            yac.cursor.execute(
-                "UPDATE yascheduler_nodes SET enabled=FALSE WHERE ip=%s;", [args.host]
-            )
-            yac.connection.commit()
+            await db.disable_node(args.host)
             print("Prevented from assigning the new tasks: {}".format(args.host))
-            return True
-
         else:
             print("No tasks associated, remove node immediately")
-            remove_node(config, args.host)
+            await db.remove_node(args.host)
             print("Removed host from yascheduler: {}".format(args.host))
-            return True
+        await db.commit()
+        await db.close()
+        return True
 
-    # check connection
-    yac.ssh_connect([args.host])
+    machine = await RemoteMachine.create(
+        host=args.host,
+        username=username,
+        client_keys=config.local.get_private_keys(),
+        engines_dir=config.remote.engines_dir,
+    )
 
     if not args.skip_setup:
         print("Setup host...")
-        yac.setup_node(args.host, "root")
+        await machine.setup_node(config.engines)
 
-    add_node(config, args.host, ncpus)
+    await db.add_node(ip=args.host, username=username, ncpus=ncpus, enabled=True)
+    await db.commit()
+    await db.close()
 
     print("Added host to yascheduler: {}".format(args.host))
-    return True
+
+
+def manage_node():
+    asyncio.run(_manage_node())
+
+
+def daemonize(log_file=None):
+    logger = get_logger(log_file)
+
+    async def on_signal(
+        y: Yascheduler, shield: Sequence[asyncio.Task], signame: str, signum: int
+    ):
+        logger.info(f"Received signal {signame}")
+        if signum in [signal.SIGTERM, signal.SIGINT]:
+            await y.stop()
+            shielded = [*shield, asyncio.current_task()]
+            tasks = [t for t in asyncio.all_tasks() if t not in shielded]
+            logger.info(f"Cancelling {len(tasks)} outstanding tasks")
+            [task.cancel() for task in tasks]
+            await asyncio.gather(*tasks, return_exceptions=True)
+            # Wait 250 ms for the underlying SSL connections to close
+            await asyncio.sleep(0.25)
+            logger.info("Done")
+
+    async def run():
+        yac = await Yascheduler.create(log=logger)
+
+        loop = asyncio.get_running_loop()
+        current_task = asyncio.current_task()
+
+        shielded = [current_task] if current_task else []
+        for sig in [signal.SIGTERM, signal.SIGINT]:
+            handler = lambda: asyncio.create_task(
+                on_signal(yac, shielded, sig.name, sig.value)
+            )
+            loop.add_signal_handler(sig, handler)
+
+        await yac.start()
+
+    asyncio.run(run())
