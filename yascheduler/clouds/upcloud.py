@@ -1,69 +1,100 @@
+#!/usr/bin/env python3
+
+import asyncio
+import logging
 import time
-from configparser import ConfigParser
-from typing import Dict
+from concurrent.futures.thread import ThreadPoolExecutor
+from functools import lru_cache
+from typing import Optional
 
-from upcloud_api import CloudManager, Server, Storage, ZONE, login_user_block
+from asyncssh.public_key import SSHKey
+from upcloud_api import CloudManager, Server, Storage, login_user_block
 
-from yascheduler.clouds import AbstractCloudAPI
+from .protocols import PCloudConfig
+from .utils import get_rnd_name
+from ..config import ConfigCloudUpcloud
+
+executor = ThreadPoolExecutor(max_workers=5)
 
 
-class UpCloudAPI(AbstractCloudAPI):
+@lru_cache()
+def get_client(cfg: ConfigCloudUpcloud) -> CloudManager:
+    client = CloudManager(cfg.login, cfg.password)
+    client.authenticate()
+    return client
 
-    name = "upcloud"
 
-    client: CloudManager
+def upcloud_create_node_sync(
+    log: logging.Logger,
+    cfg: ConfigCloudUpcloud,
+    key: SSHKey,
+    cloud_config: Optional[PCloudConfig] = None,
+) -> str:
+    client = get_client(cfg)
 
-    def __init__(self, config: ConfigParser):
-        super().__init__(
-            config=config,
-            max_nodes=config.getint("clouds", "upcloud_max_nodes", fallback=None),
+    login_user = login_user_block(
+        username=cfg.username,
+        ssh_keys=[key.export_public_key().decode("utf-8")],
+        create_password=False,
+    )
+    server = client.create_server(
+        Server(
+            core_number=8,
+            memory_amount=4096,
+            hostname=get_rnd_name("node"),
+            zone="uk-lon1",
+            storage_devices=[Storage(os="Debian 10.0", size=40)],
+            login_user=login_user,
+            user_data=cloud_config.render() if cloud_config else None,
         )
-        self.client = CloudManager(
-            config.get("clouds", "upcloud_login"),
-            config.get("clouds", "upcloud_pass"),
-        )
-        self.client.authenticate()
+    )
+    ip = server.get_public_ip()
+    log.info("CREATED %s" % ip)
+    return ip
 
-    def create_node(self):
-        login_user = login_user_block(
-            username=self.ssh_user,
-            ssh_keys=[self.public_key] if self.public_key else [],
-            create_password=False,
-        )
-        server = self.client.create_server(
-            Server(
-                core_number=8,
-                memory_amount=4096,
-                hostname=self.get_rnd_name("node"),
-                zone=ZONE.London,
-                storage_devices=[Storage(os="Debian 10.0", size=40)],
-                login_user=login_user,
-            )
-        )
-        ip = server.get_public_ip()
-        self._log.info("CREATED %s" % ip)
-        self._log.info("WAITING FOR START...")
-        time.sleep(30)
-        self._run_ssh_cmd_with_backoff(ip, cmd="whoami", max_time=60, max_interval=5)
 
-        return ip
+async def upcloud_create_node(
+    log: logging.Logger,
+    cfg: ConfigCloudUpcloud,
+    key: SSHKey,
+    cloud_config: Optional[PCloudConfig] = None,
+) -> str:
+    return await asyncio.get_running_loop().run_in_executor(
+        executor, upcloud_create_node_sync, log, cfg, key, cloud_config
+    )
 
-    def delete_node(self, ip):
-        for server in self.client.get_servers():
-            if server.get_public_ip() == ip:
-                server.stop()
-                self._log.info("WAITING FOR STOP...")
-                time.sleep(20)
-                while True:
-                    try:
-                        server.destroy()
-                    except:
-                        time.sleep(5)
-                    else:
-                        break
-                for storage in server.storage_devices:
-                    storage.destroy()
-                self._log.info("DELETED %s" % ip)
-                break
-        else:
-            self._log.info("NODE %s NOT DELETED AS UNKNOWN" % ip)
+
+def upcload_delete_node_sync(
+    log: logging.Logger,
+    cfg: ConfigCloudUpcloud,
+    host: str,
+):
+    client = get_client(cfg)
+    for server in client.get_servers():
+        if server.get_public_ip() == host:
+            server.stop()
+            log.info("WAITING FOR STOP...")
+            time.sleep(20)
+            while True:
+                try:
+                    server.destroy()
+                except:
+                    time.sleep(5)
+                else:
+                    break
+            for storage in server.storage_devices:
+                storage.destroy()
+            log.info("DELETED %s" % host)
+            break
+    else:
+        log.info("NODE %s NOT DELETED AS UNKNOWN" % host)
+
+
+async def upcload_delete_node(
+    log: logging.Logger,
+    cfg: ConfigCloudUpcloud,
+    host: str,
+):
+    return await asyncio.get_running_loop().run_in_executor(
+        executor, upcload_delete_node_sync, log, cfg, host
+    )

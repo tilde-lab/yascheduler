@@ -111,7 +111,7 @@ async def deploy_local_files(
 
     async def upload(src: PurePath, dst: PurePath):
         if log:
-            log.info(f"Uploading file {str(src)} to {str(dst)}")
+            log.debug(f"Uploading file {str(src)} to {str(dst)}")
         await sftp.put([str(src)], str(dst))
 
     await asyncio.gather(*map(lambda x: upload(x, engine_dir / x.name), files))
@@ -131,10 +131,10 @@ async def deploy_local_archive(
     """
     rpath = engine_dir / archive.name
     if log:
-        log.info(f"Uploading {archive.name} to {str(rpath)}...")
+        log.debug(f"Uploading {archive.name} to {str(rpath)}...")
     await sftp.put([str(archive)], engine_dir)
     if log:
-        log.info(f"Unarchiving {archive.name}...")
+        log.debug(f"Unarchiving {archive.name}...")
     await run(
         f"""Expand-Archive {quote(str(rpath))} `
             -DestinationPath {quote(str(engine_dir))} `
@@ -158,13 +158,13 @@ async def deploy_remote_archive(
     name = "archive.zip"
     rpath = engine_dir / name
     if log:
-        log.info(f"Downloading {url} to {str(rpath)}...")
+        log.debug(f"Downloading {url} to {str(rpath)}...")
     await run(
         f"""Invoke-WebRequest -Uri {quote(url)} `
             -OutFile {quote(str(rpath))} -Force"""
     )
     if log:
-        log.info(f"Unarchiving {name}...")
+        log.debug(f"Unarchiving {name}...")
     await run(
         f"""Expand-Archive {quote(str(rpath))} `
             -DestinationPath {quote(str(engine_dir))} `
@@ -205,6 +205,8 @@ async def windows_deploy_engines(
                 await deploy_remote_archive(
                     run, quote, sftp, engine_dir, deployment.url
                 )
+        if log:
+            log.info(f"Setup of {engine.name} engine is done...")
 
 
 async def windows_setup_node(

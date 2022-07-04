@@ -87,7 +87,7 @@ async def deploy_local_files(
     "Uploading binary from local; requires broadband connection"
     lpaths = list(map(str, files))
     if log:
-        log.info(f"Uploading files ({', '.join(lpaths)}) to {engine_dir}")
+        log.debug(f"Uploading files ({', '.join(lpaths)}) to {engine_dir}")
     await sftp.put(lpaths, engine_dir, preserve=True)
 
 
@@ -105,10 +105,10 @@ async def deploy_local_archive(
     """
     rpath = engine_dir / archive.name
     if log:
-        log.info(f"Uploading {archive.name} to {str(rpath)}...")
+        log.debug(f"Uploading {archive.name} to {str(rpath)}...")
     await sftp.put([str(archive)], engine_dir)
     if log:
-        log.info(f"Unarchiving {archive.name}...")
+        log.debug(f"Unarchiving {archive.name}...")
     await run(f"tar xfv {quote(str(archive.name))}", cwd=str(engine_dir))
     await sftp.remove(rpath)
 
@@ -128,10 +128,10 @@ async def deploy_remote_archive(
     name = "archive.tar.gz"
     rpath = engine_dir / name
     if log:
-        log.info(f"Downloading {url} to {str(rpath)}...")
+        log.debug(f"Downloading {url} to {str(rpath)}...")
     await run(f"wget {quote(url)} -O {quote(name)}", cwd=str(engine_dir))
     if log:
-        log.info(f"Unarchiving {name}...")
+        log.debug(f"Unarchiving {name}...")
     await run(f"tar xfv {quote(str(name))}", cwd=str(engine_dir))
     await sftp.remove(rpath)
 
@@ -165,6 +165,8 @@ async def linux_deploy_engines(
                 await deploy_remote_archive(
                     run, quote, sftp, engine_dir, deployment.url
                 )
+        if log:
+            log.info(f"Setup of {engine.name} engine is done...")
 
 
 async def log_mpi_version(run: OuterRunCallable, log: Optional[logging.Logger] = None):
