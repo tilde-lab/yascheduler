@@ -1,6 +1,6 @@
 # Yet another computing scheduler & cloud orchestration engine
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_shield)
 
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_shield)
 
 **Yascheduler** is a simple job scheduler designed for submitting scientific
 calculations and copying back the results from the computing clouds.
@@ -195,6 +195,11 @@ These settings are common to all the providers:
 - `*_user`
 
   Per provider override of `remote.user`.
+
+- `*_priority`
+
+  Per provider priority of node allocation.
+  Sorted in descending order, so cloud with hightest value is first.
 
 #### Hetzner
 
@@ -447,6 +452,6 @@ verdi code setup
 [crystal]: http://www.crystal.unito.it
 [mpds-aiida]: https://github.com/mpds-io/mpds-aiida
 
-
 ## License
+
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_large)
