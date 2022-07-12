@@ -17,33 +17,43 @@ from yascheduler.scheduler import Yascheduler
 
 
 def submit():
-    parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
+    parser = argparse.ArgumentParser(description="Submit task to yascheduler via AiiDA script")
     parser.add_argument("script")
 
     args = parser.parse_args()
     if not os.path.isfile(args.script):
         raise ValueError("Script parameter is not a file name")
 
-    inputs = {}
+    script_params = {}
     with open(args.script) as f:
         for l in f.readlines():
             try:
                 k, v = l.split("=")
-                inputs[k.strip()] = v.strip()
+                script_params[k.strip()] = v.strip()
             except ValueError:
                 pass
+
+    label = script_params.get('LABEL', 'AiiDA job')
+    options = {
+        "local_folder": os.getcwd()
+    }
+    if not script_params.get('ENGINE'):
+        raise ValueError("Script has not defined an engine")
+
     config = ConfigParser()
     config.read(CONFIG_FILE)
     yac = Yascheduler(config)
-    task_id = yac.queue_submit_task(
-        inputs["LABEL"],
-        {
-            "structure": open(inputs["STRUCT"]).read(),
-            "input": open(inputs["INPUT"]).read(),
-            "local_folder": os.getcwd(),
-        },
-    )  # TODO
 
+    if script_params['ENGINE'] not in yac.engines:
+        raise ValueError("Script refers to unknown engine")
+
+    for input_file in yac.engines[script_params['ENGINE']].input_files:
+        if not os.path.exists(os.path.join(options["local_folder"], input_file)):
+            raise ValueError("Script was not supplied with the required input")
+
+        options[input_file] = open(input_file).read()
+
+    task_id = yac.queue_submit_task(label, options, script_params['ENGINE'])
     print("Successfully submitted task: {}".format(task_id))
     yac.connection.close()
 

@@ -1,9 +1,12 @@
 """
-Aiida plugin for yascheduler
+Aiida plugin for yascheduler,
+with respect to the supported yascheduler engines
 """
 
 import aiida.schedulers
 from aiida.schedulers.datastructures import JobState, JobInfo, NodeNumberJobResource
+from aiida.orm import load_node
+
 
 _MAP_STATUS_YASCHEDULER = {
     "QUEUED": JobState.QUEUED,
@@ -67,12 +70,15 @@ class YaScheduler(aiida.schedulers.Scheduler):
         Return the submit script header, using the parameters from the
         job_tmpl.
         """
-        lines = []
+        aiida_code = load_node(job_tmpl.codes_info[0]['code_uuid'])
+
+        # We map the lowercase code labels onto yascheduler engines,
+        # so that the required input file(s) can be deduced
+        lines = ["ENGINE={}".format(aiida_code.label.lower())]
+
         if job_tmpl.job_name:
             lines.append("LABEL={}".format(job_tmpl.job_name))
 
-        # TODO too specific for engine.pcrystal
-        lines += ["INPUT=INPUT", "STRUCT=fort.34"]
         return "\n".join(lines)
 
     def _get_submit_command(self, submit_script):
@@ -88,7 +94,8 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         if stderr.strip():
             self.logger.warning("Stderr when submitting: {}".format(stderr.strip()))
-        return stdout.split(":")[1].strip()
+
+        return stdout.strip()
 
     def _parse_joblist_output(self, retval, stdout, stderr):
         """
