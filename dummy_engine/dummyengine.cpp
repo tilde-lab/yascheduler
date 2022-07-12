@@ -1,4 +1,7 @@
 
+// g++ -o dummyengine dummyengine.cpp
+// i686-w64-mingw32-c++ -o dummyengine.exe dummyengine.cpp
+
 #include <cstring>
 #include <iostream>
 #include <fstream>
@@ -6,8 +9,6 @@
 #include <time.h>
 #include <stdlib.h>
 using namespace std;
-
-// g++ -o dummyengine dummyengine.cpp
 
 int main(int argc, char *argv[])
 {
@@ -28,10 +29,10 @@ int main(int argc, char *argv[])
         rewind(f);
         fread(content, sizeof(char), size, f);
 
-        strcat(outfname, argv[i]);
+        strcpy(outfname, argv[i]);
         strcat(outfname, ".out");
 
-        printf("filename to be used: %s\n", outfname);
+        printf("filename to be written: %s\n", outfname);
 
         ofstream output(outfname, ios::out | ios::binary);
         output.write(content, size);
