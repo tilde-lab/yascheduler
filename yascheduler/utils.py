@@ -35,7 +35,7 @@ def submit():
 
     label = script_params.get('LABEL', 'AiiDA job')
     options = {
-        "local_folder": os.getcwd()
+        "local_folder": os.path.dirname(args.script)
     }
     if not script_params.get('ENGINE'):
         raise ValueError("Script has not defined an engine")
@@ -49,12 +49,14 @@ def submit():
 
     for input_file in yac.engines[script_params['ENGINE']].input_files:
         if not os.path.exists(os.path.join(options["local_folder"], input_file)):
-            raise ValueError("Script was not supplied with the required input")
+            raise ValueError("Script was not supplied with the required input file")
 
-        options[input_file] = open(input_file).read()
+        options[input_file] = open(os.path.join(options["local_folder"], input_file)).read()
 
     task_id = yac.queue_submit_task(label, options, script_params['ENGINE'])
-    print("Successfully submitted task: {}".format(task_id))
+
+    # this should be received by AiiDA
+    print(str(task_id))
     yac.connection.close()
 
 
