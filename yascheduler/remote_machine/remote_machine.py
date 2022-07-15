@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from pathlib import PurePath
-from subprocess import DEVNULL
 from typing import (
     AsyncGenerator,
     Optional,
@@ -24,7 +23,7 @@ import asyncstdlib as a
 import backoff
 from asyncssh.client import SSHClient
 from asyncssh.connection import SSHClientConnection, SSHClientConnectionOptions
-from asyncssh.process import SSHCompletedProcess
+from asyncssh.process import SSHCompletedProcess, SSHClientProcess
 from asyncssh.public_key import SSHKey
 from asyncssh.sftp import SFTPClient
 from attrs import define, field, validators
@@ -332,16 +331,11 @@ class RemoteMachine(PRemoteMachine):
 
     async def run_bg(
         self, command: str, *args, cwd: Optional[str] = None, **kwargs
-    ) -> SSHCompletedProcess:
+    ) -> SSHClientProcess:
         "Run process in background"
-        return await self.run(
-            command,
-            *args,
-            cwd=cwd,
-            **kwargs,
-            stdin=DEVNULL,
-            stdout=DEVNULL,
-            stderr=DEVNULL,
+        conn = await self.get_conn()
+        return await self.adapter.run_bg(
+            conn, self.adapter.quote, command, *args, cwd=cwd, **kwargs
         )
 
     @my_backoff_exc()

@@ -16,7 +16,7 @@ from .checks import (
     check_is_windows10,
     check_is_windows11,
 )
-from .common import run
+from .common import run, run_bg
 from .linux_methods import (
     linux_get_cpu_cores,
     linux_list_processes,
@@ -31,6 +31,7 @@ from .protocol import (
     PgrepCallable,
     QuoteCallable,
     RunCallable,
+    RunBgCallable,
     SSHCheck,
     SetupNodeCallable,
 )
@@ -52,6 +53,7 @@ class RemoteMachineAdapter(PRemoteMachineAdapter):
 
     quote: QuoteCallable = field()
     run: RunCallable = field()
+    run_bg: RunBgCallable = field()
     get_cpu_cores: GetCPUCoresCallable = field()
     list_processes: ListProcessesCallable = field()
     pgrep: PgrepCallable = field()
@@ -65,6 +67,7 @@ linux_adapter = RemoteMachineAdapter(
     path=PurePosixPath,
     quote=shlex.quote,
     run=run,
+    run_bg=run_bg,
     get_cpu_cores=linux_get_cpu_cores,
     list_processes=linux_list_processes,
     pgrep=linux_pgrep,
@@ -102,6 +105,7 @@ windows_adapter = RemoteMachineAdapter(
     path=MyPureWindowsPath,
     quote=windows_quote,
     run=run,
+    run_bg=run_bg,
     get_cpu_cores=windows_get_cpu_cores,
     list_processes=windows_list_processes,
     pgrep=windows_pgrep,

@@ -6,7 +6,6 @@ from pathlib import PurePath
 from typing import AsyncGenerator, Optional, Pattern, Sequence, Union
 
 from asyncssh.connection import SSHClientConnection
-from asyncssh.process import SSHCompletedProcess
 from asyncssh.sftp import SFTPClient
 
 from .common import ProcessInfo

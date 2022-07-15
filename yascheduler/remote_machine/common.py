@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
+from subprocess import DEVNULL
 from typing import Optional
 
 from asyncssh.connection import SSHClientConnection
-from asyncssh.process import SSHCompletedProcess
+from asyncssh.process import SSHCompletedProcess, SSHClientProcess
 from attrs import define
 
 from .protocol import QuoteCallable
@@ -31,3 +32,22 @@ async def run(
     if cwd:
         command = "cd {}; {}".format(quote(cwd), command)
     return await conn.run(command, *args, **kwargs)
+
+
+async def run_bg(
+    conn: SSHClientConnection,
+    quote: QuoteCallable,
+    command: str,
+    *args,
+    cwd: Optional[str] = None,
+    **kwargs,
+) -> SSHClientProcess:
+    """
+    Create background process.
+    :raises asyncssh.ChannelOpenError: An SSH error has occurred.
+    """
+    if cwd:
+        command = "cd {}; {}".format(quote(cwd), command)
+    return await conn.create_process(
+        command, *args, **kwargs, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL
+    )

@@ -5,7 +5,6 @@ import logging
 from abc import abstractmethod
 from datetime import timedelta
 from contextlib import asynccontextmanager
-from enum import Flag, auto as enum_auto
 from pathlib import PurePath
 from typing import (
     Any,
@@ -23,7 +22,7 @@ from typing import (
 )
 
 from asyncssh.connection import SSHClientConnection
-from asyncssh.process import SSHCompletedProcess
+from asyncssh.process import SSHClientProcess, SSHCompletedProcess
 from asyncssh.sftp import (
     SFTPBadMessage,
     SFTPClient,
@@ -120,6 +119,20 @@ class RunCallable(Protocol):
         pass
 
 
+class RunBgCallable(Protocol):
+    @abstractmethod
+    def __call__(
+        self,
+        conn: SSHClientConnection,
+        quote: QuoteCallable,
+        command: str,
+        *args,
+        cwd: Optional[str] = None,
+        **kwargs
+    ) -> Coroutine[Any, Any, SSHClientProcess]:
+        pass
+
+
 class OuterRunCallable(Protocol):
     @abstractmethod
     def __call__(
@@ -170,6 +183,7 @@ class PRemoteMachineAdapter(Protocol):
     path: Type[PurePath]
     quote: QuoteCallable
     run: RunCallable
+    run_bg: RunBgCallable
     checks: Sequence[SSHCheck]
     get_cpu_cores: GetCPUCoresCallable
     list_processes: ListProcessesCallable
