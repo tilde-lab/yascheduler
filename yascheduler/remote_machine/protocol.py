@@ -192,9 +192,7 @@ class PRemoteMachineAdapter(Protocol):
 
 
 class PRemoteMachineMetadata(Protocol):
-    setup: bool
     busy: bool
-    result: bool
 
     @abstractmethod
     def is_free_longer_than(self, delta: timedelta) -> bool:

@@ -287,11 +287,7 @@ class Yascheduler:
         free_machines = {
             ip: m
             for ip, m in self.remote_machines.filter(
-                setup=True,
-                busy=False,
-                result=False,
-                platforms=engine.platforms,
-                reverse_sort=True,
+                busy=False, platforms=engine.platforms, reverse_sort=True
             ).items()
             if ip not in busy_node_ips
         }
@@ -381,13 +377,12 @@ class Yascheduler:
             tcounters = await self.db.count_tasks_by_status()
             tmpl = (
                 "JOBS: {tasks} "
-                "NODES: b:{n_busy}/r:{n_res}/e:{n_enabled}/t:{n_total} "
+                "NODES: b:{n_busy}/e:{n_enabled}/t:{n_total} "
                 "TASKS: r:{t_run}/t:{t_todo}/d:{t_done}/e:{t_err}"
             )
             msg = tmpl.format(
                 tasks=len(asyncio.all_tasks()),
                 n_busy=len(self.remote_machines.filter(busy=True).keys()),
-                n_res=len(self.remote_machines.filter(result=True).keys()),
                 n_enabled=ncounters[True],
                 n_total=sum(ncounters.values()),
                 t_run=tcounters[TaskStatus.RUNNING],
@@ -403,10 +398,7 @@ class Yascheduler:
                 self.deallocate_q,
                 self.consume_q,
             ]
-            qmsgs = [
-                "{}: {}/{}/{}".format(q.name, q.psize(), q.qsize(), q.maxsize)
-                for q in queues
-            ]
+            qmsgs = ["{}: {}/{}".format(q.name, q.psize(), q.qsize()) for q in queues]
             self.log.info("QUEUES: %s" % " ".join(qmsgs))
             await asleep_until(end_time)
 
@@ -439,7 +431,6 @@ class Yascheduler:
                 tasks_dir=self.config.remote.tasks_dir,
                 connect_timeout=10,
             )
-            self.remote_machines[node.ip].meta.setup = True  # fake for now
         except asyncssh.misc.Error as err:
             self.log.error("Can't connect to machine with error: {}".format(err))
         except Exception as err:
@@ -452,11 +443,7 @@ class Yascheduler:
     ) -> AsyncGenerator[UMessage[int, TaskModel], None]:
         """Produce messages with todo tasks to run"""
         ccap = await self.clouds_get_capacity()
-        tlim = max(
-            ccap,
-            len(self.remote_machines.filter(setup=True, busy=False, result=False)),
-            10,
-        )
+        tlim = max(ccap, len(self.remote_machines.filter(busy=False)), 10)
         tasks = await self.db.get_tasks_by_status((TaskStatus.TO_DO,), tlim)
         if tasks:
             ids = [str(t.task_id) for t in tasks]
@@ -497,7 +484,6 @@ class Yascheduler:
         if not machine.meta.busy:
             self.log.debug(f"machine {machine.hostname} is free for task {task_id}")
             await self.consume_task(machine, task)
-            machine.meta.result = False
 
     async def deallocator_producer(
         self,
@@ -513,7 +499,7 @@ class Yascheduler:
         for ccfg in self.config.clouds:
             tdlim = timedelta(seconds=ccfg.idle_tolerance)
             idlers = self.remote_machines.filter(
-                busy=False, result=False, reverse_sort=False, free_since_gt=tdlim
+                busy=False, reverse_sort=False, free_since_gt=tdlim
             )
             nodes_to_disable = [
                 ip

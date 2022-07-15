@@ -83,13 +83,11 @@ class MySSHClient(SSHClient):
         return True
 
 
+@define
 class RemoteMachineMetadata(PRemoteMachineMetadata):
-    setup: bool = False
-
     def __init__(self):
         self._busy = False
-        self._result = False
-        self._free_since: Optional[datetime] = None
+        self._free_since: Optional[datetime] = datetime.now()
 
     @property
     def busy(self) -> bool:
@@ -97,25 +95,12 @@ class RemoteMachineMetadata(PRemoteMachineMetadata):
 
     @busy.setter
     def busy(self, new_busy: bool):
-        self._free_since = None
         if new_busy:
             self._busy = True
+            self._free_since = None
         else:
             self._busy = False
-            self._result = True
-
-    @property
-    def result(self) -> bool:
-        return self._result
-
-    @result.setter
-    def result(self, new_result: bool):
-        if new_result:
-            self._free_since = None
-            self._result = True
-        else:
             self._free_since = datetime.now()
-            self._result = False
 
     def is_free_longer_than(self, delta: timedelta) -> bool:
         if not self._free_since or self.busy:
@@ -377,7 +362,6 @@ class RemoteMachine(PRemoteMachine):
             engines_dir=self.engines_dir,
             log=self.log,
         )
-        self.meta.setup = True
 
     async def occupancy_check(self, engine: PEngine) -> bool:
         """
@@ -407,6 +391,8 @@ class RemoteMachine(PRemoteMachine):
         """
         Start occupancy checker for engine.
         """
+        # remove old tasks
+        self.jobs.difference_update([t for t in self.jobs if t.done()])
 
         async def occupancy_checker():
             while not self.cancellation_event.is_set() and self.meta.busy:

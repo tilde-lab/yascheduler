@@ -43,7 +43,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
         tasks = []
         for ip, machine in list(self.data.items()):
             # guard
-            if machine.meta.busy or machine.meta.result:
+            if machine.meta.busy:
                 continue
             if ip in ips:
                 tasks.append(machine.close())
@@ -56,9 +56,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
 
     def filter(
         self,
-        setup: Optional[bool] = None,
         busy: Optional[bool] = None,
-        result: Optional[bool] = None,
         platforms: Optional[Sequence[str]] = None,
         free_since_gt: Optional[timedelta] = None,
         reverse_sort: bool = False,
@@ -66,18 +64,10 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
         "Return machines filtered and sorted by `free_since`"
 
         checks: Sequence[Callable[[PRemoteMachine], bool]] = []
-        if setup is True:
-            checks.append(lambda x: x.meta.setup)
-        if setup is False:
-            checks.append(lambda x: not x.meta.setup)
         if busy is True:
             checks.append(lambda x: x.meta.busy)
         if busy is False:
             checks.append(lambda x: not x.meta.busy)
-        if result is True:
-            checks.append(lambda x: x.meta.result)
-        if result is False:
-            checks.append(lambda x: not x.meta.result)
         if platforms:
             checks.append(lambda x: bool(set(platforms) & set(x.platforms)))
         if free_since_gt:
