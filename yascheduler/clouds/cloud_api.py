@@ -111,6 +111,8 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
             client_keys=keys,
             logger=self.log,
             connect_timeout=self.adapter.create_node_conn_timeout,
+            jump_host=self.config.jump_host,
+            jump_username=self.config.jump_username,
         )
 
     async def create_node(self):

@@ -2,11 +2,11 @@
 
 from configparser import SectionProxy
 from pathlib import PurePath
-from typing import Mapping, Union
+from typing import Mapping, Optional, Union
 
 from attrs import define, field, validators
 
-from .utils import _make_default_field
+from .utils import _make_default_field, opt_str_val
 
 
 def _check_az_user(_: "ConfigCloudAzure", __, value: str):
@@ -33,6 +33,8 @@ class ConfigCloudAzure:
     )
     priority: int = _make_default_field(0)
     idle_tolerance: int = _make_default_field(300, extra_validators=[validators.ge(1)])
+    jump_username: Optional[str] = field(default=None, validator=opt_str_val)
+    jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudAzure":
@@ -64,6 +66,8 @@ class ConfigCloudAzure:
             username=sec.get(fmt("user")),
             priority=sec.getint(fmt("priority")),
             idle_tolerance=sec.getint(fmt("idle_tolerance")),
+            jump_username=sec.get(fmt("jump_user"), None),
+            jump_host=sec.get(fmt("jump_host"), None),
         )
 
 
@@ -77,6 +81,8 @@ class ConfigCloudHetzner:
     server_type: str = _make_default_field("cx51")
     image_name: str = _make_default_field("debian-10")
     idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
+    jump_username: Optional[str] = field(default=None, validator=opt_str_val)
+    jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudHetzner":
@@ -89,6 +95,8 @@ class ConfigCloudHetzner:
             image_name=sec.get(fmt("image_name")),
             priority=sec.getint(fmt("priority")),
             idle_tolerance=sec.getint(fmt("idle_tolerance")),
+            jump_username=sec.get(fmt("jump_user"), None),
+            jump_host=sec.get(fmt("jump_host"), None),
         )
 
 
@@ -101,6 +109,8 @@ class ConfigCloudUpcloud:
     username: str = _make_default_field("root")
     priority: int = _make_default_field(0)
     idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
+    jump_username: Optional[str] = field(default=None, validator=opt_str_val)
+    jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudUpcloud":
@@ -112,6 +122,8 @@ class ConfigCloudUpcloud:
             username=sec.get(fmt("user")),
             priority=sec.getint(fmt("priority")),
             idle_tolerance=sec.getint(fmt("idle_tolerance")),
+            jump_username=sec.get(fmt("jump_user"), None),
+            jump_host=sec.get(fmt("jump_host"), None),
         )
 
 

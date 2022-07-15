@@ -43,6 +43,11 @@ class EngineRepository(UserDict, Mapping[str, Engine]):
             json.dumps(asdict(self, value_serializer=_value_serializer), sort_keys=True)
         )
 
+    def get(self, key, default=None):
+        if default:
+            return self.data.get(key, default)
+        return self.data.get(key)
+
     def values(self):
         return self.data.values()
 

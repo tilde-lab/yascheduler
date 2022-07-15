@@ -157,6 +157,8 @@ class RemoteMachine(PRemoteMachine):
         data_dir: Optional[PurePath] = None,
         engines_dir: Optional[PurePath] = None,
         tasks_dir: Optional[PurePath] = None,
+        jump_host: Optional[str] = None,
+        jump_username: Optional[str] = None,
     ) -> "PRemoteMachine":
         logger_name = "{}:{}@{}".format(cls.__name__, username, host)
         if logger:
@@ -169,6 +171,9 @@ class RemoteMachine(PRemoteMachine):
         # asyncssh.logging.set_debug_level(2)
 
         # connection
+        tunnel = (
+            jump_host and jump_username and "{}@{}".format(jump_username, jump_host)
+        )
         conn_opts = SSHClientConnectionOptions()
         conn_opts.prepare(
             host=host,
@@ -178,11 +183,15 @@ class RemoteMachine(PRemoteMachine):
             client_keys=client_keys or (),
             connect_timeout=connect_timeout,
             compression_algs=(),
+            tunnel=tunnel,
         )
 
         log.debug("Open connection")
         conn = await asyncssh.connection.connect(
-            client_factory=MySSHClient, host=host, options=conn_opts
+            client_factory=MySSHClient,
+            host=conn_opts.host,
+            tunnel=conn_opts.tunnel,
+            options=conn_opts,
         )
 
         # guess platform
@@ -279,7 +288,10 @@ class RemoteMachine(PRemoteMachine):
         Reopen SSH connection
         """
         conn = await asyncssh.connection.connect(
-            host=self.conn_opts.host, options=self.conn_opts
+            client_factory=MySSHClient,
+            host=self.conn_opts.host,
+            tunnel=self.conn_opts.tunnel,
+            options=self.conn_opts,
         )
 
         # MUTATE OBJECT!

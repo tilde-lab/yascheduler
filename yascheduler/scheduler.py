@@ -422,6 +422,13 @@ class Yascheduler:
             None, self.config.local.get_private_keys
         )
 
+        jump_host = self.config.remote.jump_host
+        jump_username = self.config.remote.jump_username
+        for cloud in self.config.clouds:
+            if cloud.prefix == node.cloud:
+                if cloud.jump_host and cloud.jump_username:
+                    jump_host, jump_username = cloud.jump_host, cloud.jump_username
+
         try:
             self.remote_machines[node.ip] = await RemoteMachine.create(
                 host=node.ip,
@@ -432,6 +439,8 @@ class Yascheduler:
                 engines_dir=self.config.remote.engines_dir,
                 tasks_dir=self.config.remote.tasks_dir,
                 connect_timeout=10,
+                jump_username=jump_username,
+                jump_host=jump_host,
             )
         except asyncssh.misc.Error as err:
             self.log.error("Can't connect to machine with error: {}".format(err))

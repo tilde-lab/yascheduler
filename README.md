@@ -221,6 +221,14 @@ Connection to a PostgreSQL database.
 
   _Default_: `root`
 
+- `jump_user`
+
+  Username of default SSH jump host (if used).
+
+- `jump_host`
+
+  Host of default SSH jump host (if used).
+
 ### Providers `[clouds]`
 
 All cloud providers settings are set in the `[cloud]` group.
@@ -246,6 +254,14 @@ These settings are common to all the providers:
   Per provider idle tolerance in seconds to deallocation of nodes.
 
   _Default_: different for providers, starting from 120 secons.
+
+- `*_jump_user`
+
+  Username of this cloud SSH jump host (if used).
+
+- `*_jump_host`
+
+  Host of this cloud SSH jump host (if used).
 
 #### Hetzner
 

@@ -206,6 +206,8 @@ class PRemoteMachineCreateKwargsCommon(TypedDict):
     data_dir: Optional[PurePath]
     engines_dir: Optional[PurePath]
     tasks_dir: Optional[PurePath]
+    jump_host: Optional[str]
+    jump_username: Optional[str]
 
 
 class PRemoteMachineCreateKwargs(PRemoteMachineCreateKwargsCommon):
@@ -216,7 +218,6 @@ class PRemoteMachineCreateKwargs(PRemoteMachineCreateKwargsCommon):
 class PRemoteMachine(Protocol):
     "Remote SSH machine"
 
-    conn: SSHClientConnection
     meta: PRemoteMachineMetadata
     path: Type[PurePath]
 
