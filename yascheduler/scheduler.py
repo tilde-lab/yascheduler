@@ -229,6 +229,11 @@ class Yascheduler:
             / "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str)
         )
 
+        fire_webhook_onsubmit = False
+        if metadata.get("webhook_onsubmit"):
+            del metadata["webhook_onsubmit"]
+            fire_webhook_onsubmit = True
+
         self.cursor.execute(
             """
             INSERT INTO yascheduler_tasks (label, metadata, ip, status)
@@ -241,7 +246,14 @@ class Yascheduler:
         )
         self.connection.commit()
         self._log.info(":::submitted: %s" % label)
-        return self.cursor.fetchone()[0]
+        task_id = self.cursor.fetchone()[0]
+
+        if fire_webhook_onsubmit and metadata.get("webhook_url"):
+            wt = WebhookTask.from_dict({"task_id": task_id, "status": self.STATUS_TO_DO,
+                "custom_params": metadata.get("webhook_custom_params")})
+            self._webhook_queue.put(wt)
+
+        return task_id
 
     def ssh_connect(self, new_nodes):
         old_nodes = self.remote_machines.keys()

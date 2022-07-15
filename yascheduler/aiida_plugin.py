@@ -80,6 +80,12 @@ class YaScheduler(aiida.schedulers.Scheduler):
         if job_tmpl.job_name:
             lines.append("LABEL={}".format(job_tmpl.job_name))
 
+        # There is no other way to get the wf info except this (TODO)
+        assert job_tmpl.job_name
+        pk = int(job_tmpl.job_name.split('-')[1])
+        aiida_node = load_node(pk)
+        lines.append("PARENT={}".format(aiida_node.caller.uuid))
+
         return "\n".join(lines)
 
     def _get_submit_command(self, submit_script):

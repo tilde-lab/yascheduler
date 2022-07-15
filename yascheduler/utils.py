@@ -53,6 +53,11 @@ def submit():
 
         options[input_file] = open(os.path.join(options["local_folder"], input_file)).read()
 
+    if 'PARENT' in script_params and config.get("local", "webhook_url"):
+        options['webhook_url'] = config.get("local", "webhook_url")  # no other way to setup this
+        options['webhook_custom_params'] = {'parent': script_params['PARENT']}
+        options['webhook_onsubmit'] = True
+
     task_id = yac.queue_submit_task(label, options, script_params['ENGINE'])
 
     # this should be received by AiiDA

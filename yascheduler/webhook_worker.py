@@ -33,6 +33,7 @@ class WebhookTaskMetadata:
 class WebhookTask:
     task_id: int
     status: int
+    custom_params: dict
     metadata: WebhookTaskMetadata
 
     @classmethod
@@ -48,6 +49,7 @@ class WebhookTask:
 class WebhookPayload:
     task_id: int
     status: int
+    custom_params: dict
 
 
 class WebhookWorker(BackgroundWorker):
@@ -78,7 +80,7 @@ class WebhookWorker(BackgroundWorker):
             return
 
         self._log.info(f"Executing webhook to {t.metadata.webhook_url}")
-        payload = WebhookPayload(task_id=t.task_id, status=t.status)
+        payload = WebhookPayload(task_id=t.task_id, status=t.status, custom_params=t.custom_params)
         try:
             response = self.http.post(
                 url=t.metadata.webhook_url,
