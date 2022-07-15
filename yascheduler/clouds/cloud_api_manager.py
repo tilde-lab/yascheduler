@@ -115,7 +115,7 @@ class CloudAPIManager(PCloudAPIManager):
         ok_apis = filter(lambda x: x.name in suitable_providers, self.apis.values())
         ok_apis_sorted = sorted(ok_apis, key=lambda x: x.config.priority, reverse=True)
         api = ok_apis_sorted[0]
-        self.log.info("Chosen: %s" % api.name)
+        self.log.debug("Chosen: %s" % api.name)
         return api
 
     async def allocate_node(

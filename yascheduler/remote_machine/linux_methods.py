@@ -171,7 +171,7 @@ async def linux_deploy_engines(
 async def log_mpi_version(run: OuterRunCallable, log: Optional[logging.Logger] = None):
     r = await run("mpirun --allow-run-as-root -V")
     if not r.returncode and log:
-        log.info(str(r.stdout or "").split("\n")[0])
+        log.debug(str(r.stdout or "").split("\n")[0])
 
 
 async def linux_setup_node(
@@ -202,12 +202,12 @@ async def linux_setup_deb_node(
     pkgs = engines.get_platform_packages()
 
     if log:
-        log.info("Upgrade packages...")
+        log.debug("Upgrade packages...")
     await run(f"{apt_cmd} update")
     await run(f"{apt_cmd} upgrade")
     if pkgs:
         if log:
-            log.info("Install packages: {} ...".format(" ".join(pkgs)))
+            log.debug("Install packages: {} ...".format(" ".join(pkgs)))
         await run(" ".join([apt_cmd, *pkgs]))
     if [x for x in pkgs if "mpi" in x]:
         await log_mpi_version(run, log)
