@@ -6,7 +6,6 @@ import logging
 from typing import Optional, Sequence, Union
 
 import asyncstdlib as a
-from asyncio.locks import Semaphore
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
 from attrs import asdict, define, field
 
@@ -34,7 +33,6 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
     local_config: ConfigLocal = field()
     engines: EngineRepository = field()
     log: logging.Logger = field()
-    cloud_sem: Semaphore = field(factory=lambda: Semaphore(5))
 
     @property
     def name(self) -> str:
@@ -61,6 +59,9 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
             engines=engines,
             log=log,
         )
+
+    def get_op_semaphore(self) -> asyncio.Semaphore:
+        return self.adapter.get_op_semaphore()
 
     def is_platform_supported(self, platform: str) -> bool:
         return any(map(lambda x: x(platform), self.adapter.supported_platform_checks))
@@ -113,7 +114,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
         )
 
     async def create_node(self):
-        async with self.cloud_sem:
+        async with self.adapter.get_op_semaphore():
             ip = await self.adapter.create_node(
                 log=self.log,
                 cfg=self.config,
@@ -126,7 +127,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
             return ip
 
     async def delete_node(self, host: str):
-        async with self.cloud_sem:
+        async with self.adapter.get_op_semaphore():
             return await self.adapter.delete_node(
                 log=self.log, cfg=self.config, host=host
             )

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import logging
 from asyncio.locks import Lock
 from pathlib import Path
@@ -117,10 +118,16 @@ class CloudAPIManager(PCloudAPIManager):
         self.log.info("Chosen: %s" % api.name)
         return api
 
-    async def allocate_node(self, want_platforms: Optional[Sequence[str]] = None):
+    async def allocate_node(
+        self, want_platforms: Optional[Sequence[str]] = None, throttle: bool = False
+    ):
         async with self.allocation_lock:
             api = await self.select_best_provider(want_platforms)
             if not api:
+                return
+            if throttle and api.get_op_semaphore().locked():
+                self.log.debug(f"Cloud {api.name} is overloaded by requests")
+                await asyncio.sleep(1)
                 return
 
             tmp_ip = await self.db.add_tmp_node(api.name, api.config.username)
@@ -135,18 +142,21 @@ class CloudAPIManager(PCloudAPIManager):
         self,
         on_task: Optional[int] = None,
         want_platforms: Optional[Sequence[str]] = None,
+        throttle: bool = True,
     ) -> Union[str, None]:
         if on_task in self.on_tasks:
             return
         if on_task:
             self.on_tasks.add(on_task)
         try:
-            return await self.allocate_node(want_platforms)
+            return await self.allocate_node(want_platforms, throttle)
         except Exception as err:
             self.log.error(f"Can't allocate node: {err}")
             import traceback
+
             traceback_output = traceback.format_exc()
             print(traceback_output)
+        finally:
             if on_task:
                 self.mark_task_done(on_task)
             return

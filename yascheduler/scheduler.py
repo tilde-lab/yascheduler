@@ -313,7 +313,9 @@ class Yascheduler:
         self.log.debug(
             f"No free machine for task {task.task_id} - want to allocate new node"
         )
-        await self.clouds.allocate(task.task_id, want_platforms=engine.platforms)
+        await self.clouds.allocate(
+            task.task_id, want_platforms=engine.platforms, throttle=True
+        )
         return False
 
     async def consume_task(self, machine: PRemoteMachine, task: TaskModel):

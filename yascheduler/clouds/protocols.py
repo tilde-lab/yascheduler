@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import logging
 from abc import abstractmethod
 from pathlib import Path
@@ -57,6 +58,7 @@ class PCloudAdapter(Protocol[TConfigCloud]):
     create_node_conn_timeout: int
     create_node_max_time: int
     delete_node: DeleteNodeCallable[TConfigCloud]
+    op_limit: int
 
     @classmethod
     @abstractmethod
@@ -68,7 +70,17 @@ class PCloudAdapter(Protocol[TConfigCloud]):
         delete_node: DeleteNodeCallable[TConfigCloud],
         create_node_conn_timeout: Optional[int],
         create_node_max_time: Optional[int],
+        op_limit: int = 1,
     ) -> Self:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_op_semaphore(self) -> asyncio.Semaphore:
+        """
+        Cached semaphore getter.
+        It's because you cannot create async semaphore outside the loop.
+        "attached to a different loop" error.
+        """
         raise NotImplementedError
 
 
@@ -92,6 +104,10 @@ class PCloudAPI(Protocol[TConfigCloud]):
         raise NotImplementedError
 
     @abstractmethod
+    def get_op_semaphore(self) -> asyncio.Semaphore:
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_cloud_config_data(self) -> PCloudConfig:
         raise NotImplementedError
 
@@ -106,7 +122,6 @@ class PCloudAPI(Protocol[TConfigCloud]):
     @abstractmethod
     async def delete_node(self, host: str):
         raise NotImplementedError
-
 
 @define(frozen=True)
 class CloudCapacity:
@@ -154,6 +169,7 @@ class PCloudAPIManager(Protocol):
         self,
         on_task: Optional[int] = None,
         want_platforms: Optional[Sequence[str]] = None,
+        throttle: bool = True,
     ) -> Union[str, None]:
         raise NotImplementedError
 

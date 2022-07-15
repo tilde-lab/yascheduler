@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import asyncio
+from functools import lru_cache
 from typing import Sequence, Tuple
 
 from attrs import define, field
@@ -39,6 +41,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
     create_node_conn_timeout: int = field()
     create_node_max_time: int = field()
     delete_node: DeleteNodeCallable[TConfigCloud] = field()
+    op_limit: int = field(default=1)
 
     @classmethod
     def create(
@@ -49,6 +52,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
         delete_node: DeleteNodeCallable[TConfigCloud],
         create_node_conn_timeout: int = 10,
         create_node_max_time: int = 60,
+        op_limit: int = 1,
     ):
         return cls(
             name=name,
@@ -57,7 +61,12 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
             create_node_conn_timeout=create_node_conn_timeout,
             create_node_max_time=create_node_max_time,
             delete_node=delete_node,
+            op_limit=op_limit,
         )
+
+    @lru_cache()
+    def get_op_semaphore(self) -> asyncio.Semaphore:
+        return asyncio.Semaphore(self.op_limit)
 
 
 # azure_adapter = CloudAdapter.create(
@@ -72,6 +81,7 @@ hetzner_adapter = CloudAdapter.create(
     create_node=hetzner_create_node,
     create_node_conn_timeout=5,
     delete_node=hetzner_delete_node,
+    op_limit=5,
 )
 upcloud_adapter = CloudAdapter.create(
     name="upcloud",
@@ -79,4 +89,5 @@ upcloud_adapter = CloudAdapter.create(
     create_node=upcloud_create_node,
     create_node_max_time=90,
     delete_node=upcload_delete_node,
+    op_limit=1,
 )
