@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
-from configparser import ConfigParser
+import asyncio
 
-from yascheduler import CONFIG_FILE
 from yascheduler.scheduler import Yascheduler
 
 
@@ -46,11 +45,12 @@ Sr 11.406 0
 output arc srtio140_RC.car
 """
 
-config = ConfigParser()
-config.read(CONFIG_FILE)
-yac = Yascheduler(config)
 
-result = yac.queue_submit_task(label, {"INPUT": gulp_input}, "gulp")
+async def main():
+    yac = await Yascheduler.create()
+    result = yac.create_new_task(label, {"INPUT": gulp_input}, "gulp")
+    print(label)
+    print(result)
 
-print(label)
-print(result)
+
+asyncio.run(main())
