@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from enum import IntEnum, unique
+from enum import Enum, unique
 from typing import Any, List, Mapping, Optional, cast, Sequence
 
 import backoff
@@ -16,7 +16,7 @@ from .config import ConfigDb
 
 
 @unique
-class TaskStatus(IntEnum):
+class TaskStatus(int, Enum):
     TO_DO = 0
     RUNNING = 1
     DONE = 2
