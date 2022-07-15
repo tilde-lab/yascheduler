@@ -32,7 +32,7 @@ class ConfigCloudAzure:
         "yascheduler", extra_validators=[_check_az_user]
     )
     priority: int = _make_default_field(0)
-    idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
+    idle_tolerance: int = _make_default_field(300, extra_validators=[validators.ge(1)])
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudAzure":
@@ -76,7 +76,7 @@ class ConfigCloudHetzner:
     priority: int = _make_default_field(0)
     server_type: str = _make_default_field("cx51")
     image_name: str = _make_default_field("debian-10")
-    idle_tolerance: int = _make_default_field(60, extra_validators=[validators.ge(1)])
+    idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudHetzner":
@@ -100,7 +100,7 @@ class ConfigCloudUpcloud:
     max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(1)])
     username: str = _make_default_field("root")
     priority: int = _make_default_field(0)
-    idle_tolerance: int = _make_default_field(60, extra_validators=[validators.ge(1)])
+    idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudUpcloud":

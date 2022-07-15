@@ -136,6 +136,6 @@ class Engine:
             input_files=gettuple("input_files"),
             output_files=gettuple("output_files"),
             sleep_interval=sec.getint("sleep_interval"),
-            platforms=gettuple("platforms") or ["debian-11"],
+            platforms=gettuple("platforms") or ["debian-10"],
             platform_packages=gettuple("platform_packages"),
         )

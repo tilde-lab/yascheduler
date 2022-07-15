@@ -19,17 +19,19 @@ class ConfigLocal:
         5, extra_validators=[validators.ge(1)]
     )
     conn_machine_limit: int = _make_default_field(
-        5, extra_validators=[validators.ge(1)]
+        10, extra_validators=[validators.ge(1)]
     )
     conn_machine_pending: int = _make_default_field(
         10, extra_validators=[validators.ge(1)]
     )
-    allocate_limit: int = _make_default_field(10, extra_validators=[validators.ge(1)])
+    allocate_limit: int = _make_default_field(20, extra_validators=[validators.ge(1)])
     allocate_pending: int = _make_default_field(1, extra_validators=[validators.ge(1)])
-    consume_limit: int = _make_default_field(5, extra_validators=[validators.ge(1)])
+    consume_limit: int = _make_default_field(20, extra_validators=[validators.ge(1)])
     consume_pending: int = _make_default_field(1, extra_validators=[validators.ge(1)])
     deallocate_limit: int = _make_default_field(5, extra_validators=[validators.ge(1)])
-    deallocate_pending: int = _make_default_field(1, extra_validators=[validators.ge(1)])
+    deallocate_pending: int = _make_default_field(
+        1, extra_validators=[validators.ge(1)]
+    )
 
     def get_private_keys(self) -> Sequence[str]:
         filepaths = filter(lambda x: x.is_file(), self.keys_dir.iterdir())
