@@ -534,9 +534,6 @@ class Yascheduler:
         for node in free_disabled_nodes:
             yield UMessage(node.ip, node)
 
-    @backoff.on_exception(
-        backoff.fibo, Exception, max_time=60
-    )  # TODO: collect normal cloud exceptions
     async def deallocator_consumer(self, msg: UMessage[str, NodeModel]):
         """Consume running task if done, mark failed if machine is gone"""
         node = msg.payload

@@ -285,15 +285,7 @@ Settings prefix is `hetzner`.
 
 #### Azure
 
-Azure Cloud should be pre-configured for `yascheduler`.
-
-Create a dedicated _Enterprise Application_ for service.
-Create an _Application Registration_.
-Add _Client Secret_ to the Application Registration.
-
-Create a dedicated _Resource Group_.
-Assign roles _Network Contributor_ and _Virtual Machine Contributor_
-in the _Resource Group_.
+Azure Cloud should be pre-configured for `yascheduler`. See [Cloud Providers](CLOUD.md).
 
 Settings prefix is `az`.
 
@@ -317,7 +309,7 @@ Settings prefix is `az`.
 
   Resource Group name.
 
-  _Default_: `YaScheduler-VM-rg`
+  _Default_: `yascheduler-rg`
 
 - `az_user`
 
@@ -329,69 +321,35 @@ Settings prefix is `az`.
 
   _Default_: `westeurope`
 
-- `az_infra_tmpl_path`
+- `az_vnet`
 
-  Path to deployment template of common parts.
+  Virtual network name.
 
-  _Default_: `azure_infra_tmpl.json`
+  _Default_: `yascheduler-vnet`
 
-- `az_infra_param_subnetMask`
+- `az_subnet`
 
-  Subnet mask of VMs network.
+  Subnet name.
 
-  _Default_: `20`
+  _Default_: `yascheduler-subnet`
 
-- `az_infra_param_*`
+- `az_nsg`
 
-  Any input of deployment template of common parts.
-  Defaults from deployment manifest.
+  Network security group name.
 
-- `az_vm_tmpl_path`
+  _Default_: `yascheduler-nsg`
 
-  Path to deployment template of VM.
+- `az_vm_image`
 
-  _Default_: `azure_vm_tmpl.json`
+  OS image name.
 
-- `az_vm_param_virtualMachineSize`
+  _Default_: `Debian`
 
-  Machine type.
+- `az_vm_size`
+
+  Machine size.
 
   _Default_: `Standard_B1s`
-
-- `az_vm_param_*`
-
-  Any input of deployment template of VM.
-  Defaults from deployment manifest.
-
-- `az_vm_param_osDiskSize`
-
-  Root disk type.
-
-  _Default_: `StandardSSD_LRS`
-
-- `az_vm_param_imagePublisher`
-
-  OS image publisher.
-
-  _Default_: `debian`
-
-- `az_vm_param_imageOffer`
-
-  OS image offer.
-
-  _Default_: `debian-10`
-
-- `az_vm_param_imageSku`
-
-  OS image SKU.
-
-  _Default_: `10-backports-gen2`
-
-- `az_vm_param_imageVersion`
-
-  OS image version.
-
-  _Default_: `latest`
 
 #### UpCloud
 

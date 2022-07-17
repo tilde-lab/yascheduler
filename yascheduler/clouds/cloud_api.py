@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Optional, Sequence, Union
@@ -24,6 +25,10 @@ class CloudConfig(PCloudConfig):
     def render(self) -> str:
         "Render to user-data format"
         return "#cloud-config\n" + json.dumps(asdict(self))
+
+    def render_base64(self) -> str:
+        "Render to user-data format as base64 string"
+        return base64.b64encode(self.render().encode()).decode()
 
 
 @define(frozen=True)

@@ -9,7 +9,7 @@ from typing import Mapping, Optional, Sequence, Set, Union
 from attrs import define, field
 from typing_extensions import Self
 
-from .adapters import hetzner_adapter, upcloud_adapter
+from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
 from .cloud_api import CloudAPI
 from .protocols import CloudCapacity, PCloudAPIManager, PCloudAPI
 from ..config import ConfigCloud, ConfigLocal, EngineRepository
@@ -39,7 +39,7 @@ class CloudAPIManager(PCloudAPIManager):
         else:
             log = logging.getLogger(cls.__name__)
 
-        adapters = [hetzner_adapter, upcloud_adapter]
+        adapters = [azure_adapter, hetzner_adapter, upcloud_adapter]
         apis: Mapping[str, PCloudAPI] = {}
         for cfg in cloud_configs:
             for adapter in filter(lambda x: x.name == cfg.prefix, adapters):
@@ -152,10 +152,6 @@ class CloudAPIManager(PCloudAPIManager):
             return await self.allocate_node(want_platforms, throttle)
         except Exception as err:
             self.log.error(f"Can't allocate node: {err}")
-            import traceback
-
-            traceback_output = traceback.format_exc()
-            print(traceback_output)
         finally:
             if on_task:
                 self.mark_task_done(on_task)

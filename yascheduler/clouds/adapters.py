@@ -13,6 +13,7 @@ from .protocols import (
     CreateNodeCallable,
     DeleteNodeCallable,
 )
+from .az import az_create_node, az_delete_node
 from .hetzner import hetzner_create_node, hetzner_delete_node
 from .upcloud import upcload_delete_node, upcloud_create_node
 
@@ -39,7 +40,6 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
     supported_platform_checks: Tuple[SupportedPlatformChecker] = field()
     create_node: CreateNodeCallable[TConfigCloud] = field()
     create_node_conn_timeout: int = field()
-    create_node_max_time: int = field()
     delete_node: DeleteNodeCallable[TConfigCloud] = field()
     op_limit: int = field(default=1)
 
@@ -51,7 +51,6 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
         create_node: CreateNodeCallable[TConfigCloud],
         delete_node: DeleteNodeCallable[TConfigCloud],
         create_node_conn_timeout: int = 10,
-        create_node_max_time: int = 60,
         op_limit: int = 1,
     ):
         return cls(
@@ -59,7 +58,6 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
             supported_platform_checks=tuple(supported_platform_checks),
             create_node=create_node,
             create_node_conn_timeout=create_node_conn_timeout,
-            create_node_max_time=create_node_max_time,
             delete_node=delete_node,
             op_limit=op_limit,
         )
@@ -69,17 +67,18 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
         return asyncio.Semaphore(self.op_limit)
 
 
-# azure_adapter = CloudAdapter.create(
-#     name="az",
-#     supported_platform_checks=[can_debian_buster, can_win11],
-#     create_node_max_time=600,
-#     # test_generics=test_concrete_config,
-# )
+azure_adapter = CloudAdapter.create(
+    name="az",
+    supported_platform_checks=[can_debian_bullseye, can_win11],
+    create_node=az_create_node,
+    delete_node=az_delete_node,
+    op_limit=5,
+)
 hetzner_adapter = CloudAdapter.create(
     name="hetzner",
     supported_platform_checks=[can_debian_buster],
     create_node=hetzner_create_node,
-    create_node_conn_timeout=5,
+    create_node_conn_timeout=10,
     delete_node=hetzner_delete_node,
     op_limit=5,
 )
@@ -87,7 +86,6 @@ upcloud_adapter = CloudAdapter.create(
     name="upcloud",
     supported_platform_checks=[can_debian_buster],
     create_node=upcloud_create_node,
-    create_node_max_time=90,
     delete_node=upcload_delete_node,
     op_limit=1,
 )

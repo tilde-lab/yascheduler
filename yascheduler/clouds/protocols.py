@@ -27,6 +27,10 @@ class PCloudConfig(Protocol):
     def render(self) -> str:
         raise NotImplementedError
 
+    @abstractmethod
+    def render_base64(self) -> str:
+        "Render to user-data format as base64 string"
+
 
 class CreateNodeCallable(Protocol[TConfigCloud]):
     @abstractmethod
@@ -56,7 +60,6 @@ class PCloudAdapter(Protocol[TConfigCloud]):
     supported_platform_checks: Sequence[SupportedPlatformChecker]
     create_node: CreateNodeCallable[TConfigCloud]
     create_node_conn_timeout: int
-    create_node_max_time: int
     delete_node: DeleteNodeCallable[TConfigCloud]
     op_limit: int
 
@@ -69,7 +72,6 @@ class PCloudAdapter(Protocol[TConfigCloud]):
         create_node: CreateNodeCallable[TConfigCloud],
         delete_node: DeleteNodeCallable[TConfigCloud],
         create_node_conn_timeout: Optional[int],
-        create_node_max_time: Optional[int],
         op_limit: int = 1,
     ) -> Self:
         raise NotImplementedError
@@ -122,6 +124,7 @@ class PCloudAPI(Protocol[TConfigCloud]):
     @abstractmethod
     async def delete_node(self, host: str):
         raise NotImplementedError
+
 
 @define(frozen=True)
 class CloudCapacity:

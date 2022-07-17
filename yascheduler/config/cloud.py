@@ -5,6 +5,7 @@ from pathlib import PurePath
 from typing import Mapping, Optional, Union
 
 from attrs import define, field, validators
+from typing_extensions import Self
 
 from .utils import _make_default_field, opt_str_val
 
@@ -15,18 +16,37 @@ def _check_az_user(_: "ConfigCloudAzure", __, value: str):
 
 
 @define(frozen=True)
+class AzureImageReference:
+    publisher: str = field(default="Debian")
+    offer: str = field(default="debian-11-daily")
+    sku: str = field(default="11-backports-gen2")
+    version: str = field(default="latest")
+
+    @classmethod
+    def from_urn(cls, urn: str) -> Self:
+        parts = urn.split(":", maxsplit=4)
+        if len(parts) < 4:
+            raise ValueError(
+                f"`Image reference URN should be in format publisher:offer:sku:version"
+            )
+
+        return cls(*parts)
+
+
+@define(frozen=True)
 class ConfigCloudAzure:
     prefix = "az"
     tenant_id: str = field(validator=validators.instance_of(str))
     client_id: str = field(validator=validators.instance_of(str))
     client_secret: str = field(validator=validators.instance_of(str))
     subscription_id: str = field(validator=validators.instance_of(str))
-    infra_tmpl_path: PurePath = field(validator=validators.instance_of(PurePath))
-    vm_tmpl_path: PurePath = field(validator=validators.instance_of(PurePath))
-    infra_params: Mapping[str, Union[str, int, float]] = field(factory=dict)
-    vm_params: Mapping[str, Union[str, int, float]] = field(factory=dict)
-    resource_group: str = _make_default_field("YaScheduler-VM-rg")
+    resource_group: str = _make_default_field("yascheduler-rg")
     location: str = _make_default_field("westeurope")
+    vnet: str = _make_default_field("yascheduler-vnet")
+    subnet: str = _make_default_field("yascheduler-subnet")
+    nsg: str = _make_default_field("yascheduler-nsg")
+    vm_image: AzureImageReference = _make_default_field(AzureImageReference())
+    vm_size: str = _make_default_field("Standard_B1s")
     max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
     username: str = _make_default_field(
         "yascheduler", extra_validators=[_check_az_user]
@@ -39,11 +59,11 @@ class ConfigCloudAzure:
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudAzure":
         fmt = lambda x: f"{cls.prefix}_{x}"
-        clouds_path = PurePath(__file__).parent / "clouds"
 
-        def filter_by_prefix(prefix: str):
-            filtered = filter(lambda x: x[0].startswith(fmt(prefix)), sec.items())
-            return dict(map(lambda x: (x[0][len(fmt(prefix)) :], x[1]), filtered))
+        vm_image = sec.get(fmt("image"))
+        image_ref = None
+        if vm_image:
+            image_ref = AzureImageReference.from_urn(vm_image)
 
         return cls(
             tenant_id=sec.get(fmt("tenant_id")),
@@ -52,16 +72,11 @@ class ConfigCloudAzure:
             subscription_id=sec.get(fmt("subscription_id")),
             resource_group=sec.get(fmt("resource_group")),
             location=sec.get(fmt("location")),
-            infra_tmpl_path=PurePath(
-                sec.get(
-                    fmt("infra_tmpl_path"), str(clouds_path / "azure_infra_tmpl.json")
-                )
-            ),
-            vm_tmpl_path=PurePath(
-                sec.get(fmt("infra_tmpl_path"), str(clouds_path / "azure_vm_tmpl.json"))
-            ),
-            infra_params=filter_by_prefix("infra_params"),
-            vm_params=filter_by_prefix("vm_params"),
+            vnet=sec.get(fmt("vnet")),
+            subnet=sec.get(fmt("subnet")),
+            nsg=sec.get(fmt("nsg")),
+            vm_image=image_ref or AzureImageReference(),
+            vm_size=sec.get(fmt("size")),
             max_nodes=sec.getint(fmt("max_nodes")),
             username=sec.get(fmt("user")),
             priority=sec.getint(fmt("priority")),
