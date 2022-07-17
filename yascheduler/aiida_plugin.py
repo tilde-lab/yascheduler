@@ -71,7 +71,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         Return the submit script header, using the parameters from the
         job_tmpl.
         """
-        aiida_code = load_node(job_tmpl.codes_info[0]['code_uuid'])
+        aiida_code = load_node(job_tmpl.codes_info[0]["code_uuid"])
 
         # We map the lowercase code labels onto yascheduler engines,
         # so that the required input file(s) can be deduced
