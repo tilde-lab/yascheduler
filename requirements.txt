@@ -3,13 +3,12 @@ asyncssh~=2.11
 asyncstdlib~=3.10
 attrs~=21.0
 backoff~=2.1.2
-pg8000
-python-daemon
+pg8000~=1.19
+python-daemon~=2.3
 typing-extensions~=4.2
 
-hcloud
-upcloud_api
-azure-identity~=1.7.1
-azure-mgmt-compute~=24.0.1
-azure-mgmt-network~=19.3.0
-azure-mgmt-resource~=20.1.0
+hcloud~=1.17
+upcloud_api~=2.0
+azure-identity~=1.10.0
+azure-mgmt-compute~=27.2.0
+azure-mgmt-network~=20.0.0
