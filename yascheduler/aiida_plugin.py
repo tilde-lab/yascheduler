@@ -1,15 +1,19 @@
 """
-Aiida plugin for yascheduler
+Aiida plugin for yascheduler,
+with respect to the supported yascheduler engines
 """
 
 import aiida.schedulers
 from aiida.schedulers.datastructures import JobState, JobInfo, NodeNumberJobResource
+from aiida.orm import load_node
+
 
 _MAP_STATUS_YASCHEDULER = {
     "QUEUED": JobState.QUEUED,
     "RUNNING": JobState.RUNNING,
     "FINISHED": JobState.DONE,
 }
+_CMD_PREFIX = ""
 
 
 class YaschedJobResource(NodeNumberJobResource):
@@ -40,7 +44,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
 
         if user:
             raise FeatureNotAvailable("Cannot query by user in Yascheduler")
-        command = ["yastatus"]
+        command = ["{}yastatus".format(_CMD_PREFIX)]
         # make list from job ids (taken from slurm scheduler)
         if jobs:
             joblist = []
@@ -60,26 +64,29 @@ class YaScheduler(aiida.schedulers.Scheduler):
         Return the command to run to get the detailed information on a job,
         even after the job has finished.
         """
-        return "yastatus --jobs {}".format(jobid)
+        return "{}yastatus --jobs {}".format(_CMD_PREFIX, jobid)
 
     def _get_submit_script_header(self, job_tmpl):
         """
         Return the submit script header, using the parameters from the
         job_tmpl.
         """
-        lines = []
+        aiida_code = load_node(job_tmpl.codes_info[0]['code_uuid'])
+
+        # We map the lowercase code labels onto yascheduler engines,
+        # so that the required input file(s) can be deduced
+        lines = ["ENGINE={}".format(aiida_code.label.lower())]
+
         if job_tmpl.job_name:
             lines.append("LABEL={}".format(job_tmpl.job_name))
 
-        # TODO too specific for engine.pcrystal
-        lines += ["INPUT=INPUT", "STRUCT=fort.34"]
         return "\n".join(lines)
 
     def _get_submit_command(self, submit_script):
         """
         Return the string to execute to submit a given script.
         """
-        return "yasubmit {}".format(submit_script)
+        return "{}yasubmit {}".format(_CMD_PREFIX, submit_script)
 
     def _parse_submit_output(self, retval, stdout, stderr):
         """
@@ -88,7 +95,15 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         if stderr.strip():
             self.logger.warning("Stderr when submitting: {}".format(stderr.strip()))
-        return stdout.split(":")[1].strip()
+
+        output = stdout.strip()
+
+        try:
+            int(output)
+        except ValueError:
+            self.logger.error("Submitting failed, no task id received")
+
+        return output
 
     def _parse_joblist_output(self, retval, stdout, stderr):
         """

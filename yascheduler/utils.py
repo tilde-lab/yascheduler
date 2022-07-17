@@ -3,12 +3,9 @@ Console scripts for yascheduler
 """
 import argparse
 import asyncio
-from functools import partial
+import logging
 import os
-import random
 import signal
-import string
-from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -22,40 +19,53 @@ from .variables import CONFIG_FILE
 
 
 async def _submit():
-    parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
+    parser = argparse.ArgumentParser(
+        description="Submit task to yascheduler via AiiDA script"
+    )
     parser.add_argument("script")
 
     args = parser.parse_args()
-    if not os.path.isfile(args.script):
+    script_file = Path(args.script)
+    if not script_file.exists():
         raise ValueError("Script parameter is not a file name")
 
-    inputs = {}
-    with open(args.script) as f:
-        for l in f.readlines():
+    log = logging.getLogger()
+    log.setLevel(logging.ERROR)
+    yac = await Yascheduler.create(log=log)
+
+    script_params = {}
+    with script_file.open("r") as f:
+        for line in f.readlines():
             try:
-                k, v = l.split("=")
-                inputs[k.strip()] = v.strip()
+                k, v = line.split("=")
+                script_params[k.strip()] = v.strip()
             except ValueError:
                 pass
-    config = Config.from_config_parser(CONFIG_FILE)
-    db = await DB.create(config.db)
 
-    rnd_str = "".join([random.choice(string.ascii_lowercase) for _ in range(4)])
-    task = await db.add_task(
-        label=inputs["LABEL"],
-        metadata={
-            "structure": open(inputs["STRUCT"]).read(),
-            "input": open(inputs["INPUT"]).read(),
-            "local_folder": os.getcwd(),
-            "remote_folder": str(
-                config.remote.tasks_dir
-                / "{}_{}".format(datetime.now().strftime("%Y%m%d_%H%M%S"), rnd_str)
-            ),
-        },
-    )
-    await db.commit()
-    await db.close()
-    print("Successfully submitted task: {}".format(task.task_id))
+    label = script_params.get("LABEL", "AiiDA job")
+    metadata = {"local_folder": str(script_file.parent)}
+    if not script_params.get("ENGINE"):
+        raise ValueError("Script has not defined an engine")
+
+    engine = yac.config.engines.get(script_params["ENGINE"])
+    if not engine:
+        raise ValueError("Engine %s is not supported" % script_params["ENGINE"])
+
+    for input_file in engine.input_files:
+        try:
+            metadata[input_file] = Path(
+                metadata["local_folder"], input_file
+            ).read_text()
+        except Exception as err:
+            raise ValueError(
+                "Script was not supplied with the required input file"
+            ) from err
+
+    task = await yac.create_new_task(label, metadata, engine.name)
+    await yac.stop()
+
+    # this should be received by AiiDA
+    print(str(task.task_id))
 
 
 def submit():
