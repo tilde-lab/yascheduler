@@ -245,13 +245,21 @@ class Yascheduler:
             )
         )
         self.connection.commit()
-        self._log.info(":::submitted: %s" % label)
+
         task_id = self.cursor.fetchone()[0]
+        self._log.info(":::submitted %s task %s" % (label, task_id))
 
         if fire_webhook_onsubmit and metadata.get("webhook_url"):
-            wt = WebhookTask.from_dict({"task_id": task_id, "status": self.STATUS_TO_DO,
-                "custom_params": metadata.get("webhook_custom_params")})
-            self._webhook_queue.put(wt)
+            # a naive onsubmit webhook
+            # FIXME
+            self._log.info(f'Executing webhook to {metadata["webhook_url"]}')
+            import requests
+            try: requests.post(metadata['webhook_url'], data={
+                'task_id': task_id,
+                'status': self.STATUS_TO_DO,
+                'custom_params': json.dumps(metadata['webhook_custom_params'])
+            }, timeout=0.5)
+            except Exception: pass
 
         return task_id
 
