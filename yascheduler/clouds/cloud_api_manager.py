@@ -1,245 +1,177 @@
 #!/usr/bin/env python3
 
+import asyncio
 import logging
-import queue
-import random
-from configparser import NoSectionError
-from typing import Dict, List, Optional
+from asyncio.locks import Lock
+from pathlib import Path
+from typing import Mapping, Optional, Sequence, Set, Union
 
-from .abstract_cloud_api import AbstractCloudAPI, load_cloudapi
-from .workers import (
-    AllocateResult,
-    AllocateTask,
-    AllocatorWorker,
-    BackgroundWorker,
-    DeallocateResult,
-    DeallocateTask,
-    DeallocatorWorker,
-)
-import yascheduler.scheduler
+from attrs import define, field
+from typing_extensions import Self
 
-for logger_name in [
-    "paramiko.transport",
-]:
-    logging.getLogger(logger_name).setLevel(logging.ERROR)
+from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
+from .cloud_api import CloudAPI
+from .protocols import CloudCapacity, PCloudAPIManager, PCloudAPI
+from ..config import ConfigCloud, ConfigLocal, EngineRepository
+from ..db import DB
 
 
-class CloudAPIManager(object):
-    _log: logging.Logger
-    _allocators: List[AllocatorWorker]
-    _allocate_tasks: "queue.Queue[AllocateTask]"
-    _allocate_results: "queue.Queue[AllocateResult]"
-    _deallocators: List[DeallocatorWorker]
-    _deallocate_tasks: "queue.Queue[DeallocateTask]"
-    _deallocate_results: "queue.Queue[DeallocateResult]"
-    apis: Dict[str, AbstractCloudAPI]
-    yascheduler: "Optional['yascheduler.scheduler.Yascheduler']"
+@define(frozen=True)
+class CloudAPIManager(PCloudAPIManager):
+    apis: Mapping[str, PCloudAPI] = field()
+    db: DB = field()
+    log: logging.Logger = field()
+    on_tasks: Set[int] = field(init=False, factory=set)
+    keys_dir: Path = field(factory=Path)
+    allocation_lock: Lock = field(factory=Lock, init=False)
 
-    def __init__(self, config, logger: Optional[logging.Logger] = None):
-        if logger:
-            self._log = logger.getChild(self.__class__.__name__)
+    @classmethod
+    async def create(
+        cls,
+        db: DB,
+        local_config: ConfigLocal,
+        cloud_configs: Sequence[ConfigCloud],
+        engines: EngineRepository,
+        log: Optional[logging.Logger] = None,
+    ) -> Self:
+        if log:
+            log = log.getChild(cls.__name__)
         else:
-            self._log = logging.getLogger(self.__class__.__name__)
-        self.apis = {}
-        self.yascheduler = None
-        self.tasks = set()
-        active_providers = set()
+            log = logging.getLogger(cls.__name__)
 
-        try:
-            for name, value in dict(config.items("clouds")).items():
-                if not value:
-                    continue
-                active_providers.add(name.split("_")[0])
-        except NoSectionError:
-            pass
+        adapters = [azure_adapter, hetzner_adapter, upcloud_adapter]
+        apis: Mapping[str, PCloudAPI] = {}
+        for cfg in cloud_configs:
+            for adapter in filter(lambda x: x.name == cfg.prefix, adapters):
+                apis[adapter.name] = await CloudAPI.create(
+                    adapter=adapter,
+                    config=cfg,
+                    local_config=local_config,
+                    engines=engines,
+                    log=log,
+                )
+        log.info("Active cloud APIs: " + (", ".join(apis.keys()) or "-"))
 
-        for name in active_providers:
-            if config.getint("clouds", name + "_max_nodes", fallback=None) == 0:
-                continue
-            self.apis[name] = load_cloudapi(name)(config)
-
-        self._log.info("Active cloud APIs: " + (", ".join(self.apis.keys()) or "-"))
-
-        self._allocate_tasks = queue.Queue()
-        self._allocate_results = queue.Queue()
-        allocator_thread_num = int(
-            config.get("local", "allocator_threads", fallback=10)
+        return cls(
+            apis=apis,
+            db=db,
+            log=log,
+            keys_dir=local_config.keys_dir,
         )
-        self._allocators = [
-            AllocatorWorker(
-                name=f"AllocatorThread[{x}]",
-                logger=self._log,
-                config=config,
-                use_apis=self.apis.keys(),
-                task_queue=self._allocate_tasks,
-                result_queue=self._allocate_results,
-            )
-            for x in range(allocator_thread_num)
-        ]
 
-        self._deallocate_tasks = queue.Queue()
-        self._deallocate_results = queue.Queue()
-        deallocator_thread_num = int(
-            config.get("local", "deallocator_threads", fallback=2)
-        )
-        self._deallocators = [
-            DeallocatorWorker(
-                name=f"DeallocatorThread[{x}]",
-                logger=self._log,
-                config=config,
-                use_apis=self.apis.keys(),
-                task_queue=self._deallocate_tasks,
-                result_queue=self._deallocate_results,
-            )
-            for x in range(deallocator_thread_num)
-        ]
-
-    def stop(self):
-        self._log.info("Stopping threads...")
-        workers: List[BackgroundWorker] = []
-        workers.extend(self._allocators)
-        workers.extend(self._deallocators)
-        for t in workers:
-            t.stop()
-        for t in workers:
-            t.join()
-        self.do_async_work()
-
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(len(self.apis))
 
-    def initialize(self):
-        assert self.yascheduler
-        for cloudapi in self.apis:
-            self.apis[cloudapi].yascheduler = self.yascheduler
+    async def stop(self) -> None:
+        self.log.info("Stopping clouds...")
 
-        for t in self._allocators:
-            t.start()
-        for t in self._deallocators:
-            t.start()
+    def mark_task_done(self, on_task: int) -> None:
+        self.on_tasks.discard(on_task)
 
-    def allocate_node(self) -> str:
-        assert self.yascheduler
-        c = self.yascheduler.cursor
-        active_providers = list(self.apis.keys())
-        used_providers = []
-        c.execute(
-            """
-            SELECT cloud, COUNT(cloud)
-            FROM yascheduler_nodes
-            WHERE cloud IS NOT NULL GROUP BY cloud;
-            """
-        )
-        for row in c.fetchall():
-            cloudapi = self.apis.get(row[0])
-            if not cloudapi:
-                continue
-            if row[1] >= cloudapi.max_nodes:
-                active_providers.remove(cloudapi.name)
-                continue
-            used_providers.append((row[0], row[1]))
-
-        if not active_providers:
-            self._log.warning("No suitable cloud provides")
-
-        self._log.info("Enabled: %s" % str(active_providers))
-        self._log.info("In use : %s" % str(used_providers))
-
-        if len(used_providers) < len(active_providers):
-            name = random.choice(
-                list(set(active_providers) - set([x[0] for x in used_providers]))
+    async def get_capacity(self) -> Mapping[str, CloudCapacity]:
+        data = {}
+        for name, count in (await self.db.count_nodes_clouds()).items():
+            api = self.apis.get("name")
+            data[name] = CloudCapacity(
+                name=name,
+                current=count,
+                max=api.config.max_nodes if api else 0,
             )
-        else:
-            name = sorted(used_providers, key=lambda x: x[1])[0][0]
 
-        cloudapi = self.apis[name]
-        self._log.info("Chosen: %s" % cloudapi.name)
-
-        c.execute(
-            """INSERT INTO yascheduler_nodes (ip, enabled, cloud) VALUES (
-            'prov' || SUBSTR(MD5(RANDOM()::TEXT), 0, 11),
-            FALSE,
-            %s
-        ) RETURNING ip;""",
-            [cloudapi.name],
-        )
-
-        t = AllocateTask(api_name=cloudapi.name, tmp_ip=c.fetchone()[0])
-        self._allocate_tasks.put(t)
-        self.yascheduler.connection.commit()
-        return t.tmp_ip
-
-    def allocate(self, on_task):
-        if on_task in self.tasks:
-            return
-        self.tasks.add(on_task)
-        self.allocate_node()
-
-    def process_allocated(self):
-        assert self.yascheduler
-        c = self.yascheduler.cursor
-        while not self._allocate_results.empty():
-            try:
-                r = self._allocate_results.get(False)
-            except queue.Empty:
-                break
-
-            c.execute("DELETE FROM yascheduler_nodes WHERE ip=%s;", [r.tmp_ip])
-            if r.ip and r.provisioned:
-                c.execute(
-                    """
-                    INSERT INTO yascheduler_nodes (ip, ncpus, cloud)
-                    VALUES (%s, %s, %s);
-                    """,
-                    [r.ip, r.ncpus, r.api_name],
+        for api in self.apis.values():
+            if api.name not in data.keys():
+                data[api.name] = CloudCapacity(
+                    name=api.name, current=0, max=api.config.max_nodes
                 )
-            if r.ip and not r.provisioned:
-                self.deallocate([r.ip])
+        return data
 
-            self.yascheduler.connection.commit()
-            self._allocate_results.task_done()
+    async def select_best_provider(
+        self, want_platforms: Optional[Sequence[str]] = None
+    ) -> Optional[PCloudAPI]:
+        self.log.debug("Enabled providers: %s" % ", ".join(self.apis.keys()))
+        used_providers = []
+        suitable_providers = list(self.apis.keys())
 
-    def deallocate(self, ips):
-        assert self.yascheduler
-        c = self.yascheduler.cursor
-        c.execute(
-            "UPDATE yascheduler_nodes SET enabled=false WHERE ip IN ('%s');"
-            % "', '".join(ips)
-        )
-        self.yascheduler.connection.commit()
-        c.execute(
-            """
-            SELECT ip, cloud
-            FROM yascheduler_nodes
-            WHERE cloud IS NOT NULL AND ip IN ('%s');
-            """
-            % "', '".join(ips)
-        )
-        for row in c.fetchall():
-            t = DeallocateTask(ip=row[0], api_name=row[1])
-            self._deallocate_tasks.put(t)
+        cap = await self.get_capacity()
 
-    def process_deallocated(self):
-        assert self.yascheduler
-        c = self.yascheduler.cursor
-        while not self._deallocate_results.empty():
-            try:
-                r = self._deallocate_results.get(False)
-            except queue.Empty:
-                break
+        for name, capacity in cap.items():
+            used_providers.append((name, capacity.current))
+            api = self.apis.get(name)
+            if not api:
+                continue
+            # remove maxed out providers
+            if capacity.current >= api.config.max_nodes:
+                suitable_providers.remove(api.name)
+                continue
+            # remove not supported platforms
+            if want_platforms:
+                if not any(map(api.is_platform_supported, want_platforms)):
+                    suitable_providers.remove(api.name)
 
-            c.execute("DELETE FROM yascheduler_nodes WHERE ip=%s;", [r.ip])
-            self.yascheduler.connection.commit()
-            self._deallocate_results.task_done()
+        self.log.debug("Used providers: %s" % str(used_providers))
+        if not suitable_providers:
+            self.log.debug("No suitable cloud provides")
+            return
+        ok_apis = filter(lambda x: x.name in suitable_providers, self.apis.values())
+        ok_apis_sorted = sorted(ok_apis, key=lambda x: x.config.priority, reverse=True)
+        api = ok_apis_sorted[0]
+        self.log.debug("Chosen: %s" % api.name)
+        return api
 
-    def do_async_work(self):
-        self.process_allocated()
-        self.process_deallocated()
+    async def allocate_node(
+        self, want_platforms: Optional[Sequence[str]] = None, throttle: bool = False
+    ):
+        async with self.allocation_lock:
+            api = await self.select_best_provider(want_platforms)
+            if not api:
+                return
+            if throttle and api.get_op_semaphore().locked():
+                self.log.debug(f"Cloud {api.name} is overloaded by requests")
+                await asyncio.sleep(1)
+                return
 
-    def get_capacity(self, resources):
-        n_busy_cloud_nodes = len(
-            [item for item in resources if item[3]]
-        )  # Yascheduler.queue_get_resources()
-        max_nodes = sum([self.apis[cloudapi].max_nodes for cloudapi in self.apis])
-        diff = max_nodes - n_busy_cloud_nodes
-        return diff if diff > 0 else 0
+            tmp_ip = await self.db.add_tmp_node(api.name, api.config.username)
+            await self.db.commit()
+        ip = await api.create_node()
+        await self.db.remove_node(tmp_ip)
+        await self.db.add_node(ip, api.config.username, None, api.name, True)
+        await self.db.commit()
+        return ip
+
+    async def allocate(
+        self,
+        on_task: Optional[int] = None,
+        want_platforms: Optional[Sequence[str]] = None,
+        throttle: bool = True,
+    ) -> Union[str, None]:
+        if on_task in self.on_tasks:
+            return
+        if on_task:
+            self.on_tasks.add(on_task)
+        try:
+            return await self.allocate_node(want_platforms, throttle)
+        except Exception as err:
+            self.log.error(f"Can't allocate node: {err}")
+        finally:
+            if on_task:
+                self.mark_task_done(on_task)
+            return
+
+    async def deallocate(self, ip: str):
+        node = await self.db.get_node(ip)
+        if not node or not node.cloud:
+            return
+        if node.cloud not in self.apis:
+            self.log.warning(
+                f"Can't deallocate node {node.ip} - unsupported cloud {node.cloud}"
+            )
+        await self.db.disable_node(ip)
+        await self.db.commit()
+        c = self.apis[node.cloud]
+        try:
+            await c.delete_node(node.ip)
+        except Exception as err:
+            self.log.error(f"Can't deallocate node {node.ip}: {err}")
+            return False
+        await self.db.remove_node(node.ip)
+        await self.db.commit()

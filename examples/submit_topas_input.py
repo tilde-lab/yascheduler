@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 
-from configparser import ConfigParser
-
-from yascheduler import CONFIG_FILE
-from yascheduler.scheduler import Yascheduler
+from yascheduler import Yascheduler
 
 
 label = "SrTiO3 XRPD pattern"
@@ -29,11 +26,8 @@ site Sr  x  2.00000  y  2.00000  z  2.00000  occ Sr  1  beq  1
 site Ti  x  0.00000  y  0.00000  z  0.00000  occ Ti  1  beq  1
 """
 
-config = ConfigParser()
-config.read(CONFIG_FILE)
-yac = Yascheduler(config)
 
+yac = Yascheduler()
 result = yac.queue_submit_task(label, {"calc.inp": pattern_request}, "topas")
-
 print(label)
 print(result)

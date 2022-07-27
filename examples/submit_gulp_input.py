@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 
-from configparser import ConfigParser
-
-from yascheduler import CONFIG_FILE
-from yascheduler.scheduler import Yascheduler
+from yascheduler import Yascheduler
 
 
 label = "test Gulp calc"
@@ -46,11 +43,8 @@ Sr 11.406 0
 output arc srtio140_RC.car
 """
 
-config = ConfigParser()
-config.read(CONFIG_FILE)
-yac = Yascheduler(config)
 
+yac = Yascheduler()
 result = yac.queue_submit_task(label, {"INPUT": gulp_input}, "gulp")
-
 print(label)
 print(result)

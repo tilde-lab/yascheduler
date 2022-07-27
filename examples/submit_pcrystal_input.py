@@ -2,11 +2,8 @@
 
 import os
 import sys
-from configparser import ConfigParser
 
-from yascheduler import CONFIG_FILE
-from yascheduler.scheduler import Yascheduler
-
+from yascheduler import Yascheduler
 
 target = os.path.abspath(sys.argv[1])
 work_folder = os.path.dirname(target)
@@ -30,15 +27,12 @@ else:
 
 label = setup_input.splitlines()[0]
 
-config = ConfigParser()
-config.read(CONFIG_FILE)
-yac = Yascheduler(config)
 
+yac = Yascheduler()
 result = yac.queue_submit_task(
     label,
     {"fort.34": struct_input, "INPUT": setup_input, "local_folder": folder},
     "pcrystal",
 )
-
 print(label)
 print(result)

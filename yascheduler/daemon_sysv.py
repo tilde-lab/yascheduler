@@ -7,7 +7,7 @@ import argparse
 import daemon
 from daemon import pidfile
 from yascheduler import LOG_FILE, PID_FILE
-from yascheduler.scheduler import daemonize
+from yascheduler.utils import daemonize
 
 
 def start_daemon(pid_file, log_file):

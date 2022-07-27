@@ -54,7 +54,7 @@ int main(int argc,     // number of strings in array argv
 
   // sleep some time
   srand(time(NULL));
-  int sleep_time = rand() % 8;
+  int sleep_time = rand() % 60;
   printf("sleeping %d seconds\n", sleep_time);
   sleep(sleep_time);
 

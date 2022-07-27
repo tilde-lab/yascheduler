@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 
-from configparser import ConfigParser
+from yascheduler import Yascheduler
 
-from yascheduler import CONFIG_FILE
-from yascheduler.scheduler import Yascheduler
-
-
+yac = Yascheduler()
 label = "test dummy calc"
-
-config = ConfigParser()
-config.read(CONFIG_FILE)
-yac = Yascheduler(config)
-
 result = yac.queue_submit_task(
     label,
     {

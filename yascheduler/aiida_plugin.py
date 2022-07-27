@@ -13,7 +13,7 @@ _MAP_STATUS_YASCHEDULER = {
     "RUNNING": JobState.RUNNING,
     "FINISHED": JobState.DONE,
 }
-_CMD_PREFIX = ""
+_CMD_PREFIX = ""  # NB under virtualenv, this should refer to virtualenv's /bin/
 
 
 class YaschedJobResource(NodeNumberJobResource):
@@ -71,15 +71,16 @@ class YaScheduler(aiida.schedulers.Scheduler):
         Return the submit script header, using the parameters from the
         job_tmpl.
         """
-        aiida_code = load_node(job_tmpl.codes_info[0]['code_uuid'])
+        assert job_tmpl.job_name
+        # There is no other way to get the code label and the WF uuid except this (TODO?)
+        pk = int(job_tmpl.job_name.split("-")[1])
+        aiida_node = load_node(pk)
 
         # We map the lowercase code labels onto yascheduler engines,
         # so that the required input file(s) can be deduced
-        lines = ["ENGINE={}".format(aiida_code.label.lower())]
-
-        if job_tmpl.job_name:
-            lines.append("LABEL={}".format(job_tmpl.job_name))
-
+        lines = ["ENGINE={}".format(aiida_node.inputs.code.label.lower())]
+        lines.append("PARENT={}".format(aiida_node.caller.uuid))
+        lines.append("LABEL={}".format(job_tmpl.job_name))
         return "\n".join(lines)
 
     def _get_submit_command(self, submit_script):
@@ -112,7 +113,6 @@ class YaScheduler(aiida.schedulers.Scheduler):
         that is here implemented as a list of lines, one for each
         job, with _field_separator as separator. The order is described
         in the _get_joblist_command function.
-
         Return a list of JobInfo objects, one of each job,
         each relevant parameters implemented.
         """

@@ -1,6 +1,6 @@
 # Yet another computing scheduler & cloud orchestration engine
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_shield)
 
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_shield)
 
 **Yascheduler** is a simple job scheduler designed for submitting scientific
 calculations and copying back the results from the computing clouds.
@@ -31,20 +31,13 @@ and the system service should then be initialized with `yainit` script.
 ## Usage
 
 ```python
-from configparser import ConfigParser
+from yascheduler import Yascheduler
 
-from yascheduler import CONFIG_FILE
-from yascheduler.scheduler import Yascheduler
-
-config = ConfigParser()
-config.read(CONFIG_FILE)
-yac = Yascheduler(config)
-
-label = 'test assignment'
-engine = 'pcrystal'
-struct_input = str(...) # simulation control file: crystal structure
-setup_input = str(...) # simulation control file: main setup, can include struct_input
-
+yac = Yascheduler()
+label = "test assignment"
+engine = "pcrystal"
+struct_input = str(...)  # simulation control file: crystal structure
+setup_input = str(...)  # simulation control file: main setup, can include struct_input
 result = yac.queue_submit_task(
     label, {"fort.34": struct_input, "INPUT": setup_input}, engine
 )
@@ -136,17 +129,59 @@ Connection to a PostgreSQL database.
 
   _Example_: `%(data_dir)s/engines`
 
-- `allocator_threads`
+- `webhook_reqs_limit`
 
-  Maximum number of node allocator threads.
+  Maximum number of in-flight webhook http requests.
 
-  _Default_: `10`
+  _Default_: 5
 
-- `deallocator_threads`
+- `conn_machine_limit`
 
-  Maximum number of node deallocator threads.
+  Maximum number of concurrent SSH connection's `connect` requests.
 
-  _Default_: `2`
+  _Default_: 10
+
+- `conn_machine_pending`
+
+  Maximum number of pending SSH connection's `connect` requests.
+
+  _Default_: 10
+
+- `allocate_limit`
+
+  Maximum number of concurrent task or node allocation requests.
+
+  _Default_: 20
+
+- `allocate_pending`
+
+  Maximum number of pending task or node allocation requests.
+
+  _Default_: 1
+
+- `consume_limit`
+
+  Maximum number of concurrent task's results downloads.
+
+  _Default_: 20
+
+- `consume_pending`
+
+  Maximum number of pending task's results downloads.
+
+  _Default_: 1
+
+- `deallocate_limit`
+
+  Maximum number of concurrent node deallocation requests.
+
+  _Default_: 5
+
+- `deallocate_pending`
+
+  Maximum number of pending node deallocation requests.
+
+  _Default_: 1
 
 ### Remote Settings `[remote]`
 
@@ -181,6 +216,14 @@ Connection to a PostgreSQL database.
 
   _Default_: `root`
 
+- `jump_user`
+
+  Username of default SSH jump host (if used).
+
+- `jump_host`
+
+  Host of default SSH jump host (if used).
+
 ### Providers `[clouds]`
 
 All cloud providers settings are set in the `[cloud]` group.
@@ -196,6 +239,25 @@ These settings are common to all the providers:
 
   Per provider override of `remote.user`.
 
+- `*_priority`
+
+  Per provider priority of node allocation.
+  Sorted in descending order, so cloud with hightest value is first.
+
+- `*_idle_tolerance`
+
+  Per provider idle tolerance in seconds to deallocation of nodes.
+
+  _Default_: different for providers, starting from 120 secons.
+
+- `*_jump_user`
+
+  Username of this cloud SSH jump host (if used).
+
+- `*_jump_host`
+
+  Host of this cloud SSH jump host (if used).
+
 #### Hetzner
 
 Settings prefix is `hetzner`.
@@ -204,17 +266,21 @@ Settings prefix is `hetzner`.
 
   API token with Read & Write permissions for the project.
 
+- `hetzner_server_type`
+
+  Server type (size).
+
+  _Default_: `cx51`
+
+- `hetzner_image_name`
+
+  Image name for new nodes.
+
+  _Default_: `debian-10`
+
 #### Azure
 
-Azure Cloud should be pre-configured for `yascheduler`.
-
-Create a dedicated _Enterprise Application_ for service.
-Create an _Application Registration_.
-Add _Client Secret_ to the Application Registration.
-
-Create a dedicated _Resource Group_.
-Assign roles _Network Contributor_ and _Virtual Machine Contributor_
-in the _Resource Group_.
+Azure Cloud should be pre-configured for `yascheduler`. See [Cloud Providers](CLOUD.md).
 
 Settings prefix is `az`.
 
@@ -238,7 +304,7 @@ Settings prefix is `az`.
 
   Resource Group name.
 
-  _Default_: `YaScheduler-VM-rg`
+  _Default_: `yascheduler-rg`
 
 - `az_user`
 
@@ -250,69 +316,35 @@ Settings prefix is `az`.
 
   _Default_: `westeurope`
 
-- `az_infra_tmpl_path`
+- `az_vnet`
 
-  Path to deployment template of common parts.
+  Virtual network name.
 
-  _Default_: `azure_infra_tmpl.json`
+  _Default_: `yascheduler-vnet`
 
-- `az_infra_param_subnetMask`
+- `az_subnet`
 
-  Subnet mask of VMs network.
+  Subnet name.
 
-  _Default_: `20`
+  _Default_: `yascheduler-subnet`
 
-- `az_infra_param_*`
+- `az_nsg`
 
-  Any input of deployment template of common parts.
-  Defaults from deployment manifest.
+  Network security group name.
 
-- `az_vm_tmpl_path`
+  _Default_: `yascheduler-nsg`
 
-  Path to deployment template of VM.
+- `az_vm_image`
 
-  _Default_: `azure_vm_tmpl.json`
+  OS image name.
 
-- `az_vm_param_virtualMachineSize`
+  _Default_: `Debian`
 
-  Machine type.
+- `az_vm_size`
+
+  Machine size.
 
   _Default_: `Standard_B1s`
-
-- `az_vm_param_*`
-
-  Any input of deployment template of VM.
-  Defaults from deployment manifest.
-
-- `az_vm_param_osDiskSize`
-
-  Root disk type.
-
-  _Default_: `StandardSSD_LRS`
-
-- `az_vm_param_imagePublisher`
-
-  OS image publisher.
-
-  _Default_: `debian`
-
-- `az_vm_param_imageOffer`
-
-  OS image offer.
-
-  _Default_: `debian-10`
-
-- `az_vm_param_imageSku`
-
-  OS image SKU.
-
-  _Default_: `10-backports-gen2`
-
-- `az_vm_param_imageVersion`
-
-  OS image version.
-
-  _Default_: `latest`
 
 #### UpCloud
 
@@ -331,7 +363,7 @@ Settings prefix is `upcloud`.
 Every engine defined in section `[engine.name]`, where `name` is engine's name.
 Name can be any alphanumeric but can't changed later.
 
-- `platform`
+- `platforms`
 
   List of supported platform, separated by space or newline.
 
@@ -373,17 +405,6 @@ Name can be any alphanumeric but can't changed later.
 
   _Example_: `https://example.org/dummyengine.tar.gz`
 
-- `spawn`
-
-  Command that starts the task on the remote machine.
-  Command is executed in background subshell with nohup.
-  Current working directory is task's directory.
-  Command can be templated:
-
-  - `{task_path}` - path to the task's directory
-  - `{engine_path}` - path to the engine's directory
-  - `{ncpus}` - number of CPU cores
-
   _Example_: `cp {task_path}/INPUT OUTPUT && mpirun -np {ncpus} --allow-run-as-root -wd {task_path} {engine_path}/Pcrystal >> OUTPUT 2>&1`
   _Example_: `{engine_path}/gulp < INPUT > OUTPUT`
 
@@ -411,9 +432,9 @@ Name can be any alphanumeric but can't changed later.
 - `sleep_interval`
 
   Interval in seconds between task checks.
-  Set to a higher value if you are expecting a long running job.
+  Set to a higher value if you are expecting a long running jobs.
 
-  _Default_: `1`
+  _Default_: `10`
 
 - `input_files`
 
@@ -447,6 +468,6 @@ verdi code setup
 [crystal]: http://www.crystal.unito.it
 [mpds-aiida]: https://github.com/mpds-io/mpds-aiida
 
-
 ## License
+
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_large)

@@ -1,80 +1,96 @@
 #!/usr/bin/env python3
 
-from configparser import ConfigParser
+import asyncio
+import logging
+from concurrent.futures.thread import ThreadPoolExecutor
+from functools import lru_cache, partial
 from typing import Optional
 
-from hcloud import Client, APIException
+from asyncssh.public_key import SSHKey as ASSHKey
+from hcloud import Client as HClient, APIException
 from hcloud.images.domain import Image
 from hcloud.server_types.domain import ServerType
-from hcloud.ssh_keys.domain import SSHKey
+from hcloud.servers.client import BoundServer
+from hcloud.ssh_keys.domain import SSHKey as HSSHKey
 
-from yascheduler.clouds import AbstractCloudAPI
+from .protocols import PCloudConfig
+from .utils import get_rnd_name, get_key_name
+from ..config import ConfigCloudHetzner
+
+executor = ThreadPoolExecutor(max_workers=5)
 
 
-class HetznerCloudAPI(AbstractCloudAPI):
+@lru_cache()
+def get_client(cfg: ConfigCloudHetzner) -> HClient:
+    return HClient(cfg.token)
 
-    name = "hetzner"
 
-    client: Client
-    _ssh_key_id: Optional[int] = None
+@lru_cache()
+def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
+    key_name = get_key_name(key)
 
-    def __init__(self, config: ConfigParser):
-        super().__init__(
-            config=config,
-            max_nodes=config.getint("clouds", "hetzner_max_nodes", fallback=None),
-        )
-        self.client = Client(token=config.get("clouds", "hetzner_token"))
+    try:
 
-    @property
-    def ssh_key_id(self) -> int:
-        if not self._ssh_key_id:
-            try:
-                self._ssh_key_id = self.client.ssh_keys.create(
-                    name=self.key_name,
-                    public_key=self.public_key,
-                ).id
-            except APIException as ex:
-                if "already" in str(ex):
-                    for key in self.client.ssh_keys.get_all():
-                        if key.name.startswith("yakey") and len(key.name) == 14:
-                            self._ssh_key_id = key.id
-                else:
-                    raise
-        return self._ssh_key_id
+        return client.ssh_keys.create(
+            name=key_name, public_key=key.export_public_key().decode("utf-8")
+        ).id
+    except APIException as ex:
+        if "already" in str(ex):
+            for hkey in client.ssh_keys.get_all(fingerprint=key.get_fingerprint()):
+                return hkey.id
+            for hkey in client.ssh_keys.get_all(name=key_name):
+                return hkey.id
+            prefix = "yakey"
+            name_len = len(get_rnd_name(prefix))
+            for hkey in client.ssh_keys.get_all():
+                if hkey.name.startswith(prefix) and len(hkey.name) == name_len:
+                    return hkey.id
+        raise ex
 
-    def create_node(self):
-        response = self.client.servers.create(
-            name=self.get_rnd_name("node"),
-            server_type=ServerType("cx51"),
-            image=Image(name="debian-10"),
-            ssh_keys=[SSHKey(id=self.ssh_key_id, name=self.key_name)],
-            user_data=self.cloud_config_data.render(),
-        )
-        server = response.server
-        ip = server.public_net.ipv4.ip
-        self._log.info("CREATED %s" % ip)
 
-        # wait node up and ready
-        self._run_ssh_cmd_with_backoff(
-            ip, cmd="cloud-init status --wait", max_interval=5
-        )
+async def hetzner_create_node(
+    log: logging.Logger,
+    cfg: ConfigCloudHetzner,
+    key: ASSHKey,
+    cloud_config: Optional[PCloudConfig] = None,
+) -> str:
+    loop = asyncio.get_running_loop()
+    client = await loop.run_in_executor(executor, get_client, cfg)
+    ssh_key_id = await loop.run_in_executor(executor, get_ssh_key_id, client, key)
 
-        return ip
+    create_server = partial(
+        client.servers.create,
+        name=get_rnd_name("node"),
+        server_type=ServerType(cfg.server_type),
+        image=Image(name=cfg.image_name),
+        ssh_keys=[HSSHKey(id=ssh_key_id, name=get_key_name(key))],
+        user_data=cloud_config.render() if cloud_config else None,
+    )
+    response = await loop.run_in_executor(executor, create_server)
+    server = response.server
+    ip = server.public_net.ipv4.ip
+    log.info("CREATED %s" % ip)
+    return ip
 
-    def delete_key(self):
-        self.client.ssh_keys.delete(SSHKey(id=self.ssh_key_id))
 
-    def delete_node(self, ip):
-        server = None
+def find_srv(client: HClient, host: str) -> Optional[BoundServer]:
+    for s in client.servers.get_all():
+        if s.public_net.ipv4.ip == host:
+            return client.servers.get_by_id(s.id)
 
-        for s in self.client.servers.get_all():
-            if s.public_net.ipv4.ip == ip:
-                server = self.client.servers.get_by_id(s.id)
-                break
 
-        if server:
-            server.delete()
-            self._log.info("DELETED %s" % ip)
+async def hetzner_delete_node(
+    log: logging.Logger,
+    cfg: ConfigCloudHetzner,
+    host: str,
+):
+    loop = asyncio.get_running_loop()
+    client = await loop.run_in_executor(executor, get_client, cfg)
+    server = await loop.run_in_executor(executor, find_srv, client, host)
 
-        else:
-            self._log.info("NODE %s NOT DELETED AS UNKNOWN" % ip)
+    if server:
+        await loop.run_in_executor(executor, server.delete)
+        log.info("DELETED %s" % host)
+
+    else:
+        log.info("NODE %s NOT DELETED AS UNKNOWN" % host)
