@@ -68,6 +68,7 @@ def get_logger(log_file):
 class WebhookPayload:
     task_id: int = field()
     status: int = field()
+    custom_params: Mapping[str, Any] = field(factory=dict)
 
 
 @define
@@ -145,7 +146,9 @@ class Yascheduler:
             return
         async with self.webhook_sem:
             self.log.info(f"Executing webhook to {url}")
-            payload = WebhookPayload(task_id, status)
+            payload = WebhookPayload(
+                task_id, status, metadata.get("webhook_custom_params", {})
+            )
             try:
                 async with retry(self.http.post)(url, data=asdict(payload)):
                     pass
@@ -153,7 +156,11 @@ class Yascheduler:
                 self.log.error(f"Webhook for task_id={task_id} failed: {err}")
 
     async def create_new_task(
-        self, label: str, metadata: Mapping[str, Any], engine_name: str
+        self,
+        label: str,
+        metadata: Mapping[str, Any],
+        engine_name: str,
+        webhook_onsubmit: bool = False,
     ) -> TaskModel:
         "Create new task in DB"
         if engine_name not in self.config.engines:
@@ -176,6 +183,8 @@ class Yascheduler:
         new_meta.update({"remote_folder": str(remote_folder)})
         await self.db.update_task_meta(task.task_id, new_meta)
         await self.db.commit()
+        if webhook_onsubmit:
+            await self.do_task_webhook(task.task_id, new_meta, TaskStatus.TO_DO)
         self.log.info(":::submitted: %s" % label)
         return task
 

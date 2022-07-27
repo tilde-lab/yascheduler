@@ -2,9 +2,9 @@
 
 from configparser import SectionProxy
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
-from attrs import define, validators
+from attrs import define, field, validators
 
 from .utils import _make_default_field
 
@@ -15,6 +15,7 @@ class ConfigLocal:
     tasks_dir: Path = _make_default_field(Path("./data/tasks"))
     engines_dir: Path = _make_default_field(Path("./data/engines"))
     keys_dir: Path = _make_default_field(Path("./data/keys"))
+    webhook_url: Optional[str] = field(default=None)
     webhook_reqs_limit: int = _make_default_field(
         5, extra_validators=[validators.ge(1)]
     )
@@ -48,6 +49,7 @@ class ConfigLocal:
             ).resolve(),
             keys_dir=Path(sec.get("keys_dir", str(data_dir / "keys"))).resolve(),
             webhook_reqs_limit=sec.getint("webhook_reqs_limit"),
+            webhook_url=sec.get("webhook_url"),
             conn_machine_limit=sec.getint("conn_machine_limit"),
             conn_machine_pending=sec.getint("conn_machine_pending"),
             allocate_limit=sec.getint("allocate_limit"),

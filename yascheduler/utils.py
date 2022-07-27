@@ -7,7 +7,7 @@ import logging
 import os
 import signal
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 from pg8000 import ProgrammingError
 
@@ -43,7 +43,7 @@ async def _submit():
                 pass
 
     label = script_params.get("LABEL", "AiiDA job")
-    metadata = {"local_folder": str(script_file.parent)}
+    metadata: Mapping[str, Any] = {"local_folder": str(script_file.parent)}
     if not script_params.get("ENGINE"):
         raise ValueError("Script has not defined an engine")
 
@@ -61,7 +61,18 @@ async def _submit():
                 "Script was not supplied with the required input file"
             ) from err
 
-    task = await yac.create_new_task(label, metadata, engine.name)
+    webhook_onsubmit = False
+    if "PARENT" in script_params and yac.config.local.webhook_url:
+        metadata["webhook_url"] = yac.config.local.webhook_url
+        metadata["webhook_custom_params"] = {"parent": script_params["PARENT"]}
+        webhook_onsubmit = True
+
+    task = await yac.create_new_task(
+        label,
+        metadata,
+        engine.name,
+        webhook_onsubmit=webhook_onsubmit,
+    )
     await yac.stop()
 
     # this should be received by AiiDA
