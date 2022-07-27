@@ -19,8 +19,8 @@ from typing import (
 )
 
 import asyncssh
-import asyncstdlib as a
 import backoff
+from asyncstdlib import all as aall, map as amap
 from asyncssh.client import SSHClient
 from asyncssh.connection import SSHClientConnection, SSHClientConnectionOptions
 from asyncssh.process import SSHCompletedProcess, SSHClientProcess
@@ -204,7 +204,7 @@ class RemoteMachine(PRemoteMachine):
         adapter = None
         platforms: Sequence[str] = []
         checks: Sequence[bool] = [
-            await a.all(a.map(lambda y: with_limit(conn, y), x.checks))
+            await aall(amap(lambda y: with_limit(conn, y), x.checks))
             for x in ADAPTERS
         ]
 

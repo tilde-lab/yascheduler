@@ -2,17 +2,17 @@
 
 from typing import Optional, Tuple
 
-import asyncstdlib as a
+from asyncstdlib import lru_cache
 from asyncssh.connection import SSHClientConnection
 
 
-@a.functools.lru_cache
+@lru_cache
 async def check_is_linux(conn: SSHClientConnection) -> bool:
     r = await conn.run("uname")
     return r.returncode == 0 and r.stdout is not None and r.stdout.strip() == "Linux"
 
 
-@a.functools.lru_cache
+@lru_cache
 async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str, str, str]]:
     r = await conn.run("source /etc/os-release; echo $ID@@@$ID_LIKE@@@$VERSION_ID")
     if r.returncode != 0 or not r.stdout:
@@ -40,13 +40,13 @@ async def check_is_debian_bullseye(conn: SSHClientConnection) -> bool:
     return os_release[2] == "11" if os_release else False
 
 
-@a.functools.lru_cache
+@lru_cache
 async def check_is_windows(conn: SSHClientConnection) -> bool:
     r = await conn.run("[environment]::OSVersion")
     return r.returncode == 0
 
 
-@a.functools.lru_cache
+@lru_cache
 async def get_wmi_w32_os_caption(conn: SSHClientConnection) -> Optional[str]:
     r = await conn.run("(Get-WmiObject -class Win32_OperatingSystem).Caption")
     if r.stdout:

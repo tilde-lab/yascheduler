@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional, Sequence, Union
 
-import asyncstdlib as a
+from asyncstdlib import lru_cache
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
 from attrs import asdict, define, field
 
@@ -92,7 +92,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
         self.log.info("WRITTEN KEY %s" % filepath)
         return ssh_key
 
-    @a.functools.lru_cache()
+    @lru_cache()
     async def get_ssh_key(self) -> SSHKey:
         return await asyncio.get_running_loop().run_in_executor(
             None, self.get_ssh_key_sync
