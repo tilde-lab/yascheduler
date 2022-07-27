@@ -5,8 +5,8 @@
 **Yascheduler** is a simple job scheduler designed for submitting scientific
 calculations and copying back the results from the computing clouds.
 
-Currently it has been used for the _ab initio_ [CRYSTAL][crystal] code, although
-any other scientific code can be supported via the declarative control template
+Currently it supports several scientific simulation codes in chemistry and solid state physics.
+Any other scientific simulation code can be supported via the declarative control template
 system (see `yascheduler.conf` settings file). An example dummy C++ code with its
 configuration template is included.
 
@@ -103,7 +103,7 @@ Connection to a PostgreSQL database.
 
   _Default_: `./data`
 
-  _Example_: `/srv/yascheduler`
+  _Example_: `/srv/yadata`
 
 - `tasks_dir`
 
@@ -192,7 +192,7 @@ Connection to a PostgreSQL database.
 
   _Default_: `./data`
 
-  _Example_: `/src/yascheduler`
+  _Example_: `/src/yadata`
 
 - `tasks_dir`
 
@@ -218,11 +218,11 @@ Connection to a PostgreSQL database.
 
 - `jump_user`
 
-  Username of default SSH jump host (if used).
+  Username of default SSH _jump host_ (if used).
 
 - `jump_host`
 
-  Host of default SSH jump host (if used).
+  Host of default SSH _jump host_ (if used).
 
 ### Providers `[clouds]`
 
@@ -242,13 +242,13 @@ These settings are common to all the providers:
 - `*_priority`
 
   Per provider priority of node allocation.
-  Sorted in descending order, so cloud with hightest value is first.
+  Sorted in descending order, so the cloud with the highest value is the first.
 
 - `*_idle_tolerance`
 
-  Per provider idle tolerance in seconds to deallocation of nodes.
+  Per provider idle tolerance (in seconds) for deallocation of nodes.
 
-  _Default_: different for providers, starting from 120 secons.
+  _Default_: different for providers, starting from 120 seconds.
 
 - `*_jump_user`
 
@@ -294,7 +294,7 @@ Settings prefix is `az`.
 
 - `az_client_secret`
 
-  Client Secret value from Application Registration.
+  Client Secret value from the **Application Registration**.
 
 - `az_subscription_id`
 
@@ -360,8 +360,8 @@ Settings prefix is `upcloud`.
 
 #### Engines `[engine.*]`
 
-Every engine defined in section `[engine.name]`, where `name` is engine's name.
-Name can be any alphanumeric but can't changed later.
+Supported engines should be defined in the section(s) `[engine.name]`.
+The name is alphanumeric string to represent the real engine name. Once set, it cannot be changed later.
 
 - `platforms`
 
@@ -410,14 +410,14 @@ Name can be any alphanumeric but can't changed later.
 
 - `check_pname`
 
-  Process name used to check that task is still running.
+  Process name used to check that the task is still running.
   Conflicts with `check_cmd`.
 
   _Example_: `dummyengine`
 
 - `check_cmd`
 
-  Command used to check that task is still running.
+  Command used to check that the task is still running.
   Conflicts with `check_pname`. See also `check_cmd_code`.
 
   _Example_: `ps ax -ocomm= | grep -q dummyengine`
@@ -431,8 +431,8 @@ Name can be any alphanumeric but can't changed later.
 
 - `sleep_interval`
 
-  Interval in seconds between task checks.
-  Set to a higher value if you are expecting a long running jobs.
+  Interval in seconds between the task checks.
+  Set to a higher value if you are expecting long running jobs.
 
   _Default_: `10`
 
@@ -456,7 +456,6 @@ See the detailed instructions for the [MPDS-AiiDA-CRYSTAL workflows][mpds-aiida]
 as well as the [ansible-mpds][ansible-aiida] repository. In essence:
 
 ```
-pip install --upgrade paramiko
 ssh aiidauser@localhost # important
 reentry scan
 verdi computer setup
@@ -465,7 +464,6 @@ verdi code setup
 ```
 
 [ansible-aiida]: https://github.com/mpds-io/ansible-mpds
-[crystal]: http://www.crystal.unito.it
 [mpds-aiida]: https://github.com/mpds-io/mpds-aiida
 
 ## License
