@@ -6,17 +6,17 @@
 
 Azure Cloud should be pre-configured for `yascheduler`.
 
-It is recommended to use [Azure CLI][az_cli_install]. Configure it.
+It is recommended to use [Azure CLI][az_cli_install]. Configure it beforehand.
 
-Run command and write down `subscriptionId` to config file.
+Run command and write down `subscriptionId` to the config file.
 
 ```sh
 az account subscription list
 ```
 
 Create a dedicated Resource Group. See [documentation][az_manage_rg].
-For example, `yascheduler-rg` in `westeurope` location:
-Write down resource group and location to the config.
+For example, consider `yascheduler-rg` in `westeurope` location.
+Write down the resource group and location to the config.
 
 ```bash
 az group create -l westeurope -g yascheduler-rg
@@ -31,7 +31,7 @@ az ad app create --display-name yascheduler
 ```
 
 Assign roles _Network Contributor_ and _Virtual Machine Contributor_
-in the _Resource Group_. Use correct `appId`.
+in the _Resource Group_. Use the correct `appId`.
 
 ```bash
 az role assignment create \
@@ -52,7 +52,7 @@ Write down `tenant` as `tenant_id` and `password` as `client_secret`.
 az ad app credential reset --id 00000000-0000-0000-0000-000000000000 --append
 ```
 
-Create a virtual networks.
+Create virtual networks.
 
 ```bash
 az network nsg create \
@@ -71,8 +71,8 @@ az network vnet create \
     --subnet-prefix 10.0.0.0/22
 ```
 
-Let's setup a jump host. It's allow you to connect from outside.
-If `yascheduler` is installed in the internal network, it's optional.
+It is possible to setup a _jump host_. It allows connections from the outside.
+If `yascheduler` is installed in the internal network, it is optional.
 
 ```bash
 az vm create \
