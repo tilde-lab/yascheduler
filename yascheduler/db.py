@@ -20,7 +20,6 @@ class TaskStatus(int, Enum):
     TO_DO = 0
     RUNNING = 1
     DONE = 2
-    ERROR = 3
 
 
 @define(frozen=True, hash=True)
@@ -315,5 +314,5 @@ class DB:
             WHERE task_id=:task_id;""",
             task_id=task_id,
             metadata=m,
-            status=TaskStatus.ERROR.value,
+            status=TaskStatus.DONE.value,
         )

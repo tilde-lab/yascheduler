@@ -277,7 +277,7 @@ class Yascheduler:
             await self.db.set_task_error(
                 task.task_id, metadata=task.metadata, error="unsupported engine"
             )
-            await self.do_task_webhook(task.task_id, task.metadata, TaskStatus.ERROR)
+            await self.do_task_webhook(task.task_id, task.metadata, TaskStatus.DONE)
             return False
         engine: Engine = self.config.engines[engine_name]
 
@@ -356,7 +356,7 @@ class Yascheduler:
         new_meta = dict(list(task.metadata.items()) + meta_add)
         if "error" in new_meta:
             await self.db.set_task_error(task.task_id, new_meta)
-            await self.do_task_webhook(task.task_id, new_meta, TaskStatus.ERROR)
+            await self.do_task_webhook(task.task_id, new_meta, TaskStatus.DONE)
         else:
             await self.db.set_task_done(task.task_id, new_meta)
             await self.do_task_webhook(task.task_id, new_meta, TaskStatus.DONE)
@@ -380,7 +380,7 @@ class Yascheduler:
             tmpl = (
                 "JOBS: {tasks} "
                 "NODES: b:{n_busy}/e:{n_enabled}/t:{n_total} "
-                "TASKS: r:{t_run}/t:{t_todo}/d:{t_done}/e:{t_err}"
+                "TASKS: r:{t_run}/t:{t_todo}/d:{t_done}"
             )
             msg = tmpl.format(
                 tasks=len(asyncio.all_tasks()),
@@ -390,7 +390,6 @@ class Yascheduler:
                 t_run=tcounters[TaskStatus.RUNNING],
                 t_todo=tcounters[TaskStatus.TO_DO],
                 t_done=tcounters[TaskStatus.DONE],
-                t_err=tcounters[TaskStatus.ERROR],
             )
             self.log.info(msg)
 
@@ -489,7 +488,7 @@ class Yascheduler:
                 await self.db.set_task_error(
                     task_id, metadata=task.metadata, error="node is gone"
                 )
-                await self.do_task_webhook(task_id, task.metadata, TaskStatus.ERROR)
+                await self.do_task_webhook(task_id, task.metadata, TaskStatus.DONE)
             return
         # consume
         if not machine.meta.busy:
