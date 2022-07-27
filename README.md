@@ -31,22 +31,17 @@ and the system service should then be initialized with `yainit` script.
 ## Usage
 
 ```python
-import asyncio
-from yascheduler.scheduler import Yascheduler
+from yascheduler import Yascheduler
 
-async def main():
-    yac = await Yascheduler.create()
-
-    label = "test assignment"
-    engine = "pcrystal"
-    struct_input = str(...)  # simulation control file: crystal structure
-    setup_input = str(...)  # simulation control file: main setup, can include struct_input
-    result = yac.create_new_task(
-        label, {"fort.34": struct_input, "INPUT": setup_input}, engine
-    )
-    print(result)
-
-asyncio.run(main())
+yac = Yascheduler()
+label = "test assignment"
+engine = "pcrystal"
+struct_input = str(...)  # simulation control file: crystal structure
+setup_input = str(...)  # simulation control file: main setup, can include struct_input
+result = yac.queue_submit_task(
+    label, {"fort.34": struct_input, "INPUT": setup_input}, engine
+)
+print(result)
 ```
 
 File paths can be set using the environment variables:

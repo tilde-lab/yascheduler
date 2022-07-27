@@ -11,14 +11,15 @@ from typing import Any, Mapping, Sequence
 
 from pg8000 import ProgrammingError
 
+from .client import Yascheduler
 from .config import Config
 from .db import DB, TaskModel, TaskStatus
 from .remote_machine import RemoteMachine
-from .scheduler import Yascheduler, get_logger
+from .scheduler import Scheduler, get_logger
 from .variables import CONFIG_FILE
 
 
-async def _submit():
+def submit_():
     parser = argparse.ArgumentParser(
         description="Submit task to yascheduler via AiiDA script"
     )
@@ -31,7 +32,7 @@ async def _submit():
 
     log = logging.getLogger()
     log.setLevel(logging.ERROR)
-    yac = await Yascheduler.create(log=log)
+    yac = Yascheduler(logger=log)
 
     script_params = {}
     with script_file.open("r") as f:
@@ -67,20 +68,15 @@ async def _submit():
         metadata["webhook_custom_params"] = {"parent": script_params["PARENT"]}
         webhook_onsubmit = True
 
-    task = await yac.create_new_task(
+    task = yac.queue_submit_task(
         label,
         metadata,
         engine.name,
         webhook_onsubmit=webhook_onsubmit,
     )
-    await yac.stop()
 
     # this should be received by AiiDA
-    print(str(task.task_id))
-
-
-def submit():
-    asyncio.run(_submit())
+    print(str(task.get("task_id")))
 
 
 async def _check_status():
@@ -436,7 +432,7 @@ def daemonize(log_file=None):
     logger = get_logger(log_file)
 
     async def on_signal(
-        y: Yascheduler, shield: Sequence[asyncio.Task], signame: str, signum: int
+        y: Scheduler, shield: Sequence[asyncio.Task], signame: str, signum: int
     ):
         logger.info(f"Received signal {signame}")
         if signum in [signal.SIGTERM, signal.SIGINT]:
@@ -451,7 +447,7 @@ def daemonize(log_file=None):
             logger.info("Done")
 
     async def run():
-        yac = await Yascheduler.create(log=logger)
+        yac = await Scheduler.create(log=logger)
 
         loop = asyncio.get_running_loop()
         current_task = asyncio.current_task()

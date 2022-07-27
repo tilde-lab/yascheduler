@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
-import asyncio
 import os
 import sys
 
-from yascheduler.scheduler import Yascheduler
+from yascheduler import Yascheduler
 
 target = os.path.abspath(sys.argv[1])
 work_folder = os.path.dirname(target)
@@ -29,15 +28,11 @@ else:
 label = setup_input.splitlines()[0]
 
 
-async def main():
-    yac = await Yascheduler.create()
-    result = yac.create_new_task(
-        label,
-        {"fort.34": struct_input, "INPUT": setup_input, "local_folder": folder},
-        "pcrystal",
-    )
-    print(label)
-    print(result)
-
-
-asyncio.run(main())
+yac = Yascheduler()
+result = yac.queue_submit_task(
+    label,
+    {"fort.34": struct_input, "INPUT": setup_input, "local_folder": folder},
+    "pcrystal",
+)
+print(label)
+print(result)

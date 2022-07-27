@@ -72,7 +72,7 @@ class WebhookPayload:
 
 
 @define
-class Yascheduler:
+class Scheduler:
     config: Config = field()
     db: DB = field()
     clouds: PCloudAPIManager = field()
@@ -101,7 +101,7 @@ class Yascheduler:
     @classmethod
     async def create(
         cls,
-        config_path: Optional[PurePath] = None,
+        config: Optional[Config] = None,
         log: Optional[logging.Logger] = None,
     ) -> Self:
         "Async object initialization"
@@ -109,7 +109,7 @@ class Yascheduler:
             log = log.getChild(cls.__name__)
         else:
             log = logging.getLogger(cls.__name__)
-        cfg = Config.from_config_parser(config_path or CONFIG_FILE)
+        cfg = config or Config.from_config_parser(CONFIG_FILE)
         db = await DB.create(cfg.db)
         clouds = await CloudAPIManager.create(
             db=db,

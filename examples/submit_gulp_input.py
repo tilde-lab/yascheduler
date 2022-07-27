@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import asyncio
-
-from yascheduler.scheduler import Yascheduler
+from yascheduler import Yascheduler
 
 
 label = "test Gulp calc"
@@ -46,11 +44,7 @@ output arc srtio140_RC.car
 """
 
 
-async def main():
-    yac = await Yascheduler.create()
-    result = yac.create_new_task(label, {"INPUT": gulp_input}, "gulp")
-    print(label)
-    print(result)
-
-
-asyncio.run(main())
+yac = Yascheduler()
+result = yac.queue_submit_task(label, {"INPUT": gulp_input}, "gulp")
+print(label)
+print(result)
