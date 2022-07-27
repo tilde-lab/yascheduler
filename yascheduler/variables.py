@@ -2,7 +2,7 @@
 
 from os import getenv
 
-__version__ = "0.12.0"
+__version__ = "1.0.0"
 
 CONFIG_FILE = getenv("YASCHEDULER_CONF_PATH", "/etc/yascheduler/yascheduler.conf")
 LOG_FILE = getenv("YASCHEDULER_LOG_PATH", "/var/log/yascheduler.log")
