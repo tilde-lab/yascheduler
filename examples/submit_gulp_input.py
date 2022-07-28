@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
+"""Submit GULP task"""
 
 from yascheduler import Yascheduler
 
+LABEL = "test Gulp calc"
 
-label = "test Gulp calc"
-
-gulp_input = """
+GULP_INPUT = """
 opti conp prop
 #
 title
@@ -45,6 +45,6 @@ output arc srtio140_RC.car
 
 
 yac = Yascheduler()
-result = yac.queue_submit_task(label, {"INPUT": gulp_input}, "gulp")
-print(label)
+result = yac.queue_submit_task(LABEL, {"INPUT": GULP_INPUT}, "gulp")
+print(LABEL)
 print(result)

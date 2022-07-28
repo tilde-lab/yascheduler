@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Cloud adapters"""
 
 import asyncio
 from functools import lru_cache
@@ -6,36 +6,42 @@ from typing import Sequence, Tuple
 
 from attrs import define, field
 
+from .az import az_create_node, az_delete_node
+from .hetzner import hetzner_create_node, hetzner_delete_node
 from .protocols import (
+    CreateNodeCallable,
+    DeleteNodeCallable,
     PCloudAdapter,
     SupportedPlatformChecker,
     TConfigCloud,
-    CreateNodeCallable,
-    DeleteNodeCallable,
 )
-from .az import az_create_node, az_delete_node
-from .hetzner import hetzner_create_node, hetzner_delete_node
 from .upcloud import upcload_delete_node, upcloud_create_node
 
 
 def can_debian_buster(platform: str) -> bool:
+    "Platform is compatible with Debian Buster"
     return platform in ["debian-10", "debian", "debian-like", "linux"]
 
 
 def can_debian_bullseye(platform: str) -> bool:
+    "Platform is compatible with Debian Bullseye"
     return platform in ["debian-11", "debian", "debian-like", "linux"]
 
 
 def can_win10(platform: str) -> bool:
+    "Platform is compatible with Windows 10"
     return platform in ["windows-10", "windows"]
 
 
 def can_win11(platform: str) -> bool:
+    "Platform is compatible with Windows 11"
     return platform in ["windows-11", "windows"]
 
 
 @define(frozen=True)
 class CloudAdapter(PCloudAdapter[TConfigCloud]):
+    """Cloud adapter"""
+
     name: str = field()
     supported_platform_checks: Tuple[SupportedPlatformChecker] = field()
     create_node: CreateNodeCallable[TConfigCloud] = field()
@@ -62,7 +68,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
             op_limit=op_limit,
         )
 
-    @lru_cache()
+    @lru_cache()  # noqa: B019
     def get_op_semaphore(self) -> asyncio.Semaphore:
         return asyncio.Semaphore(self.op_limit)
 

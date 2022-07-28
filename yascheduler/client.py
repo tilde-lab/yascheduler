@@ -2,13 +2,13 @@
 
 import asyncio
 import logging
-from typing import Any, Mapping, MutableMapping, Optional, Sequence, Union
 from pathlib import PurePath
+from typing import Any, Mapping, MutableMapping, Optional, Sequence, Union
 
 from attrs import asdict
 
 from .config import Config
-from .db import DB, TaskStatus, TaskModel
+from .db import DB, TaskModel, TaskStatus
 from .scheduler import Scheduler
 from .variables import CONFIG_FILE
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Main config module"""
 
 from configparser import ConfigParser
 from pathlib import PurePath
@@ -6,12 +7,7 @@ from typing import Sequence, Union
 
 from attrs import define, field, validators
 
-from .cloud import (
-    ConfigCloud,
-    ConfigCloudAzure,
-    ConfigCloudHetzner,
-    ConfigCloudUpcloud,
-)
+from .cloud import ConfigCloud, ConfigCloudAzure, ConfigCloudHetzner, ConfigCloudUpcloud
 from .db import ConfigDb
 from .engine_repository import EngineRepository
 from .local import ConfigLocal
@@ -20,6 +16,8 @@ from .remote import ConfigRemote
 
 @define(frozen=True)
 class Config:
+    """Main config module"""
+
     db: ConfigDb = field(validator=[validators.instance_of(ConfigDb)])
     local: ConfigLocal = field(validator=[validators.instance_of(ConfigLocal)])
     remote: ConfigRemote = field(validator=[validators.instance_of(ConfigRemote)])
@@ -30,12 +28,13 @@ class Config:
 
     @classmethod
     def from_config_parser(cls, files: Union[str, bytes, PurePath]) -> "Config":
+        "Create Config from path or config file contents"
         config = ConfigParser()
         config.read(files)
 
-        for sn in ["db", "local", "remote", "clouds"]:
-            if not config.has_section(sn):
-                config.add_section(sn)
+        for sec_name in ["db", "local", "remote", "clouds"]:
+            if not config.has_section(sec_name):
+                config.add_section(sec_name)
 
         local = ConfigLocal.from_config_parser_section(config["local"])
 

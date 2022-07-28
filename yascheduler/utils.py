@@ -79,7 +79,7 @@ def submit_():
     print(str(task.get("task_id")))
 
 
-async def _check_status():
+async def _check_status():  # noqa: C901
     parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
     parser.add_argument("-j", "--jobs", required=False, default=None, nargs="*")
     parser.add_argument(
@@ -98,7 +98,9 @@ async def _check_status():
     parser.add_argument(
         "-i", "--info", required=False, default=None, nargs="?", type=bool, const=True
     )
-    # parser.add_argument('-k', '--kill', required=False, default=None, nargs='?', type=bool, const=True)
+    # parser.add_argument(
+    #     "-k", "--kill", required=False, default=None, nargs="?", type=bool, const=True
+    # )
 
     args = parser.parse_args()
     config = Config.from_config_parser(CONFIG_FILE)
@@ -116,11 +118,11 @@ async def _check_status():
 
     if args.convergence:
         try:
-            from pycrystal import CRYSTOUT, CRYSTOUT_Error
             from numpy import nan
+            from pycrystal import CRYSTOUT, CRYSTOUT_Error
 
             local_parsing_ready = True
-        except:
+        except Exception:
             pass
 
     if args.view:
@@ -133,7 +135,7 @@ async def _check_status():
             ssh_user = ssh_user or config.remote.username
             print(
                 "." * 50
-                + "ID%s %s at %s@%s:%s"
+                + "ID%s %s at %s@%s:%s:%s"
                 % (
                     task.task_id,
                     task.label,
@@ -165,7 +167,7 @@ async def _check_status():
                     )
                     async with machine.sftp() as sftp:
                         await sftp.get([str(r_output)], local_calc_snippet)
-                except IOError as err:
+                except OSError:
                     continue
                 try:
                     calc = CRYSTOUT(local_calc_snippet)
@@ -223,7 +225,7 @@ async def _check_status():
 
     else:
         for task in tasks:
-            print("{}   {}".format(task.task_id, task.status.name))
+            print(f"{task.task_id}   {task.status.name}")
 
     await db.close()
 
@@ -371,11 +373,11 @@ async def _manage_node():
 
     already_there = await db.has_node(args.host)
     if already_there and not args.remove_hard and not args.remove_soft:
-        print("Host already in DB: {}".format(args.host))
+        print(f"Host already in DB: {args.host}")
         return False
 
     if not already_there and (args.remove_hard or args.remove_soft):
-        print("Host NOT in DB: {}".format(args.host))
+        print(f"Host NOT in DB: {args.host}")
         return False
 
     if args.remove_hard:
@@ -389,7 +391,7 @@ async def _manage_node():
         await db.remove_node(args.host)
         await db.commit()
         await db.close()
-        print("Removed host from yascheduler: {}".format(args.host))
+        print(f"Removed host from yascheduler: {args.host}")
         return True
 
     elif args.remove_soft:
@@ -397,11 +399,11 @@ async def _manage_node():
         if task_ids:
             print("A task associated, prevent from assigning the new tasks")
             await db.disable_node(args.host)
-            print("Prevented from assigning the new tasks: {}".format(args.host))
+            print(f"Prevented from assigning the new tasks: {args.host}")
         else:
             print("No tasks associated, remove node immediately")
             await db.remove_node(args.host)
-            print("Removed host from yascheduler: {}".format(args.host))
+            print(f"Removed host from yascheduler: {args.host}")
         await db.commit()
         await db.close()
         return True
@@ -421,7 +423,7 @@ async def _manage_node():
     await db.commit()
     await db.close()
 
-    print("Added host to yascheduler: {}".format(args.host))
+    print(f"Added host to yascheduler: {args.host}")
 
 
 def manage_node():
@@ -454,9 +456,12 @@ def daemonize(log_file=None):
 
         shielded = [current_task] if current_task else []
         for sig in [signal.SIGTERM, signal.SIGINT]:
-            handler = lambda: asyncio.create_task(
-                on_signal(yac, shielded, sig.name, sig.value)
-            )
+
+            def handler():
+                return asyncio.create_task(
+                    on_signal(yac, shielded, sig.name, sig.value)
+                )
+
             loop.add_signal_handler(sig, handler)
 
         await yac.start()

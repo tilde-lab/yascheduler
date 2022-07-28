@@ -4,7 +4,7 @@ import asyncio
 import logging
 from abc import abstractmethod
 from pathlib import Path
-from typing import Callable, Mapping, Optional, Sequence, Union, TypeVar
+from typing import Callable, Mapping, Optional, Sequence, TypeVar, Union
 
 from asyncssh.public_key import SSHKey
 from attr import define

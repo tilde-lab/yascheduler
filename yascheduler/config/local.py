@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Local configuration"""
 
 from configparser import SectionProxy
 from pathlib import Path
@@ -11,6 +12,8 @@ from .utils import _make_default_field
 
 @define(frozen=True)
 class ConfigLocal:
+    """Local configuration"""
+
     data_dir: Path = _make_default_field(Path("./data"))
     tasks_dir: Path = _make_default_field(Path("./data/tasks"))
     engines_dir: Path = _make_default_field(Path("./data/engines"))
@@ -35,11 +38,13 @@ class ConfigLocal:
     )
 
     def get_private_keys(self) -> Sequence[str]:
+        "List private key file paths"
         filepaths = filter(lambda x: x.is_file(), self.keys_dir.iterdir())
         return list(map(str, filepaths))
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigLocal":
+        "Create config from config parser's section"
         data_dir = Path(sec.get("data_dir", "./data")).resolve()
         return ConfigLocal(
             data_dir,

@@ -2,10 +2,10 @@
 
 import logging
 from pathlib import PurePosixPath
-from typing import Tuple, cast, Dict, Optional
+from typing import Dict, Optional, Tuple, cast
 
-from attrs import asdict, evolve
 from asyncssh.public_key import SSHKey
+from attrs import asdict, evolve
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import (
     AzureError,
@@ -40,9 +40,9 @@ from azure.mgmt.network.v2020_06_01.models import (
     TagsObject,
 )
 
+from ..config.cloud import AzureImageReference, ConfigCloudAzure
 from .protocols import PCloudConfig
 from .utils import get_rnd_name
-from ..config.cloud import AzureImageReference, ConfigCloudAzure
 
 # Azure SDK is too noisy
 for logger_name in [

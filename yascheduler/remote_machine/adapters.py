@@ -4,14 +4,14 @@ import shlex
 from pathlib import PurePath, PurePosixPath
 from typing import Sequence, Type
 
-from attrs import define, field, evolve
+from attrs import define, evolve, field
 
 from .checks import (
-    check_is_linux,
-    check_is_debian_like,
     check_is_debian,
-    check_is_debian_buster,
     check_is_debian_bullseye,
+    check_is_debian_buster,
+    check_is_debian_like,
+    check_is_linux,
     check_is_windows,
     check_is_windows10,
     check_is_windows11,
@@ -27,13 +27,13 @@ from .linux_methods import (
 from .protocol import (
     GetCPUCoresCallable,
     ListProcessesCallable,
-    PRemoteMachineAdapter,
     PgrepCallable,
+    PRemoteMachineAdapter,
     QuoteCallable,
-    RunCallable,
     RunBgCallable,
-    SSHCheck,
+    RunCallable,
     SetupNodeCallable,
+    SSHCheck,
 )
 from .windows_methods import (
     MyPureWindowsPath,

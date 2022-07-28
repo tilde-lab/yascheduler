@@ -10,9 +10,9 @@ from typing import Optional
 from asyncssh.public_key import SSHKey
 from upcloud_api import CloudManager, Server, Storage, login_user_block
 
+from ..config import ConfigCloudUpcloud
 from .protocols import PCloudConfig
 from .utils import get_rnd_name
-from ..config import ConfigCloudUpcloud
 
 executor = ThreadPoolExecutor(max_workers=5)
 
@@ -78,7 +78,7 @@ def upcload_delete_node_sync(
             while True:
                 try:
                     server.destroy()
-                except:
+                except Exception:
                     time.sleep(5)
                 else:
                     break

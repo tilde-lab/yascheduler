@@ -3,29 +3,21 @@
 import asyncio
 import logging
 from asyncio.locks import Event, Semaphore
-from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import PurePath
-from typing import (
-    AsyncGenerator,
-    Optional,
-    Pattern,
-    Sequence,
-    Set,
-    Type,
-    Union,
-)
+from typing import AsyncGenerator, Optional, Pattern, Sequence, Set, Type, Union
 
 import asyncssh
 import backoff
-from asyncstdlib import all as aall, map as amap
 from asyncssh.client import SSHClient
 from asyncssh.connection import SSHClientConnection, SSHClientConnectionOptions
-from asyncssh.process import SSHCompletedProcess, SSHClientProcess
+from asyncssh.process import SSHClientProcess, SSHCompletedProcess
 from asyncssh.public_key import SSHKey
 from asyncssh.sftp import SFTPClient
+from asyncstdlib import all as aall
+from asyncstdlib import map as amap
 from attrs import define, field, validators
 from typing_extensions import Self
 
@@ -160,7 +152,7 @@ class RemoteMachine(PRemoteMachine):
         jump_host: Optional[str] = None,
         jump_username: Optional[str] = None,
     ) -> "PRemoteMachine":
-        logger_name = "{}:{}@{}".format(cls.__name__, username, host)
+        logger_name = f"{cls.__name__}:{username}@{host}"
         if logger:
             log = logger.getChild(logger_name)
         else:
@@ -171,9 +163,7 @@ class RemoteMachine(PRemoteMachine):
         # asyncssh.logging.set_debug_level(2)
 
         # connection
-        tunnel = (
-            jump_host and jump_username and "{}@{}".format(jump_username, jump_host)
-        )
+        tunnel = jump_host and jump_username and f"{jump_username}@{jump_host}"
         conn_opts = SSHClientConnectionOptions()
         conn_opts.prepare(
             host=host,
@@ -204,8 +194,7 @@ class RemoteMachine(PRemoteMachine):
         adapter = None
         platforms: Sequence[str] = []
         checks: Sequence[bool] = [
-            await aall(amap(lambda y: with_limit(conn, y), x.checks))
-            for x in ADAPTERS
+            await aall(amap(lambda y: with_limit(conn, y), x.checks)) for x in ADAPTERS
         ]
 
         for candidate, check in zip(ADAPTERS, checks):
@@ -362,7 +351,7 @@ class RemoteMachine(PRemoteMachine):
         Setup node for target engines.
         :raises NotImplemented: Not supported on platform.
         """
-        self.log.info("CPUs count: {}".format(await self.get_cpu_cores()))
+        self.log.info(f"CPUs count: {await self.get_cpu_cores()}")
         my_engines = engines.filter_platforms([self.adapter.platform])
         conn = await self.get_conn()
         retry = my_backoff_exc(exception=AllSSHRetryExc)

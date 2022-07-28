@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
-from collections import deque
-from typing import Hashable, Set, Type, TypeVar, Deque, Generic
+from typing import Deque, Generic, Hashable, Set, TypeVar
 
 from attrs import define, field
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
+"""Cloud configurations"""
 
 from configparser import SectionProxy
-from pathlib import PurePath
-from typing import Mapping, Optional, Union
+from functools import partial
+from typing import Optional, Union
 
 from attrs import define, field, validators
 from typing_extensions import Self
@@ -12,11 +13,17 @@ from .utils import _make_default_field, opt_str_val
 
 def _check_az_user(_: "ConfigCloudAzure", __, value: str):
     if value == "root":
-        raise ValueError(f"Root user is forbidden on Azure")
+        raise ValueError("Root user is forbidden on Azure")
+
+
+def _fmt_key(prefix: str, name: str):
+    return f"{prefix}_{name}"
 
 
 @define(frozen=True)
 class AzureImageReference:
+    """Azure's image reference"""
+
     publisher: str = field(default="Debian")
     offer: str = field(default="debian-11-daily")
     sku: str = field(default="11-backports-gen2")
@@ -24,10 +31,11 @@ class AzureImageReference:
 
     @classmethod
     def from_urn(cls, urn: str) -> Self:
+        "Create image reference from urn in forma `publisher:offer:sku:version'"
         parts = urn.split(":", maxsplit=4)
         if len(parts) < 4:
             raise ValueError(
-                f"`Image reference URN should be in format publisher:offer:sku:version"
+                "`Image reference URN should be in format publisher:offer:sku:version"
             )
 
         return cls(*parts)
@@ -35,6 +43,8 @@ class AzureImageReference:
 
 @define(frozen=True)
 class ConfigCloudAzure:
+    """Azure cloud configuration"""
+
     prefix = "az"
     tenant_id: str = field(validator=validators.instance_of(str))
     client_id: str = field(validator=validators.instance_of(str))
@@ -58,7 +68,9 @@ class ConfigCloudAzure:
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudAzure":
-        fmt = lambda x: f"{cls.prefix}_{x}"
+        "Create config from config parser's section"
+
+        fmt = partial(_fmt_key, cls.prefix)
 
         vm_image = sec.get(fmt("image"))
         image_ref = None
@@ -88,6 +100,8 @@ class ConfigCloudAzure:
 
 @define(frozen=True)
 class ConfigCloudHetzner:
+    """Hetzner cloud configuration"""
+
     prefix = "hetzner"
     token: str = field(validator=validators.instance_of(str))
     max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(1)])
@@ -101,7 +115,8 @@ class ConfigCloudHetzner:
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudHetzner":
-        fmt = lambda x: f"{cls.prefix}_{x}"
+        "Create config from config parser's section"
+        fmt = partial(_fmt_key, cls.prefix)
         return cls(
             token=sec.get(fmt("token")),
             max_nodes=sec.getint(fmt("max_nodes")),
@@ -117,6 +132,8 @@ class ConfigCloudHetzner:
 
 @define(frozen=True)
 class ConfigCloudUpcloud:
+    """Upcloud cloud configuration"""
+
     prefix = "upcloud"
     login: str = field(validator=validators.instance_of(str))
     password: str = field(validator=validators.instance_of(str))
@@ -129,7 +146,8 @@ class ConfigCloudUpcloud:
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudUpcloud":
-        fmt = lambda x: f"{cls.prefix}_{x}"
+        "Create config from config parser's section"
+        fmt = partial(_fmt_key, cls.prefix)
         return cls(
             login=sec.get(fmt("login")),
             password=sec.get(fmt("password")),

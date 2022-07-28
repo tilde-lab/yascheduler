@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, unique
-from typing import Any, List, Mapping, Optional, cast, Sequence
+from typing import Any, List, Mapping, Optional, Sequence, cast
 
 import backoff
 from attrs import asdict, define, field

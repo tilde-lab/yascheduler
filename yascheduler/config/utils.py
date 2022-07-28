@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
+"""Config helper utilities"""
 
 from typing import Optional, Sequence
 
 from attrs import converters, field, validators
-
 
 opt_str_val = validators.optional(validators.instance_of(str))
 

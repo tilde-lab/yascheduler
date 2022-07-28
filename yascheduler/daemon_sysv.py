@@ -2,10 +2,12 @@
 """
 SystemV Daemon functions
 """
-import os
 import argparse
+import os
+
 import daemon
 from daemon import pidfile
+
 from yascheduler import LOG_FILE, PID_FILE
 from yascheduler.utils import daemonize
 

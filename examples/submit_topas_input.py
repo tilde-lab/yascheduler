@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
+"""Submit TOPAS task"""
 
 from yascheduler import Yascheduler
 
+LABEL = "SrTiO3 XRPD pattern"
 
-label = "SrTiO3 XRPD pattern"
-
-pattern_request = """
+PATTERN_REQUEST = """
 iters 0
 yobs_eqn !x = 0; min 10 max 175 del 0.1
 
@@ -28,6 +28,6 @@ site Ti  x  0.00000  y  0.00000  z  0.00000  occ Ti  1  beq  1
 
 
 yac = Yascheduler()
-result = yac.queue_submit_task(label, {"calc.inp": pattern_request}, "topas")
-print(label)
+result = yac.queue_submit_task(LABEL, {"calc.inp": PATTERN_REQUEST}, "topas")
+print(LABEL)
 print(result)

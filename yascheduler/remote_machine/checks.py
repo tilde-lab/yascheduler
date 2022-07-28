@@ -2,8 +2,8 @@
 
 from typing import Optional, Tuple
 
-from asyncstdlib import lru_cache
 from asyncssh.connection import SSHClientConnection
+from asyncstdlib import lru_cache
 
 
 @lru_cache

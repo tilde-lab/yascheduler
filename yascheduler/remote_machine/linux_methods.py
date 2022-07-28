@@ -8,14 +8,9 @@ from typing import AsyncGenerator, Optional, Pattern, Sequence, Union
 from asyncssh.connection import SSHClientConnection
 from asyncssh.sftp import SFTPClient
 
-from .common import ProcessInfo
-from .protocol import (
-    OuterRunCallable,
-    PEngineRepository,
-    PProcessInfo,
-    QuoteCallable,
-)
 from ..config import LocalArchiveDeploy, LocalFilesDeploy, RemoteArchiveDeploy
+from .common import ProcessInfo
+from .protocol import OuterRunCallable, PEngineRepository, PProcessInfo, QuoteCallable
 
 
 async def linux_get_cpu_cores(run: OuterRunCallable) -> int:
@@ -26,7 +21,7 @@ async def linux_get_cpu_cores(run: OuterRunCallable) -> int:
     r = await run("getconf NPROCESSORS_ONLN 2> /dev/null || getconf _NPROCESSORS_ONLN")
     try:
         return int(r.stdout and r.stdout.strip() or "1")
-    except:
+    except ValueError:
         return 1
 
 
@@ -42,7 +37,7 @@ async def linux_list_processes(
     if query:
         ps_cmd = " ".join([query, "| xargs --no-run-if-empty ps -o", columns_part])
     else:
-        ps_cmd = "ps -eo {}".format(columns_part)
+        ps_cmd = f"ps -eo {columns_part}"
     async with conn.create_process(ps_cmd) as proc:
         await proc.stdout.readline()  # skip headers
         async for line in proc.stdout:

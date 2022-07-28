@@ -5,9 +5,9 @@ import logging
 from collections import UserDict
 from datetime import timedelta
 from operator import itemgetter
-from typing import Callable, MutableMapping, Set, Sequence, Optional
+from typing import Callable, MutableMapping, Optional, Sequence, Set
 
-from attrs import define, field, evolve
+from attrs import define, evolve, field
 from typing_extensions import Self
 
 from .protocol import PRemoteMachine

@@ -3,27 +3,30 @@ A setuptools script for yet another scheduler
 """
 
 import atexit
+import json
 import os
-import sys
 import shutil
 import stat
-import json
-from setuptools import setup, find_packages
+import sys
+
+from setuptools import find_packages, setup
 from setuptools.command.install import install
 
-from yascheduler import __version__, CONFIG_FILE
+from yascheduler import CONFIG_FILE, __version__
 
-
-package_name = "yascheduler"  # NB must be the same in setup.json
+PACKAGE_NAME = "yascheduler"  # NB must be the same in setup.json
 
 
 class CustomInstall(install):
+    """Custom install"""
+
     def run(self):
         def _post_install():
             def find_module_path():
-                for p in sys.path:
-                    if os.path.isdir(p) and package_name in os.listdir(p):
-                        return os.path.join(p, package_name)
+                for path in sys.path:
+                    if os.path.isdir(path) and PACKAGE_NAME in os.listdir(path):
+                        return os.path.join(path, PACKAGE_NAME)
+                return PACKAGE_NAME
 
             install_path = find_module_path()
             src_config = os.path.join(install_path, "data/yascheduler.conf")
@@ -39,7 +42,7 @@ class CustomInstall(install):
                 target = os.path.join(install_path, "scheduler.py")
                 os.chmod(target, os.stat(target).st_mode | stat.S_IEXEC)
                 os.symlink(target, "/usr/bin/yascheduler")
-            except Exception:
+            except OSError:
                 pass
 
         atexit.register(_post_install)
@@ -48,10 +51,10 @@ class CustomInstall(install):
 
 if __name__ == "__main__":
 
-    with open("setup.json", "r") as info:
+    with open("setup.json", encoding="utf-8") as info:
         kwargs = json.load(info)
 
-    with open("requirements.txt") as f:
+    with open("requirements.txt", encoding="utf-8") as f:
         requirements = f.read().splitlines()
 
     setup(
@@ -59,5 +62,5 @@ if __name__ == "__main__":
         packages=find_packages(),
         install_requires=requirements,
         cmdclass={"install": CustomInstall},
-        **kwargs
+        **kwargs,
     )
