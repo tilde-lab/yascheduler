@@ -1,43 +1,39 @@
 {
-    "name": "yascheduler",
-    "author": "Sergey Korolev, Evgeny Blokhin, Andrey Sobolev",
-    "author_email": "eb@tilde.pro",
-    "description": "Yet another computing scheduler and cloud orchestration engine",
-    "long_description": "*Yascheduler* is a job scheduler designed for submitting scientific simulations to the VM clouds and copying back their results.",
-    "license": "MIT",
-    "url": "https://github.com/tilde-lab/yascheduler",
-    "package_data": {
-        "yascheduler": [
-            "data/*"
-        ]
-    },
-    "entry_points": {
-        "console_scripts": [
-            "yascheduler = yascheduler.utils:daemonize",
-            "yasubmit = yascheduler.utils:submit",
-            "yastatus = yascheduler.utils:check_status",
-            "yanodes = yascheduler.utils:show_nodes",
-            "yasetnode = yascheduler.utils:manage_node",
-            "yainit = yascheduler.utils:init"
-        ],
-        "aiida.schedulers": [
-            "yascheduler = yascheduler.aiida_plugin:YaScheduler"
-        ]
-    },
-    "python_requires": ">=3.7",
-    "classifiers": [
-        "Development Status :: 4 - Beta",
-        "Intended Audience :: Science/Research",
-        "Topic :: Scientific/Engineering :: Chemistry",
-        "Topic :: Scientific/Engineering :: Physics",
-        "Topic :: Scientific/Engineering :: Information Analysis",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Framework :: AiiDA"
-    ]
+  "name": "yascheduler",
+  "author": "Sergey Korolev, Evgeny Blokhin, Andrey Sobolev",
+  "author_email": "eb@tilde.pro",
+  "description": "Yet another computing scheduler and cloud orchestration engine",
+  "long_description": "*Yascheduler* is a job scheduler designed for submitting scientific simulations to the VM clouds and copying back their results.",
+  "license": "MIT",
+  "url": "https://github.com/tilde-lab/yascheduler",
+  "package_data": {
+    "yascheduler": ["data/*"]
+  },
+  "entry_points": {
+    "console_scripts": [
+      "yascheduler = yascheduler.utils:daemonize",
+      "yasubmit = yascheduler.utils:submit",
+      "yastatus = yascheduler.utils:check_status",
+      "yanodes = yascheduler.utils:show_nodes",
+      "yasetnode = yascheduler.utils:manage_node",
+      "yainit = yascheduler.utils:init"
+    ],
+    "aiida.schedulers": ["yascheduler = yascheduler.aiida_plugin:YaScheduler"]
+  },
+  "python_requires": ">=3.7",
+  "classifiers": [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Framework :: AiiDA"
+  ]
 }
