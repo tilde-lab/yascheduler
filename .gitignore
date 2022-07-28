@@ -130,3 +130,6 @@ example/
 
 # working files
 /aiida
+
+# node modules
+node_modules
