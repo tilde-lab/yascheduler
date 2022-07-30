@@ -78,3 +78,7 @@ class Yascheduler:
             return []
 
         return [asdict(t) for t in tasks]
+
+    def queue_get_task(self, task_id: int) -> Optional[Mapping[str, Any]]:
+        for task_dict in self.queue_get_tasks(jobs=[task_id]):
+            return task_dict
