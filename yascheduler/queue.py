@@ -20,10 +20,10 @@ class UniqueQueue(asyncio.Queue, Generic[TUMsgId, TUMsgPayload]):
     _queue: Deque[UMessage[TUMsgId, TUMsgPayload]]
     _done_pending: Set[UMessage[TUMsgId, TUMsgPayload]]
 
-    def __init__(self, name: str, maxsize: int = 0, *argv, loop=None):
+    def __init__(self, name: str, maxsize: int = 0, *argv, **kwargs):
         self.name = name
         self._done_pending = set()
-        super().__init__(maxsize, *argv, loop=loop)
+        super().__init__(maxsize, *argv, **kwargs)
 
     def _get(self):
         item = self._queue.popleft()
