@@ -67,7 +67,7 @@ class Yascheduler:
             return await db.get_tasks_by_status(statuses)
 
         async def fn_get_by_ids(ids: Sequence[int]):
-            db = await DB.create(self._cfg.db)
+            db = await DB.create(self.config.db)
             return await db.get_tasks_by_jobs(ids)
 
         if status:
