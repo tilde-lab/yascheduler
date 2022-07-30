@@ -12,8 +12,6 @@ import sys
 from setuptools import find_packages, setup
 from setuptools.command.install import install
 
-from yascheduler import CONFIG_FILE, __version__
-
 PACKAGE_NAME = "yascheduler"  # NB must be the same in setup.json
 
 
@@ -22,6 +20,8 @@ class CustomInstall(install):
 
     def run(self):
         def _post_install():
+            from yascheduler.variables import CONFIG_FILE
+
             def find_module_path():
                 for path in sys.path:
                     if os.path.isdir(path) and PACKAGE_NAME in os.listdir(path):
@@ -58,7 +58,6 @@ if __name__ == "__main__":
         requirements = f.read().splitlines()
 
     setup(
-        version=__version__,
         packages=find_packages(),
         install_requires=requirements,
         cmdclass={"install": CustomInstall},
