@@ -125,7 +125,7 @@ class Scheduler:
             clouds=clouds,
             log=log,
             remote_machines=RemoteMachineRepository(log=log),
-            sleep_interval=min(*[x.sleep_interval for x in cfg.engines.values()]),
+            sleep_interval=min([x.sleep_interval for x in cfg.engines.values()]),
         )
 
     async def clouds_get_capacity(self) -> int:

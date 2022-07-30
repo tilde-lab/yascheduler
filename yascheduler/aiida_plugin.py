@@ -9,9 +9,9 @@ from aiida.orm import load_node
 
 
 _MAP_STATUS_YASCHEDULER = {
-    "QUEUED": JobState.QUEUED,
+    "TO_DO": JobState.QUEUED,
     "RUNNING": JobState.RUNNING,
-    "FINISHED": JobState.DONE,
+    "DONE": JobState.DONE,
 }
 _CMD_PREFIX = ""  # NB under virtualenv, this should refer to virtualenv's /bin/
 
