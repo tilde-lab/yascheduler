@@ -9,11 +9,11 @@ from typing import Mapping, Optional, Sequence, Set, Union
 from attrs import define, field
 from typing_extensions import Self
 
-from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
-from .cloud_api import CloudAPI
-from .protocols import CloudCapacity, PCloudAPIManager, PCloudAPI
 from ..config import ConfigCloud, ConfigLocal, EngineRepository
 from ..db import DB
+from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
+from .cloud_api import CloudAPI
+from .protocols import CloudCapacity, PCloudAPI, PCloudAPIManager
 
 
 @define(frozen=True)
@@ -155,7 +155,7 @@ class CloudAPIManager(PCloudAPIManager):
         finally:
             if on_task:
                 self.mark_task_done(on_task)
-            return
+        return
 
     async def deallocate(self, ip: str):
         node = await self.db.get_node(ip)

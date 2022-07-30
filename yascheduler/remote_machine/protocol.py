@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from abc import abstractmethod
-from datetime import timedelta
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import PurePath
 from typing import (
     Any,
@@ -22,16 +22,6 @@ from typing import (
 )
 
 from asyncssh.connection import SSHClientConnection
-from asyncssh.process import SSHClientProcess, SSHCompletedProcess
-from asyncssh.sftp import (
-    SFTPBadMessage,
-    SFTPClient,
-    SFTPConnectionLost,
-    SFTPError,
-    SFTPFailure,
-    SFTPInvalidHandle,
-    SFTPNoConnection,
-)
 from asyncssh.misc import (
     ChannelListenError,
     ChannelOpenError,
@@ -42,7 +32,17 @@ from asyncssh.misc import (
     ProtocolError,
     ServiceNotAvailable,
 )
-from typing_extensions import Protocol, Unpack, TypedDict, Self
+from asyncssh.process import SSHClientProcess, SSHCompletedProcess
+from asyncssh.sftp import (
+    SFTPBadMessage,
+    SFTPClient,
+    SFTPConnectionLost,
+    SFTPError,
+    SFTPFailure,
+    SFTPInvalidHandle,
+    SFTPNoConnection,
+)
+from typing_extensions import Protocol, Self, TypedDict, Unpack
 
 SFTPRetryExc = (
     SFTPError,
@@ -114,7 +114,7 @@ class RunCallable(Protocol):
         command: str,
         *args,
         cwd: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> Coroutine[Any, Any, SSHCompletedProcess]:
         pass
 
@@ -128,7 +128,7 @@ class RunBgCallable(Protocol):
         command: str,
         *args,
         cwd: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> Coroutine[Any, Any, SSHClientProcess]:
         pass
 

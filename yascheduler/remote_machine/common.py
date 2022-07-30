@@ -4,7 +4,7 @@ from subprocess import DEVNULL
 from typing import Optional
 
 from asyncssh.connection import SSHClientConnection
-from asyncssh.process import SSHCompletedProcess, SSHClientProcess
+from asyncssh.process import SSHClientProcess, SSHCompletedProcess
 from attrs import define
 
 from .protocol import QuoteCallable
@@ -30,7 +30,7 @@ async def run(
     :raises asyncssh.Error: An SSH error has occurred.
     """
     if cwd:
-        command = "cd {}; {}".format(quote(cwd), command)
+        command = f"cd {quote(cwd)}; {command}"
     return await conn.run(command, *args, **kwargs)
 
 
@@ -47,7 +47,7 @@ async def run_bg(
     :raises asyncssh.ChannelOpenError: An SSH error has occurred.
     """
     if cwd:
-        command = "cd {}; {}".format(quote(cwd), command)
+        command = f"cd {quote(cwd)}; {command}"
     return await conn.create_process(
         command, *args, **kwargs, stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL
     )

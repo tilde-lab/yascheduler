@@ -4,9 +4,8 @@ with respect to the supported yascheduler engines
 """
 
 import aiida.schedulers
-from aiida.schedulers.datastructures import JobState, JobInfo, NodeNumberJobResource
 from aiida.orm import load_node
-
+from aiida.schedulers.datastructures import JobInfo, JobState, NodeNumberJobResource
 
 _MAP_STATUS_YASCHEDULER = {
     "TO_DO": JobState.QUEUED,
@@ -18,7 +17,7 @@ _CMD_PREFIX = ""  # NB under virtualenv, this should refer to virtualenv's /bin/
 
 class YaschedJobResource(NodeNumberJobResource):
     def __init__(self, *_, **kwargs):
-        super(YaschedJobResource, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
 
 class YaScheduler(aiida.schedulers.Scheduler):
@@ -44,7 +43,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
 
         if user:
             raise FeatureNotAvailable("Cannot query by user in Yascheduler")
-        command = ["{}yastatus".format(_CMD_PREFIX)]
+        command = [f"{_CMD_PREFIX}yastatus"]
         # make list from job ids (taken from slurm scheduler)
         if jobs:
             joblist = []
@@ -64,7 +63,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         Return the command to run to get the detailed information on a job,
         even after the job has finished.
         """
-        return "{}yastatus --jobs {}".format(_CMD_PREFIX, jobid)
+        return f"{_CMD_PREFIX}yastatus --jobs {jobid}"
 
     def _get_submit_script_header(self, job_tmpl):
         """
@@ -78,16 +77,16 @@ class YaScheduler(aiida.schedulers.Scheduler):
 
         # We map the lowercase code labels onto yascheduler engines,
         # so that the required input file(s) can be deduced
-        lines = ["ENGINE={}".format(aiida_node.inputs.code.label.lower())]
-        lines.append("PARENT={}".format(aiida_node.caller.uuid))
-        lines.append("LABEL={}".format(job_tmpl.job_name))
+        lines = [f"ENGINE={aiida_node.inputs.code.label.lower()}"]
+        lines.append(f"PARENT={aiida_node.caller.uuid}")
+        lines.append(f"LABEL={job_tmpl.job_name}")
         return "\n".join(lines)
 
     def _get_submit_command(self, submit_script):
         """
         Return the string to execute to submit a given script.
         """
-        return "{}yasubmit {}".format(_CMD_PREFIX, submit_script)
+        return f"{_CMD_PREFIX}yasubmit {submit_script}"
 
     def _parse_submit_output(self, retval, stdout, stderr):
         """
@@ -95,7 +94,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         command returned by _get_submit_command command.
         """
         if stderr.strip():
-            self.logger.warning("Stderr when submitting: {}".format(stderr.strip()))
+            self.logger.warning(f"Stderr when submitting: {stderr.strip()}")
 
         output = stdout.strip()
 
@@ -117,9 +116,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         each relevant parameters implemented.
         """
         if stderr.strip():
-            self.logger.warning(
-                "Stderr when parsing joblist: {}".format(stderr.strip())
-            )
+            self.logger.warning(f"Stderr when parsing joblist: {stderr.strip()}")
         job_list = [job.split() for job in stdout.split("\n") if job]
         job_infos = []
         for job_id, status in job_list:

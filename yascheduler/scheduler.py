@@ -23,23 +23,22 @@ import aiohttp
 import asyncssh
 import backoff
 from asyncssh.sftp import SFTPClient
-from attrs import asdict, define, field, evolve
+from attrs import asdict, define, evolve, field
 from typing_extensions import Self
 
-
 from .clouds import CloudAPIManager, PCloudAPIManager
-from .variables import CONFIG_FILE
+from .config import Config, Engine
 from .db import DB, NodeModel, TaskModel, TaskStatus
+from .queue import TUMsgId, TUMsgPayload, UMessage, UniqueQueue
 from .remote_machine import (
-    PRemoteMachine,
-    RemoteMachineRepository,
-    RemoteMachine,
-    SFTPRetryExc,
     AllSSHRetryExc,
+    PRemoteMachine,
+    RemoteMachine,
+    RemoteMachineRepository,
+    SFTPRetryExc,
 )
 from .time import asleep_until
-from .config import Config, Engine
-from .queue import UniqueQueue, UMessage, TUMsgId, TUMsgPayload
+from .variables import CONFIG_FILE
 
 logging.basicConfig(level=logging.INFO)
 
@@ -125,14 +124,14 @@ class Scheduler:
             clouds=clouds,
             log=log,
             remote_machines=RemoteMachineRepository(log=log),
-            sleep_interval=min([x.sleep_interval for x in cfg.engines.values()]),
+            sleep_interval=min(x.sleep_interval for x in cfg.engines.values()),
         )
 
     async def clouds_get_capacity(self) -> int:
         "Get capacity of all clouds"
         ccap = await self.clouds.get_capacity()
-        n_busy_cloud_nodes = sum([x.current for x in ccap.values()])
-        max_nodes = sum([x.config.max_nodes for x in self.clouds.apis.values()])
+        n_busy_cloud_nodes = sum(x.current for x in ccap.values())
+        max_nodes = sum(x.config.max_nodes for x in self.clouds.apis.values())
         diff = max_nodes - n_busy_cloud_nodes
         return max(0, diff)
 
@@ -408,7 +407,7 @@ class Scheduler:
                 self.deallocate_q,
                 self.consume_q,
             ]
-            qmsgs = ["{}: {}/{}".format(q.name, q.psize(), q.qsize()) for q in queues]
+            qmsgs = [f"{q.name}: {q.psize()}/{q.qsize()}" for q in queues]
             self.log.info("QUEUES: %s" % " ".join(qmsgs))
             await asleep_until(end_time)
 
@@ -451,11 +450,9 @@ class Scheduler:
                 jump_host=jump_host,
             )
         except asyncssh.misc.Error as err:
-            self.log.error("Can't connect to machine with error: {}".format(err))
+            self.log.error(f"Can't connect to machine with error: {err}")
         except Exception as err:
-            self.log.error(
-                "An error occuried on remote machine creation: {}".format(err)
-            )
+            self.log.error(f"An error occuried on remote machine creation: {err}")
 
     async def allocator_producer(
         self,

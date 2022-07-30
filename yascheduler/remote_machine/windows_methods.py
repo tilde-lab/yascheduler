@@ -10,9 +10,9 @@ from typing import AsyncGenerator, Optional, Pattern, Sequence, Union
 from asyncssh.connection import SSHClientConnection
 from asyncssh.sftp import SFTPClient
 
+from ..config import LocalArchiveDeploy, LocalFilesDeploy, RemoteArchiveDeploy
 from .common import ProcessInfo
 from .protocol import OuterRunCallable, PEngineRepository, PProcessInfo, QuoteCallable
-from ..config import LocalArchiveDeploy, LocalFilesDeploy, RemoteArchiveDeploy
 
 
 class MyPureWindowsPath(PureWindowsPath):
@@ -42,7 +42,7 @@ async def windows_get_cpu_cores(run: OuterRunCallable) -> int:
     res = await run("[environment]::ProcessorCount")
     try:
         return int(res.stdout and res.stdout.strip() or "1")
-    except:
+    except ValueError:
         return 1
 
 
@@ -53,7 +53,7 @@ async def windows_list_processes(
     Returns information about all running processes
     :raises asyncssh.Error: An SSH error has occurred.
     """
-    where_pipe_cmd = "| ?{{ {cmd} }}".format(cmd=query) if query else ""
+    where_pipe_cmd = f"| ?{{ {query} }}" if query else ""
     get_process_cmd = f"Get-CimInstance Win32_Process {where_pipe_cmd}"
     inline_obj = "@{'pid' = $_.ProcessId; 'name' = $_.Name; 'command' = $_.CommandLine}"
     for_each_cmd = f"%{{ {inline_obj} | ConvertTo-Json -compress }}"
@@ -74,7 +74,7 @@ async def windows_list_processes(
                 ):
                     continue
                 yield ProcessInfo(**data)
-            except:
+            except Exception:
                 continue
 
 

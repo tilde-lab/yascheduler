@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Database configuration"""
 
 from configparser import SectionProxy
 
@@ -9,6 +10,8 @@ from .utils import _make_default_field
 
 @define(frozen=True)
 class ConfigDb:
+    """Database configuration"""
+
     user: str = _make_default_field("yascheduler")
     password: str = _make_default_field("password")
     database: str = _make_default_field("database")
@@ -17,6 +20,7 @@ class ConfigDb:
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigDb":
+        "Create config from config parser's section"
         return cls(
             sec.get("user"),
             sec.get("password"),

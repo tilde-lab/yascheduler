@@ -1,0 +1,71 @@
+---
+# yamllint disable rule:line-length
+name: Lint Code Base
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [master, main]
+
+jobs:
+  lint:
+    name: Lint Code Base
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Fetch git base ref
+        run: |
+          git fetch --depth=1 \
+            origin +${{ github.base_ref ||  github.event.repository.default_branch }}
+
+      - name: Get npm cache directory
+        id: npm-cache-dir
+        run: echo "::set-output name=dir::$(npm config get cache)"
+
+      - name: npm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          key: ${{ runner.os }}-node-${{ hashFiles('.github/workflows/linter.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install node tools
+        run: npm i --silent -g markdownlint-cli@0.31.1
+
+      - uses: mfinelli/setup-shfmt@v1
+        with:
+          shfmt-version: 3.5.0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.7"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install pip deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: pre-commit cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ env.pythonLocation }}-
+
+      - name: Run pre-commit
+        run: |
+          git branch
+          pre-commit run --show-diff-on-failure --color=always \
+            --from-ref ${{ format('remotes/origin/{0}', github.base_ref || github.event.repository.default_branch) }} \
+            --to-ref ${{ github.sha }}

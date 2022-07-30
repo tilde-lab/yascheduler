@@ -5,10 +5,11 @@
 **Yascheduler** is a simple job scheduler designed for submitting scientific
 calculations and copying back the results from the computing clouds.
 
-Currently it supports several scientific simulation codes in chemistry and solid state physics.
-Any other scientific simulation code can be supported via the declarative control template
-system (see `yascheduler.conf` settings file). An example dummy C++ code with its
-configuration template is included.
+Currently it supports several scientific simulation codes in chemistry
+and solid state physics.
+Any other scientific simulation code can be supported via the declarative
+control template system (see `yascheduler.conf` settings file).
+An example dummy C++ code with its configuration template is included.
 
 ## Installation
 
@@ -16,7 +17,7 @@ Use `pip` and PyPI: `pip install yascheduler`.
 
 The last updates and bugfixes can be obtained cloning the repository:
 
-```
+```sh
 git clone https://github.com/tilde-lab/yascheduler.git
 pip install yascheduler/
 ```
@@ -361,7 +362,8 @@ Settings prefix is `upcloud`.
 #### Engines `[engine.*]`
 
 Supported engines should be defined in the section(s) `[engine.name]`.
-The name is alphanumeric string to represent the real engine name. Once set, it cannot be changed later.
+The name is alphanumeric string to represent the real engine name.
+Once set, it cannot be changed later.
 
 - `platforms`
 
@@ -405,7 +407,14 @@ The name is alphanumeric string to represent the real engine name. Once set, it 
 
   _Example_: `https://example.org/dummyengine.tar.gz`
 
-  _Example_: `cp {task_path}/INPUT OUTPUT && mpirun -np {ncpus} --allow-run-as-root -wd {task_path} {engine_path}/Pcrystal >> OUTPUT 2>&1`
+  _Example_:
+
+  ```sh
+  cp {task_path}/INPUT OUTPUT && mpirun -np {ncpus} --allow-run-as-root \
+    -wd {task_path} {engine_path}/Pcrystal >> OUTPUT 2>&1
+
+  ```
+
   _Example_: `{engine_path}/gulp < INPUT > OUTPUT`
 
 - `check_pname`
@@ -455,7 +464,7 @@ The name is alphanumeric string to represent the real engine name. Once set, it 
 See the detailed instructions for the [MPDS-AiiDA-CRYSTAL workflows][mpds-aiida]
 as well as the [ansible-mpds][ansible-aiida] repository. In essence:
 
-```
+```sh
 ssh aiidauser@localhost # important
 reentry scan
 verdi computer setup
