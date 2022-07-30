@@ -137,7 +137,7 @@ class ConfigCloudUpcloud:
     prefix = "upcloud"
     login: str = field(validator=validators.instance_of(str))
     password: str = field(validator=validators.instance_of(str))
-    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(1)])
+    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
     username: str = _make_default_field("root")
     priority: int = _make_default_field(0)
     idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])

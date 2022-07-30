@@ -42,6 +42,9 @@ class CloudAPIManager(PCloudAPIManager):
         adapters = [azure_adapter, hetzner_adapter, upcloud_adapter]
         apis: Mapping[str, PCloudAPI] = {}
         for cfg in cloud_configs:
+            if cfg.max_nodes <= 0:
+                log.debug(f"Cloud {cfg.prefix} is skipped because of <1 max nodes")
+                continue
             for adapter in filter(lambda x: x.name == cfg.prefix, adapters):
                 apis[adapter.name] = await CloudAPI.create(
                     adapter=adapter,

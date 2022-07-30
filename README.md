@@ -235,6 +235,7 @@ These settings are common to all the providers:
 - `*_max_nodes`
 
   The maximum number of nodes for a given provider.
+  The provider is not used if the value is less than 1.
 
 - `*_user`
 
