@@ -293,7 +293,7 @@ def _init_sysv(install_path: Path):
 async def _init_db(install_path: Path):
     # database initialization
     config = Config.from_config_parser(CONFIG_FILE)
-    db = await DB.create(config.db)
+    db = await DB.create(config.db, automigrate=False)
     schema = (install_path / "data" / "schema.sql").read_text()
     try:
         await db.run(schema)

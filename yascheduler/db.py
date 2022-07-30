@@ -61,12 +61,13 @@ class DB:
         )
 
     @classmethod
-    async def create(cls, config: ConfigDb) -> Self:
+    async def create(cls, config: ConfigDb, automigrate=True) -> Self:
         loop = asyncio.get_running_loop()
         exe = ThreadPoolExecutor(max_workers=1)  # pg8000 is not thread safe
         conn = await loop.run_in_executor(exe, cls.create_connection, config)
         ins = cls(loop=loop, executor=exe, conn=conn)
-        await ins.migrate()
+        if automigrate:
+            await ins.migrate()
         return ins
 
     async def run(self, sql: str, **params):
