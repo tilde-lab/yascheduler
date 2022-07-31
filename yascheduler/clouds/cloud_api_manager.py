@@ -135,8 +135,12 @@ class CloudAPIManager(PCloudAPIManager):
 
             tmp_ip = await self.db.add_tmp_node(api.name, api.config.username)
             await self.db.commit()
-        ip = await api.create_node()
-        await self.db.remove_node(tmp_ip)
+        try:
+            ip = await api.create_node()
+        finally:
+            await self.db.remove_node(tmp_ip)
+            await self.db.commit()
+
         await self.db.add_node(ip, api.config.username, None, api.name, True)
         await self.db.commit()
         return ip
