@@ -352,14 +352,13 @@ class RemoteMachine(PRemoteMachine):
         :raises NotImplemented: Not supported on platform.
         """
         self.log.info(f"CPUs count: {await self.get_cpu_cores()}")
-        my_engines = engines.filter_platforms([self.adapter.platform])
         conn = await self.get_conn()
         retry = my_backoff_exc(exception=AllSSHRetryExc)
         await retry(self.adapter.setup_node)(
             conn=conn,
             run=self.run,
             quote=self.quote,
-            engines=my_engines,
+            engines=engines,
             engines_dir=self.engines_dir,
             log=self.log,
         )
