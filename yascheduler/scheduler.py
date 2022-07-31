@@ -146,13 +146,26 @@ class Scheduler:
         async with self.webhook_sem:
             self.log.info(f"Executing webhook to {url}")
             payload = WebhookPayload(
-                task_id, status, metadata.get("webhook_custom_params", {})
+                task_id, status.value, metadata.get("webhook_custom_params", {})
             )
             try:
-                async with retry(self.http.post)(url, data=asdict(payload)):
-                    pass
+                async with retry(self.http.post)(url, data=asdict(payload)) as resp:
+                    if resp.ok:
+                        return
+                    self.log.warn(
+                        "Webhook for task_id=%s bad response: %s %s",
+                        task_id,
+                        resp.status,
+                        resp.reason,
+                    )
+                    if self.log.isEnabledFor(logging.DEBUG):
+                        self.log.debug(
+                            "Webhook for task_id=%s response: %s",
+                            task_id,
+                            (await resp.text("utf-8")),
+                        )
             except Exception as err:
-                self.log.error(f"Webhook for task_id={task_id} failed: {err}")
+                self.log.error("Webhook for task_id=%s failed: %s", task_id, err)
 
     async def create_new_task(
         self,
