@@ -263,9 +263,7 @@ class Scheduler:
                         root_dir / self.config.remote.engines_dir / engine.name
                     )
                 # upload files
-                await self.upload_task_data(
-                    sftp, task, task_dir.relative_to(root_dir), engine.input_files
-                )
+                await self.upload_task_data(sftp, task, task_dir, engine.input_files)
             except Exception as err:
                 self.log.error(f"Can't upload task_id={task.task_id} files: {err}")
                 raise err
