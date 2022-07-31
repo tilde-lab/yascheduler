@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Upcloud cloud methods"""
 
 import asyncio
 import logging
@@ -17,8 +17,9 @@ from .utils import get_rnd_name
 executor = ThreadPoolExecutor(max_workers=5)
 
 
-@lru_cache()
+@lru_cache(maxsize=None)
 def get_client(cfg: ConfigCloudUpcloud) -> CloudManager:
+    """Get Upcloud client"""
     client = CloudManager(cfg.login, cfg.password)
     client.authenticate()
     return client
@@ -30,6 +31,7 @@ def upcloud_create_node_sync(
     key: SSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
+    """Create node"""
     client = get_client(cfg)
 
     login_user = login_user_block(
@@ -48,9 +50,9 @@ def upcloud_create_node_sync(
             user_data=cloud_config.render() if cloud_config else None,
         )
     )
-    ip = server.get_public_ip()
-    log.info("CREATED %s" % ip)
-    return ip
+    ip_addr = server.get_public_ip()
+    log.info("CREATED %s", ip_addr)
+    return ip_addr
 
 
 async def upcloud_create_node(
@@ -59,6 +61,7 @@ async def upcloud_create_node(
     key: SSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
+    """Create node"""
     return await asyncio.get_running_loop().run_in_executor(
         executor, upcloud_create_node_sync, log, cfg, key, cloud_config
     )
@@ -69,6 +72,7 @@ def upcload_delete_node_sync(
     cfg: ConfigCloudUpcloud,
     host: str,
 ):
+    """Delete node"""
     client = get_client(cfg)
     for server in client.get_servers():
         if server.get_public_ip() == host:
@@ -84,10 +88,10 @@ def upcload_delete_node_sync(
                     break
             for storage in server.storage_devices:
                 storage.destroy()
-            log.info("DELETED %s" % host)
+            log.info("DELETED %s", host)
             break
     else:
-        log.info("NODE %s NOT DELETED AS UNKNOWN" % host)
+        log.info("NODE %s NOT DELETED AS UNKNOWN", host)
 
 
 async def upcload_delete_node(
@@ -95,6 +99,7 @@ async def upcload_delete_node(
     cfg: ConfigCloudUpcloud,
     host: str,
 ):
+    """Delete node"""
     return await asyncio.get_running_loop().run_in_executor(
         executor, upcload_delete_node_sync, log, cfg, host
     )

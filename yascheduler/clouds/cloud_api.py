@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Cloud API module"""
 
 import asyncio
 import base64
@@ -11,22 +11,23 @@ from attrs import asdict, define, field
 
 from ..config import ConfigLocal, EngineRepository
 from ..remote_machine import PRemoteMachine, RemoteMachine
-from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud
+from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud_contra
 from .utils import get_rnd_name
 
 SSH_KEY_LOCK = asyncio.Lock()
 
 
 class CloudCreateNodeError(Exception):
-    pass
+    """Cloud node allocation error"""
 
 
 class CloudSetupNodeError(Exception):
-    pass
+    """Cloud node setup error"""
 
 
 @define(frozen=True)
 class CloudConfig(PCloudConfig):
+    "Cloud config init"
     bootcmd: Sequence[Union[str, Sequence[str]]] = field(factory=tuple)
     package_upgrade: bool = field(default=False)
     packages: Sequence[str] = field(factory=list)
@@ -41,26 +42,29 @@ class CloudConfig(PCloudConfig):
 
 
 @define(frozen=True)
-class CloudAPI(PCloudAPI[TConfigCloud]):
-    adapter: PCloudAdapter[TConfigCloud] = field()
-    config: TConfigCloud = field()
+class CloudAPI(PCloudAPI[TConfigCloud_contra]):
+    "Cloud API protocol"
+    adapter: PCloudAdapter[TConfigCloud_contra] = field()
+    config: TConfigCloud_contra = field()
     local_config: ConfigLocal = field()
     engines: EngineRepository = field()
     log: logging.Logger = field()
 
     @property
     def name(self) -> str:
+        "Cloud name"
         return self.adapter.name
 
     @classmethod
     async def create(
         cls,
         adapter: PCloudAdapter,
-        config: TConfigCloud,
+        config: TConfigCloud_contra,
         local_config: ConfigLocal,
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
     ):
+        "Create cloud API"
         if log:
             log = log.getChild(adapter.name)
         else:
@@ -81,6 +85,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
         return any(map(lambda x: x(platform), self.adapter.supported_platform_checks))
 
     def get_ssh_key_sync(self) -> SSHKey:
+        "Load or generate new SSHKey"
         prefix = "yakey"
         # try to load
         for filepath in self.local_config.keys_dir.iterdir():
@@ -102,6 +107,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
         return ssh_key
 
     async def get_ssh_key(self) -> SSHKey:
+        "Load or generate ssh key (cached)"
         async with SSH_KEY_LOCK:
             return await asyncio.get_running_loop().run_in_executor(
                 None, self.get_ssh_key_sync
@@ -110,17 +116,18 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
     async def get_cloud_config_data(self) -> PCloudConfig:
         "Common cloud-config"
         engines = self.engines.filter(
-            lambda e: any(map(lambda p: self.is_platform_supported(p), e.platforms))
+            lambda e: any(map(self.is_platform_supported, e.platforms))
         )
         pkgs = engines.get_platform_packages()
         return CloudConfig(package_upgrade=True, packages=pkgs)
 
-    async def mk_machine(self, ip: str) -> PRemoteMachine:
+    async def mk_machine(self, ip_addr: str) -> PRemoteMachine:
+        "Create RemoteMachine"
         keys = await asyncio.get_running_loop().run_in_executor(
             None, self.local_config.get_private_keys
         )
         return await RemoteMachine.create(
-            host=ip,
+            host=ip_addr,
             username=self.config.username,
             client_keys=keys,
             logger=self.log,
@@ -132,7 +139,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
     async def create_node(self):
         async with self.adapter.get_op_semaphore():
             try:
-                ip = await self.adapter.create_node(
+                ip_addr = await self.adapter.create_node(
                     log=self.log,
                     cfg=self.config,
                     key=await self.get_ssh_key(),
@@ -142,14 +149,14 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
                 raise CloudCreateNodeError(f"Create node error: {err}") from err
 
             try:
-                machine = await self.mk_machine(ip)
+                machine = await self.mk_machine(ip_addr)
                 await machine.run("cloud-init status --wait")
                 await machine.setup_node(self.engines)
             except Exception as err:
-                self.log.warn("Setup node %s failed - deallocate", ip)
-                await self.delete_node(ip)
+                self.log.warn("Setup node %s failed - deallocate", ip_addr)
+                await self.delete_node(ip_addr)
                 raise CloudSetupNodeError(f"Setup node error: {err}") from err
-            return ip
+            return ip_addr
 
     async def delete_node(self, host: str):
         async with self.adapter.get_op_semaphore():

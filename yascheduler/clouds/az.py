@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Azure cloud methods"""
 
 import logging
 from pathlib import PurePosixPath
@@ -70,6 +70,7 @@ async def create_nic(
     client: NetworkManagementClient,
     vm_name: str,
 ) -> Tuple[NetworkInterface, str]:
+    "Create network interface"
     nic_name = f"{vm_name}-nic"
     ip_config_name = f"{nic_name}-ip-config"
     subnet = await client.subnets.get(
@@ -124,6 +125,7 @@ def create_vm_params(
     tags: Dict[str, str],
     cloud_config: Optional[PCloudConfig] = None,
 ) -> VirtualMachine:
+    """Create VirtualMachine params"""
     img_ref = ImageReference.from_dict(asdict(vm_image))
     pub_key = SshPublicKey(
         path=str(PurePosixPath("/home", username, ".ssh/authorized_keys")),
@@ -174,6 +176,7 @@ async def create_node(
     key: SSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ):
+    """Create virtual machine with nic"""
     vm_name = get_rnd_name("yascheduler-vm")
     nic, ip_addr = await create_nic(log=log, cfg=cfg, client=nmc, vm_name=vm_name)
     vm_params = create_vm_params(
@@ -194,8 +197,8 @@ async def create_node(
         parameters=vm_params,
     )
     await poller.wait()
-    vm = await poller.result()
-    log.debug(f"VM {vm.name} created")
+    vm_res = await poller.result()
+    log.debug(f"VM {vm_res.name} created")
     return ip_addr
 
 
@@ -205,6 +208,7 @@ async def az_create_node(
     key: SSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
+    """Create virtual machine with network interface"""
     async with ClientSecretCredential(
         cfg.tenant_id, cfg.client_id, cfg.client_secret
     ) as cred:
@@ -221,20 +225,21 @@ async def delete_node(
     cfg: ConfigCloudAzure,
     host: str,
 ):
+    """Delete virtual machine with network interface"""
     async for result in cmc.virtual_machines.list(cfg.resource_group):
-        vm = cast(VirtualMachine, result)
-        tag_ip = (vm.tags or {}).get(ID_TAG_NAME)
+        vm_res = cast(VirtualMachine, result)
+        tag_ip = (vm_res.tags or {}).get(ID_TAG_NAME)
         if tag_ip == host:
             poller = await cmc.virtual_machines.begin_power_off(
-                cfg.resource_group, cast(str, vm.name)
+                cfg.resource_group, cast(str, vm_res.name)
             )
             await poller.wait()
 
             poller = await cmc.virtual_machines.begin_delete(
-                cfg.resource_group, cast(str, vm.name)
+                cfg.resource_group, cast(str, vm_res.name)
             )
             await poller.wait()
-            log.debug(f"VM {vm.name} deleted")
+            log.debug(f"VM {vm_res.name} deleted")
             break
 
     nic = None
@@ -255,6 +260,7 @@ async def az_delete_node(
     cfg: ConfigCloudAzure,
     host: str,
 ) -> None:
+    """Delete virtual machine with network interface"""
     async with ClientSecretCredential(
         cfg.tenant_id, cfg.client_id, cfg.client_secret
     ) as cred:

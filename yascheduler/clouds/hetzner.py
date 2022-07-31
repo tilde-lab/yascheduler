@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Hetzner cloud methods"""
 
 import asyncio
 import logging
@@ -21,13 +21,15 @@ from .utils import get_key_name, get_rnd_name
 executor = ThreadPoolExecutor(max_workers=5)
 
 
-@lru_cache()
+@lru_cache(maxsize=None)
 def get_client(cfg: ConfigCloudHetzner) -> HClient:
+    "Get Hetzner client"
     return HClient(cfg.token)
 
 
 @lru_cache()
 def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
+    "Get Hetzner ssh id"
     key_name = get_key_name(key)
 
     try:
@@ -35,8 +37,8 @@ def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
         return client.ssh_keys.create(
             name=key_name, public_key=key.export_public_key().decode("utf-8")
         ).id
-    except APIException as ex:
-        if "already" in str(ex):
+    except APIException as err:
+        if "already" in str(err):
             for hkey in client.ssh_keys.get_all(fingerprint=key.get_fingerprint()):
                 return hkey.id
             for hkey in client.ssh_keys.get_all(name=key_name):
@@ -46,7 +48,7 @@ def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
             for hkey in client.ssh_keys.get_all():
                 if hkey.name.startswith(prefix) and len(hkey.name) == name_len:
                     return hkey.id
-        raise ex
+        raise err
 
 
 async def hetzner_create_node(
@@ -55,6 +57,7 @@ async def hetzner_create_node(
     key: ASSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
+    """Create node"""
     loop = asyncio.get_running_loop()
     client = await loop.run_in_executor(executor, get_client, cfg)
     ssh_key_id = await loop.run_in_executor(executor, get_ssh_key_id, client, key)
@@ -69,15 +72,17 @@ async def hetzner_create_node(
     )
     response = await loop.run_in_executor(executor, create_server)
     server = response.server
-    ip = server.public_net.ipv4.ip
-    log.info("CREATED %s" % ip)
-    return ip
+    ip_addr = server.public_net.ipv4.ip
+    log.info("CREATED %s", ip_addr)
+    return ip_addr
 
 
 def find_srv(client: HClient, host: str) -> Optional[BoundServer]:
-    for s in client.servers.get_all():
-        if s.public_net.ipv4.ip == host:
-            return client.servers.get_by_id(s.id)
+    """Find BoundServer by IP addr"""
+    for server in client.servers.get_all():
+        if server.public_net.ipv4.ip == host:
+            return client.servers.get_by_id(server.id)
+    return None
 
 
 async def hetzner_delete_node(
@@ -85,13 +90,14 @@ async def hetzner_delete_node(
     cfg: ConfigCloudHetzner,
     host: str,
 ):
+    """Delete node"""
     loop = asyncio.get_running_loop()
     client = await loop.run_in_executor(executor, get_client, cfg)
     server = await loop.run_in_executor(executor, find_srv, client, host)
 
     if server:
         await loop.run_in_executor(executor, server.delete)
-        log.info("DELETED %s" % host)
+        log.info("DELETED %s", host)
 
     else:
-        log.info("NODE %s NOT DELETED AS UNKNOWN" % host)
+        log.info("NODE %s NOT DELETED AS UNKNOWN", host)

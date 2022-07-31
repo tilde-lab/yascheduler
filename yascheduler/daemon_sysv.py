@@ -13,7 +13,8 @@ from yascheduler.utils import daemonize
 
 
 def start_daemon(pid_file, log_file):
-    """Launch daemon in its context as per https://stackoverflow.com/questions/13106221/"""
+    """Launch daemon in its context as per
+    https://stackoverflow.com/questions/13106221/"""
     with daemon.DaemonContext(
         working_directory=os.path.dirname(__file__),
         umask=0o002,

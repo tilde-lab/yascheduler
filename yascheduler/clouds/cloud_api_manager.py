@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Cloud API manager"""
 
 import asyncio
 import logging
@@ -13,11 +13,13 @@ from ..config import ConfigCloud, ConfigLocal, EngineRepository
 from ..db import DB
 from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
 from .cloud_api import CloudAPI
-from .protocols import CloudCapacity, PCloudAPI, PCloudAPIManager
+from .protocols import CloudCapacity, PCloudAdapter, PCloudAPI, PCloudAPIManager
 
 
 @define(frozen=True)
 class CloudAPIManager(PCloudAPIManager):
+    """Cloud API manager"""
+
     apis: Mapping[str, PCloudAPI] = field()
     db: DB = field()
     log: logging.Logger = field()
@@ -34,18 +36,27 @@ class CloudAPIManager(PCloudAPIManager):
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
     ) -> Self:
+        "Create cloud API manager"
         if log:
             log = log.getChild(cls.__name__)
         else:
             log = logging.getLogger(cls.__name__)
 
-        adapters = [azure_adapter, hetzner_adapter, upcloud_adapter]
+        adapters: Sequence[PCloudAdapter] = [
+            azure_adapter,
+            hetzner_adapter,
+            upcloud_adapter,
+        ]
         apis: Mapping[str, PCloudAPI] = {}
+
+        def filter_adapters(prefix: str):
+            return filter(lambda x: x.name == prefix, adapters)
+
         for cfg in cloud_configs:
             if cfg.max_nodes <= 0:
-                log.debug(f"Cloud {cfg.prefix} is skipped because of <1 max nodes")
+                log.debug("Cloud %s is skipped because of <1 max nodes", cfg.prefix)
                 continue
-            for adapter in filter(lambda x: x.name == cfg.prefix, adapters):
+            for adapter in filter_adapters(cfg.prefix):
                 apis[adapter.name] = await CloudAPI.create(
                     adapter=adapter,
                     config=cfg,
@@ -53,7 +64,7 @@ class CloudAPIManager(PCloudAPIManager):
                     engines=engines,
                     log=log,
                 )
-        log.info("Active cloud APIs: " + (", ".join(apis.keys()) or "-"))
+        log.info("Active cloud APIs: %s", (", ".join(apis.keys()) or "-"))
 
         return cls(
             apis=apis,
@@ -82,7 +93,7 @@ class CloudAPIManager(PCloudAPIManager):
             )
 
         for api in self.apis.values():
-            if api.name not in data.keys():
+            if api.name not in data:
                 data[api.name] = CloudCapacity(
                     name=api.name, current=0, max=api.config.max_nodes
                 )
@@ -91,7 +102,8 @@ class CloudAPIManager(PCloudAPIManager):
     async def select_best_provider(
         self, want_platforms: Optional[Sequence[str]] = None
     ) -> Optional[PCloudAPI]:
-        self.log.debug("Enabled providers: %s" % ", ".join(self.apis.keys()))
+        """Select best cloud API"""
+        self.log.debug("Enabled providers: %s", ", ".join(self.apis.keys()))
         used_providers = []
         suitable_providers = list(self.apis.keys())
 
@@ -111,19 +123,20 @@ class CloudAPIManager(PCloudAPIManager):
                 if not any(map(api.is_platform_supported, want_platforms)):
                     suitable_providers.remove(api.name)
 
-        self.log.debug("Used providers: %s" % str(used_providers))
+        self.log.debug("Used providers: %s", used_providers)
         if not suitable_providers:
             self.log.debug("No suitable cloud provides")
             return
         ok_apis = filter(lambda x: x.name in suitable_providers, self.apis.values())
         ok_apis_sorted = sorted(ok_apis, key=lambda x: x.config.priority, reverse=True)
         api = ok_apis_sorted[0]
-        self.log.debug("Chosen: %s" % api.name)
+        self.log.debug("Chosen: %s", api.name)
         return api
 
     async def allocate_node(
         self, want_platforms: Optional[Sequence[str]] = None, throttle: bool = False
     ):
+        """Allocate new node"""
         async with self.allocation_lock:
             api = await self.select_best_provider(want_platforms)
             if not api:
@@ -136,14 +149,14 @@ class CloudAPIManager(PCloudAPIManager):
             tmp_ip = await self.db.add_tmp_node(api.name, api.config.username)
             await self.db.commit()
         try:
-            ip = await api.create_node()
+            ip_addr = await api.create_node()
         finally:
             await self.db.remove_node(tmp_ip)
             await self.db.commit()
 
-        await self.db.add_node(ip, api.config.username, None, api.name, True)
+        await self.db.add_node(ip_addr, api.config.username, None, api.name, True)
         await self.db.commit()
-        return ip
+        return ip_addr
 
     async def allocate(
         self,
@@ -163,19 +176,18 @@ class CloudAPIManager(PCloudAPIManager):
                 self.mark_task_done(on_task)
         return
 
-    async def deallocate(self, ip: str):
-        node = await self.db.get_node(ip)
+    async def deallocate(self, ip_addr: str):
+        node = await self.db.get_node(ip_addr)
         if not node or not node.cloud:
             return
         if node.cloud not in self.apis:
             self.log.warning(
                 f"Can't deallocate node {node.ip} - unsupported cloud {node.cloud}"
             )
-        await self.db.disable_node(ip)
+        await self.db.disable_node(ip_addr)
         await self.db.commit()
-        c = self.apis[node.cloud]
         try:
-            await c.delete_node(node.ip)
+            await self.apis[node.cloud].delete_node(node.ip)
         except Exception as err:
             self.log.error(f"Can't deallocate node {node.ip}: {err}")
             return False

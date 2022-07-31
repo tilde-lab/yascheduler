@@ -419,7 +419,7 @@ async def _manage_node():
         print("Setup host...")
         await machine.setup_node(config.engines)
 
-    await db.add_node(ip=args.host, username=username, ncpus=ncpus, enabled=True)
+    await db.add_node(ip_addr=args.host, username=username, ncpus=ncpus, enabled=True)
     await db.commit()
     await db.close()
 

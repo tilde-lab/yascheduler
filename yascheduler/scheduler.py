@@ -186,7 +186,7 @@ class Scheduler:
         new_meta = dict(list(metadata.items()) + meta_add)
 
         task = await self.db.add_task(
-            label, ip=None, status=TaskStatus.TO_DO, metadata=new_meta
+            label, ip_addr=None, status=TaskStatus.TO_DO, metadata=new_meta
         )
         dt_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         remote_folder = self.config.remote.tasks_dir / "{}_{}".format(
@@ -571,7 +571,7 @@ class Scheduler:
                 try:
                     await consumer(msg)
                 finally:
-                    queue.task_done(msg)
+                    queue.item_done(msg)
 
         workers: Set[asyncio.Task] = set()
         [workers.add(asyncio.create_task(worker())) for _ in range(0, workers_num)]

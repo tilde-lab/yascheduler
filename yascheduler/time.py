@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Time utils"""
 
 import asyncio
 from datetime import datetime

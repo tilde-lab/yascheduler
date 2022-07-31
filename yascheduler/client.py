@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Yascheduler client"""
 
 import asyncio
 import logging
@@ -38,7 +38,9 @@ class Yascheduler:
         engine_name: str,
         webhook_onsubmit=False,
     ) -> MutableMapping[str, Any]:
-        async def fn() -> TaskModel:
+        """Submit new task"""
+
+        async def async_fn() -> TaskModel:
             yac = await Scheduler.create(config=self.config, log=self._logger)
             task = await yac.create_new_task(
                 label=label,
@@ -49,7 +51,7 @@ class Yascheduler:
             await yac.stop()
             return task
 
-        task = asyncio.run(fn())
+        task = asyncio.run(async_fn())
         return asdict(task)
 
     def queue_get_tasks(
@@ -57,6 +59,7 @@ class Yascheduler:
         jobs: Optional[Sequence[int]] = None,
         status: Optional[Sequence[int]] = None,
     ) -> Sequence[Mapping[str, Any]]:
+        """Get tasks by ids or statuses"""
         if jobs is not None and status is not None:
             raise ValueError("jobs can be selected only by status or by task ids")
         # raise ValueError if unknown task status
@@ -80,5 +83,6 @@ class Yascheduler:
         return [asdict(t) for t in tasks]
 
     def queue_get_task(self, task_id: int) -> Optional[Mapping[str, Any]]:
+        """Get task by id"""
         for task_dict in self.queue_get_tasks(jobs=[task_id]):
             return task_dict
