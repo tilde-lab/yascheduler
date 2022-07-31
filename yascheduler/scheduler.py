@@ -43,12 +43,12 @@ from .variables import CONFIG_FILE
 logging.basicConfig(level=logging.INFO)
 
 
-def get_logger(log_file):
+def get_logger(log_file, level: int = logging.INFO):
     logger = logging.getLogger("yascheduler")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(level)
 
     backoff_logger = logging.getLogger("backoff")
-    backoff_logger.setLevel(logging.ERROR)
+    backoff_logger.setLevel(logging.ERROR if level >= logging.INFO else logging.DEBUG)
 
     if log_file:
         fh = logging.FileHandler(log_file)
