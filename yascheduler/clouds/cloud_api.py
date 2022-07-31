@@ -16,6 +16,14 @@ from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud
 from .utils import get_rnd_name
 
 
+class CloudCreateNodeError(Exception):
+    pass
+
+
+class CloudSetupNodeError(Exception):
+    pass
+
+
 @define(frozen=True)
 class CloudConfig(PCloudConfig):
     bootcmd: Sequence[Union[str, Sequence[str]]] = field(factory=tuple)
@@ -122,15 +130,24 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
 
     async def create_node(self):
         async with self.adapter.get_op_semaphore():
-            ip = await self.adapter.create_node(
-                log=self.log,
-                cfg=self.config,
-                key=await self.get_ssh_key(),
-                cloud_config=await self.get_cloud_config_data(),
-            )
-            machine = await self.mk_machine(ip)
-            await machine.run("cloud-init status --wait")
-            await machine.setup_node(self.engines)
+            try:
+                ip = await self.adapter.create_node(
+                    log=self.log,
+                    cfg=self.config,
+                    key=await self.get_ssh_key(),
+                    cloud_config=await self.get_cloud_config_data(),
+                )
+            except Exception as err:
+                raise CloudCreateNodeError(f"Create node error: {err}") from err
+
+            try:
+                machine = await self.mk_machine(ip)
+                await machine.run("cloud-init status --wait")
+                await machine.setup_node(self.engines)
+            except Exception as err:
+                self.log.warn("Setup node %s failed - deallocate", ip)
+                await self.delete_node(ip)
+                raise CloudSetupNodeError(f"Setup node error: {err}") from err
             return ip
 
     async def delete_node(self, host: str):
