@@ -326,6 +326,7 @@ class Scheduler:
                 await self.do_task_webhook(
                     task.task_id, task_m.metadata, TaskStatus.RUNNING
                 )
+                self.clouds.mark_task_done(task.task_id)
                 return True
 
         # free machine not found - try to allocate new node
