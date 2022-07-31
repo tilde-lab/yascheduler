@@ -7,13 +7,14 @@ import logging
 from typing import Optional, Sequence, Union
 
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
-from asyncstdlib import lru_cache
 from attrs import asdict, define, field
 
 from ..config import ConfigLocal, EngineRepository
 from ..remote_machine import PRemoteMachine, RemoteMachine
 from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud
 from .utils import get_rnd_name
+
+SSH_KEY_LOCK = asyncio.Lock()
 
 
 class CloudCreateNodeError(Exception):
@@ -87,7 +88,7 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
                 continue
             ssh_key = read_private_key(filepath)
             ssh_key.set_comment(filepath.name)
-            self.log.info("LOADED KEY %s" % filepath)
+            self.log.debug("LOADED KEY %s", filepath)
             return ssh_key
 
         key_name = get_rnd_name(prefix)
@@ -97,14 +98,14 @@ class CloudAPI(PCloudAPI[TConfigCloud]):
         )
         ssh_key.write_private_key(filepath)
         ssh_key.set_comment(key_name)
-        self.log.info("WRITTEN KEY %s" % filepath)
+        self.log.info("WRITTEN KEY %s", filepath)
         return ssh_key
 
-    @lru_cache()
     async def get_ssh_key(self) -> SSHKey:
-        return await asyncio.get_running_loop().run_in_executor(
-            None, self.get_ssh_key_sync
-        )
+        async with SSH_KEY_LOCK:
+            return await asyncio.get_running_loop().run_in_executor(
+                None, self.get_ssh_key_sync
+            )
 
     async def get_cloud_config_data(self) -> PCloudConfig:
         "Common cloud-config"
