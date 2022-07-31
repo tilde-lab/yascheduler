@@ -431,7 +431,17 @@ def manage_node():
 
 
 def daemonize(log_file=None):
-    logger = get_logger(log_file)
+    parser = argparse.ArgumentParser(description="Start yascheduler daemon")
+    parser.add_argument(
+        "-l",
+        "--log-level",
+        default="INFO",
+        help="set log level",
+        choices=logging._levelToName.values(),
+    )
+    args = parser.parse_args()
+
+    logger = get_logger(log_file, level=logging._nameToLevel[args.log_level])
 
     async def on_signal(
         y: Scheduler, shield: Sequence[asyncio.Task], signame: str, signum: int
