@@ -104,7 +104,7 @@ class ConfigCloudHetzner:
 
     prefix = "hetzner"
     token: str = field(validator=validators.instance_of(str))
-    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(1)])
+    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
     username: str = _make_default_field("root")
     priority: int = _make_default_field(0)
     server_type: str = _make_default_field("cx51")
