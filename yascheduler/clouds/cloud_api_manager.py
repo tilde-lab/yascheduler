@@ -159,7 +159,6 @@ class CloudAPIManager(PCloudAPIManager):
             return await self.allocate_node(want_platforms, throttle)
         except Exception as err:
             self.log.error(f"Can't allocate node: {err}")
-        finally:
             if on_task:
                 self.mark_task_done(on_task)
         return
