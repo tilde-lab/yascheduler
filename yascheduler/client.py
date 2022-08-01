@@ -52,7 +52,7 @@ class Yascheduler:
             return task
 
         task = asyncio.run(async_fn())
-        return asdict(task)
+        return asdict(task)["task_id"]
 
     def queue_get_tasks(
         self,
