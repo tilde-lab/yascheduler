@@ -37,7 +37,7 @@ class Yascheduler:
         metadata: Mapping[str, Any],
         engine_name: str,
         webhook_onsubmit=False,
-    ) -> MutableMapping[str, Any]:
+    ) -> int:
         """Submit new task"""
 
         async def async_fn() -> TaskModel:
@@ -52,7 +52,7 @@ class Yascheduler:
             return task
 
         task = asyncio.run(async_fn())
-        return asdict(task)
+        return task.task_id
 
     def queue_get_tasks(
         self,
