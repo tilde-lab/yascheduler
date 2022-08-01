@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Cloud protocols"""
 
 import asyncio
 import logging
@@ -15,16 +15,20 @@ from ..db import DB
 
 SupportedPlatformChecker = Callable[[str], bool]
 
-TConfigCloud = TypeVar("TConfigCloud", bound=ConfigCloud, contravariant=True)
+TConfigCloud_contra = TypeVar(
+    "TConfigCloud_contra", bound=ConfigCloud, contravariant=True
+)
 
 
 class PCloudConfig(Protocol):
+    "Cloud config init protocol"
     bootcmd: Sequence[Union[str, Sequence[str]]]
     package_upgrade: bool
     packages: Sequence[str]
 
     @abstractmethod
     def render(self) -> str:
+        "Render config to string"
         raise NotImplementedError
 
     @abstractmethod
@@ -32,35 +36,40 @@ class PCloudConfig(Protocol):
         "Render to user-data format as base64 string"
 
 
-class CreateNodeCallable(Protocol[TConfigCloud]):
+class CreateNodeCallable(Protocol[TConfigCloud_contra]):
+    "Create node in the cloud protocol"
+
     @abstractmethod
     async def __call__(
         self,
         log: logging.Logger,
-        cfg: TConfigCloud,
+        cfg: TConfigCloud_contra,
         key: SSHKey,
         cloud_config: Optional[PCloudConfig] = None,
     ) -> str:
         raise NotImplementedError
 
 
-class DeleteNodeCallable(Protocol[TConfigCloud]):
+class DeleteNodeCallable(Protocol[TConfigCloud_contra]):
+    "Delete node in the cloud protocol"
+
     @abstractmethod
     async def __call__(
         self,
         log: logging.Logger,
-        cfg: TConfigCloud,
+        cfg: TConfigCloud_contra,
         host: str,
     ) -> None:
         raise NotImplementedError
 
 
-class PCloudAdapter(Protocol[TConfigCloud]):
+class PCloudAdapter(Protocol[TConfigCloud_contra]):
+    "Cloud adapter protocol"
     name: str
     supported_platform_checks: Sequence[SupportedPlatformChecker]
-    create_node: CreateNodeCallable[TConfigCloud]
+    create_node: CreateNodeCallable[TConfigCloud_contra]
     create_node_conn_timeout: int
-    delete_node: DeleteNodeCallable[TConfigCloud]
+    delete_node: DeleteNodeCallable[TConfigCloud_contra]
     op_limit: int
 
     @classmethod
@@ -69,11 +78,12 @@ class PCloudAdapter(Protocol[TConfigCloud]):
         cls,
         name: str,
         supported_platform_checks: Sequence[SupportedPlatformChecker],
-        create_node: CreateNodeCallable[TConfigCloud],
-        delete_node: DeleteNodeCallable[TConfigCloud],
+        create_node: CreateNodeCallable[TConfigCloud_contra],
+        delete_node: DeleteNodeCallable[TConfigCloud_contra],
         create_node_conn_timeout: Optional[int],
         op_limit: int = 1,
     ) -> Self:
+        "Create adapter"
         raise NotImplementedError
 
     @abstractmethod
@@ -86,9 +96,10 @@ class PCloudAdapter(Protocol[TConfigCloud]):
         raise NotImplementedError
 
 
-class PCloudAPI(Protocol[TConfigCloud]):
+class PCloudAPI(Protocol[TConfigCloud_contra]):
+    "Cloud API protocol"
     name: str
-    config: TConfigCloud
+    config: TConfigCloud_contra
     local_config: ConfigLocal
     engines: EngineRepository
     log: logging.Logger
@@ -97,43 +108,55 @@ class PCloudAPI(Protocol[TConfigCloud]):
     @abstractmethod
     async def create(
         cls,
-        adapter: PCloudAdapter[TConfigCloud],
-        config: TConfigCloud,
+        adapter: PCloudAdapter[TConfigCloud_contra],
+        config: TConfigCloud_contra,
         local_config: ConfigLocal,
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
     ) -> Self:
+        "Create cloud API"
         raise NotImplementedError
 
     @abstractmethod
     def get_op_semaphore(self) -> asyncio.Semaphore:
+        """
+        Cached semaphore getter.
+        It's because you cannot create async semaphore outside the loop.
+        "attached to a different loop" error.
+        """
         raise NotImplementedError
 
     @abstractmethod
     async def get_cloud_config_data(self) -> PCloudConfig:
+        "Return cloud config init"
         raise NotImplementedError
 
     @abstractmethod
     def is_platform_supported(self, platform: str) -> bool:
+        "Is platform is supported by cloud?"
         raise NotImplementedError
 
     @abstractmethod
     async def create_node(self) -> str:
+        "Create new node"
         raise NotImplementedError
 
     @abstractmethod
     async def delete_node(self, host: str):
+        "Delete node"
         raise NotImplementedError
 
 
 @define(frozen=True)
 class CloudCapacity:
+    "Cloud capacity object"
     name: str
     max: int
     current: int
 
 
 class PCloudAPIManager(Protocol):
+    "Cloud API manager protocol"
     apis: Mapping[str, PCloudAPI]
     db: DB
     log: logging.Logger
@@ -149,6 +172,7 @@ class PCloudAPIManager(Protocol):
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
     ) -> Self:
+        "Create cloud API manager"
         raise NotImplementedError
 
     @abstractmethod
@@ -157,14 +181,17 @@ class PCloudAPIManager(Protocol):
 
     @abstractmethod
     async def stop(self) -> None:
+        "Stop cloud api manager"
         raise NotImplementedError
 
     @abstractmethod
     def mark_task_done(self, on_task: int) -> None:
+        "Mark the task for which the creation of a node was requested as completed"
         raise NotImplementedError
 
     @abstractmethod
     async def get_capacity(self) -> Mapping[str, CloudCapacity]:
+        "Get clouds capacity"
         raise NotImplementedError
 
     @abstractmethod
@@ -174,8 +201,10 @@ class PCloudAPIManager(Protocol):
         want_platforms: Optional[Sequence[str]] = None,
         throttle: bool = True,
     ) -> Union[str, None]:
+        "Allocate new node"
         raise NotImplementedError
 
     @abstractmethod
-    async def deallocate(self, ip: str):
+    async def deallocate(self, ip_addr: str):
+        "Deallocate the node"
         raise NotImplementedError

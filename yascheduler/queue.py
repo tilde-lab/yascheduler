@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"""Async queue with message deduplication"""
 
 import asyncio
 from typing import Deque, Generic, Hashable, Set, TypeVar
@@ -11,16 +11,20 @@ TUMsgPayload = TypeVar("TUMsgPayload")
 
 @define(frozen=True)
 class UMessage(Generic[TUMsgId, TUMsgPayload]):
+    """Async queue message"""
+
     id: TUMsgId = field()
     payload: TUMsgPayload = field(hash=False)
 
 
 class UniqueQueue(asyncio.Queue, Generic[TUMsgId, TUMsgPayload]):
+    """Async queue with message deduplication"""
+
     name: str
     _queue: Deque[UMessage[TUMsgId, TUMsgPayload]]
     _done_pending: Set[UMessage[TUMsgId, TUMsgPayload]]
 
-    def __init__(self, name: str, maxsize: int = 0, *argv, **kwargs):
+    def __init__(self, name: str, *argv, maxsize: int = 0, **kwargs):
         self.name = name
         self._done_pending = set()
         super().__init__(maxsize, *argv, **kwargs)
@@ -39,7 +43,11 @@ class UniqueQueue(asyncio.Queue, Generic[TUMsgId, TUMsgPayload]):
             return
         await super().put(item)
 
-    def task_done(self, item: UMessage):
+    def task_done(self):
+        raise NotImplementedError("task_done() not implemented, use item_done()")
+
+    def item_done(self, item: UMessage):
+        """Indicate that a enqueued task is complete."""
         self._done_pending.remove(item)
         super().task_done()
 

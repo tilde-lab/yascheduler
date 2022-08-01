@@ -2,6 +2,9 @@
 jobs=0
 py-version = 3.7.2
 
+[BASIC]
+good-names=_,__,db
+
 [MESSAGES CONTROL]
 disable=too-few-public-methods,
     # TODO: attrs - E1101: Instance of '_CountingAttr' has no '...' member

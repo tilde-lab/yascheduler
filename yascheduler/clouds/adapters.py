@@ -13,7 +13,7 @@ from .protocols import (
     DeleteNodeCallable,
     PCloudAdapter,
     SupportedPlatformChecker,
-    TConfigCloud,
+    TConfigCloud_contra,
 )
 from .upcloud import upcload_delete_node, upcloud_create_node
 
@@ -39,14 +39,14 @@ def can_win11(platform: str) -> bool:
 
 
 @define(frozen=True)
-class CloudAdapter(PCloudAdapter[TConfigCloud]):
+class CloudAdapter(PCloudAdapter[TConfigCloud_contra]):
     """Cloud adapter"""
 
     name: str = field()
     supported_platform_checks: Tuple[SupportedPlatformChecker] = field()
-    create_node: CreateNodeCallable[TConfigCloud] = field()
+    create_node: CreateNodeCallable[TConfigCloud_contra] = field()
     create_node_conn_timeout: int = field()
-    delete_node: DeleteNodeCallable[TConfigCloud] = field()
+    delete_node: DeleteNodeCallable[TConfigCloud_contra] = field()
     op_limit: int = field(default=1)
 
     @classmethod
@@ -54,8 +54,8 @@ class CloudAdapter(PCloudAdapter[TConfigCloud]):
         cls,
         name: str,
         supported_platform_checks: Sequence[SupportedPlatformChecker],
-        create_node: CreateNodeCallable[TConfigCloud],
-        delete_node: DeleteNodeCallable[TConfigCloud],
+        create_node: CreateNodeCallable[TConfigCloud_contra],
+        delete_node: DeleteNodeCallable[TConfigCloud_contra],
         create_node_conn_timeout: int = 10,
         op_limit: int = 1,
     ):
