@@ -68,7 +68,7 @@ def submit_():
         metadata["webhook_custom_params"] = {"parent": script_params["PARENT"]}
         webhook_onsubmit = True
 
-    task = yac.queue_submit_task(
+    task_id = yac.queue_submit_task(
         label,
         metadata,
         engine.name,
@@ -76,7 +76,7 @@ def submit_():
     )
 
     # this should be received by AiiDA
-    print(str(task.get("task_id")))
+    print(str(task_id))
 
 
 async def _check_status():  # noqa: C901
