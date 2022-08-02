@@ -69,6 +69,7 @@ class PCloudAdapter(Protocol[TConfigCloud_contra]):
     supported_platform_checks: Sequence[SupportedPlatformChecker]
     create_node: CreateNodeCallable[TConfigCloud_contra]
     create_node_conn_timeout: int
+    create_node_timeout: int
     delete_node: DeleteNodeCallable[TConfigCloud_contra]
     op_limit: int
 
@@ -81,6 +82,7 @@ class PCloudAdapter(Protocol[TConfigCloud_contra]):
         create_node: CreateNodeCallable[TConfigCloud_contra],
         delete_node: DeleteNodeCallable[TConfigCloud_contra],
         create_node_conn_timeout: Optional[int],
+        create_node_timeout: Optional[int],
         op_limit: int = 1,
     ) -> Self:
         "Create adapter"

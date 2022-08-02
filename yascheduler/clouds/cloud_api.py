@@ -6,11 +6,12 @@ import json
 import logging
 from typing import Optional, Sequence, Union
 
+import backoff
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
 from attrs import asdict, define, field
 
 from ..config import ConfigLocal, EngineRepository
-from ..remote_machine import PRemoteMachine, RemoteMachine
+from ..remote_machine import PRemoteMachine, RemoteMachine, SSHRetryExc
 from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud_contra
 from .utils import get_rnd_name
 
@@ -127,7 +128,12 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
         keys = await asyncio.get_running_loop().run_in_executor(
             None, self.local_config.get_private_keys
         )
-        return await RemoteMachine.create(
+        retry = backoff.on_exception(
+            wait_gen=backoff.fibo,
+            max_time=self.adapter.create_node_timeout,
+            exception=SSHRetryExc,
+        )
+        return await retry(RemoteMachine.create)(
             host=ip_addr,
             username=self.config.username,
             client_keys=keys,
