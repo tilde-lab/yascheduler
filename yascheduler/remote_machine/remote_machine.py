@@ -174,6 +174,7 @@ class RemoteMachine(PRemoteMachine):
             connect_timeout=connect_timeout,
             compression_algs=(),
             tunnel=tunnel,
+            config=None,
         )
 
         log.debug("Open connection")
