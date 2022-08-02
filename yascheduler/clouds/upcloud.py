@@ -36,7 +36,7 @@ def upcloud_create_node_sync(
 
     login_user = login_user_block(
         username=cfg.username,
-        ssh_keys=[key.export_public_key().decode("utf-8")],
+        ssh_keys=[key.export_public_key("openssh").decode("utf-8")],
         create_password=False,
     )
     server = client.create_server(

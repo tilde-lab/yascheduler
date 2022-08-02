@@ -93,7 +93,9 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
                 continue
             ssh_key = read_private_key(filepath)
             ssh_key.set_comment(filepath.name)
-            self.log.debug("LOADED KEY %s", filepath)
+            self.log.debug(
+                "LOADED KEY %s: %s", filepath.name, ssh_key.get_fingerprint("md5")
+            )
             return ssh_key
 
         key_name = get_rnd_name(prefix)
@@ -103,7 +105,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
         )
         ssh_key.write_private_key(filepath)
         ssh_key.set_comment(key_name)
-        self.log.info("WRITTEN KEY %s", filepath)
+        self.log.info("WRITTEN KEY %s: %s", key_name, ssh_key.get_fingerprint("md5"))
         return ssh_key
 
     async def get_ssh_key(self) -> SSHKey:
