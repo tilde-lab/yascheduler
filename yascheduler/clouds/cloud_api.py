@@ -104,6 +104,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
             alg_name="ssh-rsa", key_size=2048, exponent=65537
         )
         ssh_key.write_private_key(filepath)
+        filepath.chmod(0o600)
         ssh_key.set_comment(key_name)
         self.log.info("WRITTEN KEY %s: %s", key_name, ssh_key.get_fingerprint("md5"))
         return ssh_key
