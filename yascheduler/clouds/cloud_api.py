@@ -100,9 +100,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
 
         key_name = get_rnd_name(prefix)
         filepath = self.local_config.keys_dir / key_name
-        ssh_key = generate_private_key(
-            alg_name="ssh-rsa", key_size=2048, exponent=65537
-        )
+        ssh_key = generate_private_key(alg_name="ssh-rsa", comment=key_name)
         ssh_key.write_private_key(filepath)
         filepath.chmod(0o600)
         ssh_key.set_comment(key_name)

@@ -2,7 +2,7 @@
 """Local configuration"""
 
 from configparser import SectionProxy
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Optional, Sequence
 
 from attrs import define, field, validators
@@ -37,10 +37,10 @@ class ConfigLocal:
         1, extra_validators=[validators.ge(1)]
     )
 
-    def get_private_keys(self) -> Sequence[str]:
+    def get_private_keys(self) -> Sequence[PurePath]:
         "List private key file paths"
         filepaths = filter(lambda x: x.is_file(), self.keys_dir.iterdir())
-        return list(map(str, filepaths))
+        return list(filepaths)
 
     @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigLocal":

@@ -75,6 +75,17 @@ class MySSHClient(SSHClient):
         return True
 
 
+DEFAULT_CONN_OPTS = SSHClientConnectionOptions(
+    client_factory=MySSHClient,
+    preferred_auth="publickey",
+    keepalive_interval=10,
+    keepalive_count_max=10,
+    compression_algs=[],
+    agent_path="",
+    username="root",
+)
+
+
 @define
 class RemoteMachineMetadata(PRemoteMachineMetadata):
     def __init__(self):
@@ -143,9 +154,9 @@ class RemoteMachine(PRemoteMachine):
         cls,
         host: str,
         username: str,
-        client_keys: Optional[Union[Sequence[bytes], Sequence[str]]],
+        client_keys: Optional[Sequence[PurePath]],
         logger: Optional[logging.Logger] = None,
-        connect_timeout: Optional[float] = None,
+        connect_timeout: Optional[int] = None,
         data_dir: Optional[PurePath] = None,
         engines_dir: Optional[PurePath] = None,
         tasks_dir: Optional[PurePath] = None,
@@ -163,26 +174,21 @@ class RemoteMachine(PRemoteMachine):
         # asyncssh.logging.set_debug_level(2)
 
         # connection
-        tunnel = jump_host and jump_username and f"{jump_username}@{jump_host}"
-        conn_opts = SSHClientConnectionOptions()
-        conn_opts.prepare(
+        conn_opts = SSHClientConnectionOptions(
+            options=DEFAULT_CONN_OPTS,
             host=host,
             username=username,
-            keepalive_interval=10,
-            keepalive_count_max=3,
+            tunnel=jump_host and jump_username and f"{jump_username}@{jump_host}",
             client_keys=client_keys or (),
+            ignore_encrypted=True,
             connect_timeout=connect_timeout,
-            compression_algs=(),
-            tunnel=tunnel,
-            config=None,
         )
 
         log.debug("Open connection")
         conn = await asyncssh.connection.connect(
-            client_factory=MySSHClient,
+            options=conn_opts,
             host=conn_opts.host,
             tunnel=conn_opts.tunnel,
-            options=conn_opts,
         )
 
         # guess platform
@@ -278,12 +284,10 @@ class RemoteMachine(PRemoteMachine):
         Reopen SSH connection
         """
         conn = await asyncssh.connection.connect(
-            client_factory=MySSHClient,
+            options=self.conn_opts,
             host=self.conn_opts.host,
             tunnel=self.conn_opts.tunnel,
-            options=self.conn_opts,
         )
-
         # MUTATE OBJECT!
         object.__setattr__(self, "conn", conn)
         return conn
