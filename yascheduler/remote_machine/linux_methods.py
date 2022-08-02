@@ -103,7 +103,7 @@ async def deploy_local_archive(
     await sftp.put([str(archive)], engine_dir)
     if log:
         log.debug(f"Unarchiving {archive.name}...")
-    await run(f"tar xfv {quote(str(archive.name))}", cwd=str(engine_dir))
+    await run(f"tar xfv {quote(str(archive.name))}", cwd=str(engine_dir), check=True)
     await sftp.remove(rpath)
 
 
@@ -123,10 +123,10 @@ async def deploy_remote_archive(
     rpath = engine_dir / name
     if log:
         log.debug(f"Downloading {url} to {str(rpath)}...")
-    await run(f"wget {quote(url)} -O {quote(name)}", cwd=str(engine_dir))
+    await run(f"wget {quote(url)} -O {quote(name)}", cwd=str(engine_dir), check=True)
     if log:
         log.debug(f"Unarchiving {name}...")
-    await run(f"tar xfv {quote(str(name))}", cwd=str(engine_dir))
+    await run(f"tar xfv {quote(str(name))}", cwd=str(engine_dir), check=True)
     await sftp.remove(rpath)
 
 
@@ -164,7 +164,7 @@ async def linux_deploy_engines(
 
 
 async def log_mpi_version(run: OuterRunCallable, log: Optional[logging.Logger] = None):
-    r = await run("mpirun --allow-run-as-root -V")
+    r = await run("mpirun --allow-run-as-root -V", check=True)
     if not r.returncode and log:
         log.debug(str(r.stdout or "").split("\n")[0])
 
@@ -198,12 +198,12 @@ async def linux_setup_deb_node(
 
     if log:
         log.debug("Upgrade packages...")
-    await run(f"{apt_cmd} update")
-    await run(f"{apt_cmd} upgrade")
+    await run(f"{apt_cmd} update", check=True)
+    await run(f"{apt_cmd} upgrade", check=True)
     if pkgs:
         if log:
             log.debug("Install packages: {} ...".format(" ".join(pkgs)))
-        await run(" ".join([apt_cmd, *pkgs]))
+        await run(f"{apt_cmd} install {' '.join(pkgs)}", check=True)
     if [x for x in pkgs if "mpi" in x]:
         await log_mpi_version(run, log)
 

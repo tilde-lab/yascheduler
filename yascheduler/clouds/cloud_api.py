@@ -7,6 +7,7 @@ import logging
 from typing import Optional, Sequence, Union
 
 import backoff
+from asyncssh.process import ProcessError
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
 from attrs import asdict, define, field
 
@@ -159,7 +160,18 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
                 machine = await self.mk_machine(ip_addr)
                 await machine.run("cloud-init status --wait")
                 await machine.setup_node(self.engines)
-            except Exception as err:
+            except (ProcessError, Exception) as err:
+                if isinstance(err, ProcessError):
+                    self.log.error(
+                        (
+                            "Setup node %s failed: command '%s' failed "
+                            "with exit code %s; stderr: %s"
+                        ),
+                        ip_addr,
+                        err.command,
+                        err.returncode,
+                        err.stderr,
+                    )
                 self.log.warn("Setup node %s failed - deallocate", ip_addr)
                 await self.delete_node(ip_addr)
                 raise CloudSetupNodeError(f"Setup node error: {err}") from err

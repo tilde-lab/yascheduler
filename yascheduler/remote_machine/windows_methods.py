@@ -138,7 +138,8 @@ async def deploy_local_archive(
     await run(
         f"""Expand-Archive {quote(str(rpath))} `
             -DestinationPath {quote(str(engine_dir))} `
-            -Force"""
+            -Force""",
+        check=True,
     )
     await sftp.remove(rpath)
 
@@ -161,14 +162,16 @@ async def deploy_remote_archive(
         log.debug(f"Downloading {url} to {str(rpath)}...")
     await run(
         f"""Invoke-WebRequest -Uri {quote(url)} `
-            -OutFile {quote(str(rpath))} -Force"""
+            -OutFile {quote(str(rpath))} -Force""",
+        check=True,
     )
     if log:
         log.debug(f"Unarchiving {name}...")
     await run(
         f"""Expand-Archive {quote(str(rpath))} `
             -DestinationPath {quote(str(engine_dir))} `
-            -Force"""
+            -Force""",
+        check=True,
     )
     await sftp.remove(rpath)
 
