@@ -2,6 +2,7 @@
 
 import random
 import string
+from pathlib import PurePath
 from typing import TypeVar
 
 from asyncssh.public_key import SSHKey
@@ -20,6 +21,9 @@ def get_rnd_name(prefix: str) -> str:
 
 def get_key_name(key: SSHKey) -> str:
     """Get SSHKey's name"""
-    key_filename = str(key.get_filename()) if key.get_filename() else None
-    key_fingerprint = key.get_fingerprint()
+    fname_opt = key.get_filename()
+    key_filename = fname_opt.decode("utf-8") if fname_opt else None
+    if key_filename:
+        key_filename = PurePath(key_filename).name
+    key_fingerprint = key.get_fingerprint("md5").split(":", maxsplit=1)[1]
     return key_filename or key.get_comment() or key_fingerprint

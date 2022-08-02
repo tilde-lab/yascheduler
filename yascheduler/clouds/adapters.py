@@ -46,6 +46,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud_contra]):
     supported_platform_checks: Tuple[SupportedPlatformChecker] = field()
     create_node: CreateNodeCallable[TConfigCloud_contra] = field()
     create_node_conn_timeout: int = field()
+    create_node_timeout: int = field()
     delete_node: DeleteNodeCallable[TConfigCloud_contra] = field()
     op_limit: int = field(default=1)
 
@@ -57,6 +58,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud_contra]):
         create_node: CreateNodeCallable[TConfigCloud_contra],
         delete_node: DeleteNodeCallable[TConfigCloud_contra],
         create_node_conn_timeout: int = 10,
+        create_node_timeout: int = 300,
         op_limit: int = 1,
     ):
         return cls(
@@ -64,6 +66,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud_contra]):
             supported_platform_checks=tuple(supported_platform_checks),
             create_node=create_node,
             create_node_conn_timeout=create_node_conn_timeout,
+            create_node_timeout=create_node_timeout,
             delete_node=delete_node,
             op_limit=op_limit,
         )
@@ -84,7 +87,6 @@ hetzner_adapter = CloudAdapter.create(
     name="hetzner",
     supported_platform_checks=[can_debian_buster],
     create_node=hetzner_create_node,
-    create_node_conn_timeout=10,
     delete_node=hetzner_delete_node,
     op_limit=5,
 )

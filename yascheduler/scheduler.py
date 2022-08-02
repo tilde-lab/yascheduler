@@ -479,7 +479,7 @@ class Scheduler:
         for task in tasks:
             yield UMessage(task.task_id, task)
 
-    @backoff.on_exception(backoff.fibo, AllSSHRetryExc, max_time=600)
+    @backoff.on_exception(backoff.fibo, AllSSHRetryExc, max_time=60)
     async def allocator_consumer(self, msg: UMessage[int, TaskModel]):
         """Allocate task to node or allocate new node"""
         await self.allocate_task(msg.payload)

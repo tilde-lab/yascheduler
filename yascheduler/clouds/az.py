@@ -129,7 +129,7 @@ def create_vm_params(
     img_ref = ImageReference.from_dict(asdict(vm_image))
     pub_key = SshPublicKey(
         path=str(PurePosixPath("/home", username, ".ssh/authorized_keys")),
-        key_data=ssh_key.export_public_key().decode("utf-8"),
+        key_data=ssh_key.export_public_key("openssh").decode("utf-8"),
     )
     custom_data = None
     if cloud_config:

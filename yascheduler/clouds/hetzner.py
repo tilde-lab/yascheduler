@@ -31,17 +31,16 @@ def get_client(cfg: ConfigCloudHetzner) -> HClient:
 def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
     "Get Hetzner ssh id"
     key_name = get_key_name(key)
+    pub_key = key.export_public_key("openssh").decode("utf-8")
 
     try:
-
-        return client.ssh_keys.create(
-            name=key_name, public_key=key.export_public_key().decode("utf-8")
-        ).id
+        return client.ssh_keys.create(name=key_name, public_key=pub_key).id
     except APIException as err:
         if "already" in str(err):
-            for hkey in client.ssh_keys.get_all(fingerprint=key.get_fingerprint()):
-                return hkey.id
-            for hkey in client.ssh_keys.get_all(name=key_name):
+            hkey = client.ssh_keys.get_by_fingerprint(
+                key.get_fingerprint("md5").split(":", maxsplit=1)[1]
+            ) or client.ssh_keys.get_by_name(key_name)
+            if hkey:
                 return hkey.id
             prefix = "yakey"
             name_len = len(get_rnd_name(prefix))

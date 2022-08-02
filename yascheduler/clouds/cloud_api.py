@@ -6,11 +6,12 @@ import json
 import logging
 from typing import Optional, Sequence, Union
 
+import backoff
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
 from attrs import asdict, define, field
 
 from ..config import ConfigLocal, EngineRepository
-from ..remote_machine import PRemoteMachine, RemoteMachine
+from ..remote_machine import PRemoteMachine, RemoteMachine, SSHRetryExc
 from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud_contra
 from .utils import get_rnd_name
 
@@ -93,17 +94,18 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
                 continue
             ssh_key = read_private_key(filepath)
             ssh_key.set_comment(filepath.name)
-            self.log.debug("LOADED KEY %s", filepath)
+            self.log.debug(
+                "LOADED KEY %s: %s", filepath.name, ssh_key.get_fingerprint("md5")
+            )
             return ssh_key
 
         key_name = get_rnd_name(prefix)
         filepath = self.local_config.keys_dir / key_name
-        ssh_key = generate_private_key(
-            alg_name="ssh-rsa", key_size=2048, exponent=65537
-        )
+        ssh_key = generate_private_key(alg_name="ssh-rsa", comment=key_name)
         ssh_key.write_private_key(filepath)
+        filepath.chmod(0o600)
         ssh_key.set_comment(key_name)
-        self.log.info("WRITTEN KEY %s", filepath)
+        self.log.info("WRITTEN KEY %s: %s", key_name, ssh_key.get_fingerprint("md5"))
         return ssh_key
 
     async def get_ssh_key(self) -> SSHKey:
@@ -126,7 +128,12 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
         keys = await asyncio.get_running_loop().run_in_executor(
             None, self.local_config.get_private_keys
         )
-        return await RemoteMachine.create(
+        retry = backoff.on_exception(
+            wait_gen=backoff.fibo,
+            max_time=self.adapter.create_node_timeout,
+            exception=SSHRetryExc,
+        )
+        return await retry(RemoteMachine.create)(
             host=ip_addr,
             username=self.config.username,
             client_keys=keys,

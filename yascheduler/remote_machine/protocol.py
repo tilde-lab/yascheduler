@@ -45,6 +45,7 @@ from asyncssh.sftp import (
 from typing_extensions import Protocol, Self, TypedDict, Unpack
 
 SFTPRetryExc = (
+    asyncio.exceptions.TimeoutError,
     SFTPError,
     SFTPFailure,
     SFTPBadMessage,
@@ -54,6 +55,7 @@ SFTPRetryExc = (
 )
 SSHRetryExc = (
     OSError,
+    asyncio.exceptions.TimeoutError,
     CompressionError,
     ConnectionLost,
     KeyExchangeFailed,
