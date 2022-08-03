@@ -12,17 +12,19 @@ from typing import (
     AsyncGenerator,
     Awaitable,
     Callable,
+    List,
     Mapping,
     Optional,
     Sequence,
     Set,
+    Tuple,
     Union,
 )
 
 import aiohttp
 import asyncssh
 import backoff
-from asyncssh.sftp import SFTPClient
+from asyncssh.sftp import SFTPClient, SFTPError
 from attrs import asdict, define, evolve, field
 from typing_extensions import Self
 
@@ -361,17 +363,34 @@ class Scheduler:
             ("local_folder", str(store_folder)),
         ]
 
-        @backoff.on_exception(backoff.fibo, SFTPRetryExc, max_time=60)
+        sftp_errors: List[Tuple[Optional[str], Exception]] = []
+        sftp_get_retry = backoff.on_exception(backoff.fibo, SFTPRetryExc, max_time=60)
+
         async def job():
             async with machine.sftp() as sftp:
-                await sftp.get(output_files, store_folder, preserve=True)
+                for out_file in output_files:
+                    try:
+                        await sftp_get_retry(sftp.get)(
+                            out_file, store_folder, preserve=True
+                        )
+                    except (OSError, SFTPError) as err:
+                        sftp_errors.append((out_file, err))
+                        self.log.warning(
+                            "Cannot download file for task_id=%s from %s: %s",
+                            task.task_id,
+                            out_file,
+                            err,
+                        )
                 await sftp.rmtree(machine.path(remote_folder))
 
         try:
-            await job()
+            await sftp_get_retry(job)()
         except Exception as err:
-            self.log.error("Cannot scp from %s: %s" % (remote_folder, err))
-            meta_add.append(("error", str(err)))
+            self.log.warning("Cannot scp from %s: %s" % (remote_folder, err))
+            sftp_errors.append((remote_folder, err))
+
+        if sftp_errors:
+            meta_add.append(("error", {p: str(e) for p, e in sftp_errors}))
 
         new_meta = dict(list(task.metadata.items()) + meta_add)
         if "error" in new_meta:
