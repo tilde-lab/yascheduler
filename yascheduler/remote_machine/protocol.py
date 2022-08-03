@@ -35,23 +35,33 @@ from asyncssh.misc import (
 from asyncssh.process import SSHClientProcess, SSHCompletedProcess
 from asyncssh.sftp import (
     SFTPBadMessage,
+    SFTPByteRangeLockConflict,
+    SFTPByteRangeLockRefused,
     SFTPClient,
     SFTPConnectionLost,
-    SFTPError,
+    SFTPDeletePending,
+    SFTPEOFError,
     SFTPFailure,
     SFTPInvalidHandle,
+    SFTPLockConflict,
     SFTPNoConnection,
+    SFTPNoMatchingByteRangeLock,
 )
 from typing_extensions import Protocol, Self, TypedDict, Unpack
 
 SFTPRetryExc = (
     asyncio.exceptions.TimeoutError,
-    SFTPError,
+    SFTPEOFError,
     SFTPFailure,
     SFTPBadMessage,
     SFTPNoConnection,
     SFTPConnectionLost,
     SFTPInvalidHandle,
+    SFTPLockConflict,
+    SFTPByteRangeLockConflict,
+    SFTPByteRangeLockRefused,
+    SFTPDeletePending,
+    SFTPNoMatchingByteRangeLock,
 )
 SSHRetryExc = (
     OSError,
