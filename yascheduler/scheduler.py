@@ -6,7 +6,7 @@ from asyncio.locks import Event, Semaphore
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
-from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import (
     Any,
     AsyncGenerator,
@@ -211,10 +211,6 @@ class Scheduler:
     ) -> bool:
         "Upload task data to remote machine"
         try:
-            # NOTE: sftp for PureWindowsPath is broken, absolute path is broken
-            assert not (
-                isinstance(remote_dir, PureWindowsPath) and remote_dir.is_absolute()
-            ), "Absolute paths for windows is not supported"
             await sftp.makedirs(PurePosixPath(remote_dir), exist_ok=True)
         except asyncssh.misc.Error as err:
             self.log.error(
