@@ -270,7 +270,8 @@ class Scheduler:
         # start task
         try:
             # detect cpus
-            ncpus = await machine.get_cpu_cores()
+            node = await self.db.get_node(task.ip)
+            ncpus = node and node.ncpus or await machine.get_cpu_cores()
             # placeholders {task_path}, {engine_path} and {ncpus} are supported
             run_cmd = engine.spawn.format(
                 engine_path=str(engine_path),
