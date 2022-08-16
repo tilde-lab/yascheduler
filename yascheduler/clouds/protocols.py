@@ -10,7 +10,7 @@ from asyncssh.public_key import SSHKey
 from attr import define
 from typing_extensions import Protocol, Self
 
-from ..config import ConfigCloud, ConfigLocal, EngineRepository
+from ..config import ConfigCloud, ConfigLocal, ConfigRemote, EngineRepository
 from ..db import DB
 
 SupportedPlatformChecker = Callable[[str], bool]
@@ -103,6 +103,7 @@ class PCloudAPI(Protocol[TConfigCloud_contra]):
     name: str
     config: TConfigCloud_contra
     local_config: ConfigLocal
+    remote_config: ConfigRemote
     engines: EngineRepository
     log: logging.Logger
 
@@ -113,6 +114,7 @@ class PCloudAPI(Protocol[TConfigCloud_contra]):
         adapter: PCloudAdapter[TConfigCloud_contra],
         config: TConfigCloud_contra,
         local_config: ConfigLocal,
+        remote_config: ConfigRemote,
         engines: EngineRepository,
         ssh_key_lock: Optional[asyncio.Lock] = None,
         log: Optional[logging.Logger] = None,
@@ -171,6 +173,7 @@ class PCloudAPIManager(Protocol):
         cls,
         db: DB,
         local_config: ConfigLocal,
+        remote_config: ConfigRemote,
         cloud_configs: Sequence[ConfigCloud],
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,

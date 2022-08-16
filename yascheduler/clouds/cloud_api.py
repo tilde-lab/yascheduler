@@ -11,7 +11,7 @@ from asyncssh.process import ProcessError
 from asyncssh.public_key import SSHKey, generate_private_key, read_private_key
 from attrs import asdict, define, field
 
-from ..config import ConfigLocal, EngineRepository
+from ..config import ConfigLocal, ConfigRemote, EngineRepository
 from ..remote_machine import PRemoteMachine, RemoteMachine, SSHRetryExc
 from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud_contra
 from .utils import get_rnd_name
@@ -47,6 +47,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
     adapter: PCloudAdapter[TConfigCloud_contra] = field()
     config: TConfigCloud_contra = field()
     local_config: ConfigLocal = field()
+    remote_config: ConfigRemote = field()
     engines: EngineRepository = field()
     log: logging.Logger = field()
     ssh_key_lock: asyncio.Lock = field(factory=asyncio.Lock)
@@ -62,6 +63,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
         adapter: PCloudAdapter,
         config: TConfigCloud_contra,
         local_config: ConfigLocal,
+        remote_config: ConfigRemote,
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
         ssh_key_lock: Optional[asyncio.Lock] = None,
@@ -76,6 +78,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
             adapter=adapter,
             config=config,
             local_config=local_config,
+            remote_config=remote_config,
             engines=engines,
             log=log,
             ssh_key_lock=ssh_key_lock or asyncio.Lock(),
@@ -143,6 +146,9 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
             client_keys=keys,
             logger=self.log,
             connect_timeout=self.adapter.create_node_conn_timeout,
+            data_dir=self.remote_config.data_dir,
+            engines_dir=self.remote_config.engines_dir,
+            tasks_dir=self.remote_config.tasks_dir,
             jump_host=self.config.jump_host,
             jump_username=self.config.jump_username,
         )
