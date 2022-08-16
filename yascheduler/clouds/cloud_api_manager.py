@@ -9,7 +9,7 @@ from typing import Mapping, Optional, Sequence, Set, Union
 from attrs import define, field
 from typing_extensions import Self
 
-from ..config import ConfigCloud, ConfigLocal, EngineRepository
+from ..config import ConfigCloud, ConfigLocal, ConfigRemote, EngineRepository
 from ..db import DB
 from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
 from .cloud_api import CloudAPI
@@ -32,6 +32,7 @@ class CloudAPIManager(PCloudAPIManager):
         cls,
         db: DB,
         local_config: ConfigLocal,
+        remote_config: ConfigRemote,
         cloud_configs: Sequence[ConfigCloud],
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
@@ -62,6 +63,7 @@ class CloudAPIManager(PCloudAPIManager):
                     adapter=adapter,
                     config=cfg,
                     local_config=local_config,
+                    remote_config=remote_config,
                     engines=engines,
                     ssh_key_lock=ssh_key_lock,
                     log=log,

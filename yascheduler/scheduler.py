@@ -115,6 +115,7 @@ class Scheduler:
         clouds = await CloudAPIManager.create(
             db=db,
             local_config=cfg.local,
+            remote_config=cfg.remote,
             cloud_configs=cfg.clouds,
             engines=cfg.engines,
             log=log,
