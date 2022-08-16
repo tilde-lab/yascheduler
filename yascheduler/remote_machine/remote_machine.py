@@ -89,11 +89,11 @@ DEFAULT_CONN_OPTS = SSHClientConnectionOptions(
 @define
 class RemoteMachineMetadata(PRemoteMachineMetadata):
     def __init__(self):
-        self._busy = False
+        self._busy = None
         self._free_since: Optional[datetime] = datetime.now()
 
     @property
-    def busy(self) -> bool:
+    def busy(self) -> Optional[bool]:
         return self._busy
 
     @busy.setter
@@ -372,9 +372,6 @@ class RemoteMachine(PRemoteMachine):
         """
         Check node occupancy by task for target engine
         """
-        # if engine is not supported on the machine
-        if not (set(engine.platforms) & set(self.platforms)):
-            return False
         if engine.check_pname:
             try:
                 if [x async for x in self.pgrep(engine.check_pname)]:
