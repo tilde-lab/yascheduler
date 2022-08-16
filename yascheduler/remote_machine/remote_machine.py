@@ -89,11 +89,11 @@ DEFAULT_CONN_OPTS = SSHClientConnectionOptions(
 @define
 class RemoteMachineMetadata(PRemoteMachineMetadata):
     def __init__(self):
-        self._busy = False
+        self._busy = None
         self._free_since: Optional[datetime] = datetime.now()
 
     @property
-    def busy(self) -> bool:
+    def busy(self) -> Optional[bool]:
         return self._busy
 
     @busy.setter

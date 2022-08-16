@@ -524,6 +524,11 @@ class Scheduler:
                 )
                 await self.do_task_webhook(task_id, task.metadata, TaskStatus.DONE)
             return
+        # if machine state is unknown
+        if machine.meta.busy is None:
+            engine = self.config.engines.get(task.metadata["engine"])
+            if engine:
+                await machine.start_occupancy_check(engine)
         # consume
         if not machine.meta.busy:
             self.log.debug(f"machine {machine.hostname} is free for task {task_id}")
