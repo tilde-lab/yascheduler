@@ -114,6 +114,7 @@ class PCloudAPI(Protocol[TConfigCloud_contra]):
         config: TConfigCloud_contra,
         local_config: ConfigLocal,
         engines: EngineRepository,
+        ssh_key_lock: Optional[asyncio.Lock] = None,
         log: Optional[logging.Logger] = None,
     ) -> Self:
         "Create cloud API"
