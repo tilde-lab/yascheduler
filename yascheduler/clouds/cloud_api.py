@@ -16,8 +16,6 @@ from ..remote_machine import PRemoteMachine, RemoteMachine, SSHRetryExc
 from .protocols import PCloudAdapter, PCloudAPI, PCloudConfig, TConfigCloud_contra
 from .utils import get_rnd_name
 
-SSH_KEY_LOCK = asyncio.Lock()
-
 
 class CloudCreateNodeError(Exception):
     """Cloud node allocation error"""
@@ -51,6 +49,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
     local_config: ConfigLocal = field()
     engines: EngineRepository = field()
     log: logging.Logger = field()
+    ssh_key_lock: asyncio.Lock = field(factory=asyncio.Lock)
 
     @property
     def name(self) -> str:
@@ -65,6 +64,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
         local_config: ConfigLocal,
         engines: EngineRepository,
         log: Optional[logging.Logger] = None,
+        ssh_key_lock: Optional[asyncio.Lock] = None,
     ):
         "Create cloud API"
         if log:
@@ -78,6 +78,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
             local_config=local_config,
             engines=engines,
             log=log,
+            ssh_key_lock=ssh_key_lock or asyncio.Lock(),
         )
 
     def get_op_semaphore(self) -> asyncio.Semaphore:
@@ -111,7 +112,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
 
     async def get_ssh_key(self) -> SSHKey:
         "Load or generate ssh key (cached)"
-        async with SSH_KEY_LOCK:
+        async with self.ssh_key_lock:
             return await asyncio.get_running_loop().run_in_executor(
                 None, self.get_ssh_key_sync
             )

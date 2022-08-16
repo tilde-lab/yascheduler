@@ -52,6 +52,7 @@ class CloudAPIManager(PCloudAPIManager):
         def filter_adapters(prefix: str):
             return filter(lambda x: x.name == prefix, adapters)
 
+        ssh_key_lock = asyncio.Lock()
         for cfg in cloud_configs:
             if cfg.max_nodes <= 0:
                 log.debug("Cloud %s is skipped because of <1 max nodes", cfg.prefix)
@@ -62,6 +63,7 @@ class CloudAPIManager(PCloudAPIManager):
                     config=cfg,
                     local_config=local_config,
                     engines=engines,
+                    ssh_key_lock=ssh_key_lock,
                     log=log,
                 )
         log.info("Active cloud APIs: %s", (", ".join(apis.keys()) or "-"))
