@@ -53,6 +53,16 @@ async def get_wmi_w32_os_caption(conn: SSHClientConnection) -> Optional[str]:
         return str(r.stdout)
 
 
+async def check_is_windows7(conn: SSHClientConnection) -> bool:
+    c = await get_wmi_w32_os_caption(conn)
+    return "7" in c if c else False
+
+
+async def check_is_windows8(conn: SSHClientConnection) -> bool:
+    c = await get_wmi_w32_os_caption(conn)
+    return "8" in c if c else False
+
+
 async def check_is_windows10(conn: SSHClientConnection) -> bool:
     c = await get_wmi_w32_os_caption(conn)
     return "10" in c if c else False

@@ -27,6 +27,8 @@ from .adapters import (
     debian_buster_adapter,
     debian_like_adapter,
     linux_adapter,
+    windows7_adapter,
+    windows8_adapter,
     windows10_adapter,
     windows11_adapter,
     windows_adapter,
@@ -52,6 +54,8 @@ ADAPTERS: Sequence[PRemoteMachineAdapter] = [
     linux_adapter,
     windows11_adapter,
     windows10_adapter,
+    windows8_adapter,
+    windows7_adapter,
     windows_adapter,
 ]
 

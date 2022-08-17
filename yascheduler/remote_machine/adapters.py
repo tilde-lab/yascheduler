@@ -13,6 +13,8 @@ from .checks import (
     check_is_debian_like,
     check_is_linux,
     check_is_windows,
+    check_is_windows7,
+    check_is_windows8,
     check_is_windows10,
     check_is_windows11,
 )
@@ -111,6 +113,18 @@ windows_adapter = RemoteMachineAdapter(
     pgrep=windows_pgrep,
     setup_node=windows_setup_node,
     checks=(check_is_windows,),
+)
+
+windows7_adapter = evolve(
+    windows_adapter,
+    platform="windows-8",
+    checks=(*windows_adapter.checks, check_is_windows7),
+)
+
+windows8_adapter = evolve(
+    windows_adapter,
+    platform="windows-8",
+    checks=(*windows_adapter.checks, check_is_windows8),
 )
 
 windows10_adapter = evolve(
