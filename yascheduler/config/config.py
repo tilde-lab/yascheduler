@@ -37,9 +37,15 @@ class Config:
                 config.add_section(sec_name)
 
         local = ConfigLocal.from_config_parser_section(config["local"])
+        remote = ConfigRemote.from_config_parser_section(config["remote"])
 
         # config prefixes
         cloud_prefixes = set(map(lambda x: x.split("_")[0], config.options("clouds")))
+        # inherit username
+        for prefix in cloud_prefixes:
+            key = f"{prefix}_user"
+            if key not in config.options("clouds"):
+                config["clouds"][key] = remote.username
         # available cloud config models
         cloud_variants = (
             ConfigCloudAzure,
@@ -58,8 +64,8 @@ class Config:
 
         return cls(
             db=ConfigDb.from_config_parser_section(config["db"]),
-            local=ConfigLocal.from_config_parser_section(config["local"]),
-            remote=ConfigRemote.from_config_parser_section(config["remote"]),
+            local=local,
+            remote=remote,
             clouds=list(clouds),
             engines=EngineRepository.from_config_parser(config, local.engines_dir),
         )
