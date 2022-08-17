@@ -364,7 +364,7 @@ async def _manage_node():
     db = await DB.create(config.db)
 
     ncpus = None
-    username = "root"
+    username = config.remote.username
     if "@" in args.host:
         username, args.host = args.host.split("@")
     if "~" in args.host:
