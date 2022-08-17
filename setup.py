@@ -19,6 +19,9 @@ class CustomInstall(install):
     """Custom install"""
 
     def run(self):
+        # workaround https://github.com/python/cpython/issues/86813
+        from concurrent.futures import ThreadPoolExecutor  # noqa: F401
+
         def _post_install():
             from yascheduler.variables import CONFIG_FILE
 
