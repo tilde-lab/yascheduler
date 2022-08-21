@@ -19,7 +19,7 @@ from .scheduler import Scheduler, get_logger
 from .variables import CONFIG_FILE
 
 
-def submit_():
+def submit():
     parser = argparse.ArgumentParser(
         description="Submit task to yascheduler via AiiDA script"
     )
