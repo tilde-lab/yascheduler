@@ -75,10 +75,12 @@ class YaScheduler(aiida.schedulers.Scheduler):
         pk = int(job_tmpl.job_name.split("-")[1])
         aiida_node = load_node(pk)
 
+        try: lines.append(f"PARENT={aiida_node.caller.uuid}")
+        except AttributeError: pass
+
         # We map the lowercase code labels onto yascheduler engines,
         # so that the required input file(s) can be deduced
         lines = [f"ENGINE={aiida_node.inputs.code.label.lower()}"]
-        lines.append(f"PARENT={aiida_node.caller.uuid}")
         lines.append(f"LABEL={job_tmpl.job_name}")
         return "\n".join(lines)
 

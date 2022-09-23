@@ -379,7 +379,7 @@ class Scheduler:
                             out_file,
                             err,
                         )
-                await sftp.rmtree(machine.path(remote_folder))
+                await sftp.rmtree(machine.path(remote_folder)) # uncomment to keep raw files
 
         try:
             await sftp_get_retry(job)()
@@ -415,9 +415,9 @@ class Scheduler:
             ncounters = await self.db.count_nodes_by_status()
             tcounters = await self.db.count_tasks_by_status()
             tmpl = (
-                "JOBS: {tasks} "
-                "NODES: b:{n_busy}/e:{n_enabled}/t:{n_total} "
-                "TASKS: r:{t_run}/t:{t_todo}/d:{t_done}"
+                "THREADS: {tasks} "
+                "NODES: busy:{n_busy}/enabled:{n_enabled}/total:{n_total} "
+                "TASKS: run:{t_run}/todo:{t_todo}/done:{t_done}"
             )
             msg = tmpl.format(
                 tasks=len(asyncio.all_tasks()),
