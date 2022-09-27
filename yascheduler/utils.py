@@ -44,7 +44,7 @@ def submit():
                 pass
 
     label = script_params.get("LABEL", "AiiDA job")
-    metadata: Mapping[str, Any] = {"local_folder": str(script_file.parent)}
+    metadata: Mapping[str, Any] = {"local_folder": os.getcwd()} # NB AiiDA chdirs to repo, but if not?
     if not script_params.get("ENGINE"):
         raise ValueError("Script has not defined an engine")
 
