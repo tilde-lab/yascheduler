@@ -9,7 +9,7 @@ Currently it supports several scientific simulation codes in chemistry
 and solid state physics.
 Any other scientific simulation code can be supported via the declarative
 control template system (see `yascheduler.conf` settings file).
-An example dummy C++ code with its configuration template is included.
+There is an [example dummy C++ code][dummy-engine] with its configuration template.
 
 ## Installation
 
@@ -475,6 +475,7 @@ verdi code setup
 
 [ansible-aiida]: https://github.com/mpds-io/ansible-mpds
 [mpds-aiida]: https://github.com/mpds-io/mpds-aiida
+[dummy-engine]: https://github.com/tilde-lab/dummy-engine
 
 ## License
 
