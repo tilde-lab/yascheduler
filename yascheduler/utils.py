@@ -330,7 +330,7 @@ def show_nodes():
 
 async def _manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
-    parser.add_argument("host", help="IP[~ncpus]")
+    parser.add_argument("host", help="[user@]IP[~ncpus]")
     parser.add_argument(
         "--skip-setup",
         required=False,
