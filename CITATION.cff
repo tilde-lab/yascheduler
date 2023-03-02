@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+title: yascheduler
+type: software
+license: MIT
+authors:
+  - given-names: Sergei
+    family-names: Korolev
+    orcid: 'https://orcid.org/0009-0003-0771-206X'
+  - given-names: Andrey
+    family-names: Sobolev
+    orcid: 'https://orcid.org/0000-0001-5086-6601'
+  - given-names: Evgeny
+    family-names: Blokhin
+    orcid: 'https://orcid.org/0000-0002-5333-3947'
+doi: 10.5281/zenodo.7693555
+url: 'https://github.com/tilde-lab/yascheduler'
+repository-artifact: 'https://pypi.org/project/yascheduler'
+keywords:
+  - scheduler
+  - materials science
+  - ab initio
+  - materials informatics
+  - azure cloud
+  - upscale cloud
+  - hetzner cloud
