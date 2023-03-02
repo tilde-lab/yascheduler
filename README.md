@@ -1,5 +1,7 @@
 # Yet another computing scheduler & cloud orchestration engine
 
+[![DOI](https://zenodo.org/badge/222936146.svg)](https://doi.org/10.5281/zenodo.7693555)
+[![PyPI](https://img.shields.io/pypi/v/yascheduler.svg?style=flat)](https://pypi.org/project/yascheduler)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftilde-lab%2Fyascheduler?ref=badge_shield)
 
 **Yascheduler** is a simple job scheduler designed for submitting scientific
