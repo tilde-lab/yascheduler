@@ -379,7 +379,9 @@ class Scheduler:
                             out_file,
                             err,
                         )
-                await sftp.rmtree(machine.path(remote_folder)) # uncomment to keep raw files
+                await sftp.rmtree(
+                    machine.path(remote_folder)
+                )  # uncomment to keep raw files
 
         try:
             await sftp_get_retry(job)()
@@ -531,7 +533,7 @@ class Scheduler:
             if engine:
                 await machine.start_occupancy_check(engine)
         # consume
-        if not machine.meta.busy:
+        if machine.meta.busy is False:
             self.log.debug(f"machine {machine.hostname} is free for task {task_id}")
             await self.consume_task(machine, task)
 

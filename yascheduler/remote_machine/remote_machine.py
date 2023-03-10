@@ -401,13 +401,11 @@ class RemoteMachine(PRemoteMachine):
         self.jobs.difference_update([t for t in self.jobs if t.done()])
 
         async def occupancy_checker():
-            while not self.cancellation_event.is_set() and self.meta.busy:
+            while not self.cancellation_event.is_set() and self.meta.busy is not False:
                 try:
-                    busy = await asyncio.wait_for(
+                    self.meta.busy = await asyncio.wait_for(
                         self.occupancy_check(engine), timeout=engine.sleep_interval
                     )
-                    if not busy:
-                        self.meta.busy = False
                 except asyncio.TimeoutError:
                     t = "Engine {} busy check timeouted on {}"
                     self.log.warning(t.format(engine.name, self.hostname))
