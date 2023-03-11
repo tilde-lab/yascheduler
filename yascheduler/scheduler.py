@@ -240,8 +240,8 @@ class Scheduler:
     ) -> bool:
         "Run task on remote machine"
         self.log.info(
-            "Submitting task_id=%s %s to %s"
-            % (task.task_id, task.label, machine.hostname)
+            "Submitting task_id=%s %s with %s to %s"
+            % (task.task_id, task.label, engine.name, machine.hostname)
         )
         assert task.metadata.get("remote_folder")
         machine.meta.busy = True
