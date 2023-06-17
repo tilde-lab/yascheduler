@@ -367,7 +367,7 @@ class RemoteMachine(PRemoteMachine):
             conn=conn,
             run=self.run,
             quote=self.quote,
-            engines=engines,
+            engines=engines.filter_platforms(self.platforms),
             engines_dir=self.engines_dir,
             log=self.log,
         )
