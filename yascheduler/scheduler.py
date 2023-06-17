@@ -518,7 +518,7 @@ class Scheduler:
         broken_tasks_passes = 20
         task_id, task = msg.id, msg.payload
         machine = self.remote_machines.get(task.ip)
-        if not machine:
+        if machine is None:
             self.log.warning(f"Task {task_id} - machine {task.ip} is gone")
             machine_not_found.update([task_id])
             if machine_not_found[task_id] > broken_tasks_passes:
