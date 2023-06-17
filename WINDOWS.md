@@ -82,8 +82,6 @@ if (!(Test-Path $registryPath)) {
 New-ItemProperty -Path $registryPath -Name DefaultShell `
     -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" `
     -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $registryPath -Name DefaultShellCommandOption `
-    -Value "/c" -PropertyType String -Force | Out-Null
 ```
 
 Enable and start OpenSSH service:
