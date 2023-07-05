@@ -641,7 +641,8 @@ class Scheduler:
                 await asyncio.sleep(1)
 
         await asyncio.wait(
-            [wait_some_machines(), asyncio.sleep(30)], return_when="FIRST_COMPLETED"
+            [asyncio.create_task(x) for x in [wait_some_machines(), asyncio.sleep(30)]],
+            return_when="FIRST_COMPLETED",
         )
 
         allocate_co = self.create_producer_consumers(
