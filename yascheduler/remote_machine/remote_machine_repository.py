@@ -65,7 +65,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
 
         checks: Sequence[Callable[[PRemoteMachine], bool]] = []
         if busy is True:
-            checks.append(lambda x: x.meta.busy)
+            checks.append(lambda x: x.meta.busy is True)
         if busy is False:
             checks.append(lambda x: not x.meta.busy)
         if platforms:

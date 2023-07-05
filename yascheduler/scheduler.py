@@ -289,7 +289,8 @@ class Scheduler:
         "Allocate task to a free remote machine or ask allocation of new cloud machine"
         self.log.debug(f"Allocating task {task.task_id}")
         engine_name: Optional[str] = task.metadata.get("engine", None)
-        if not engine_name or engine_name not in self.config.engines:
+        engine: Optional[Engine] = self.config.engines.get(engine_name)
+        if engine is None:
             self.log.warning(
                 "Unsupported engine '%s' for task_id=%s" % (engine_name, task.task_id)
             )
@@ -298,7 +299,6 @@ class Scheduler:
             )
             await self.do_task_webhook(task.task_id, task.metadata, TaskStatus.DONE)
             return False
-        engine: Engine = self.config.engines[engine_name]
 
         busy_node_ips = [
             t.ip for t in await self.db.get_tasks_by_status((TaskStatus.RUNNING,))
@@ -518,7 +518,7 @@ class Scheduler:
         broken_tasks_passes = 20
         task_id, task = msg.id, msg.payload
         machine = self.remote_machines.get(task.ip)
-        if not machine:
+        if machine is None:
             self.log.warning(f"Task {task_id} - machine {task.ip} is gone")
             machine_not_found.update([task_id])
             if machine_not_found[task_id] > broken_tasks_passes:
