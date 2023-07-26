@@ -11,10 +11,13 @@ jobs:
   lint:
     name: Lint Code Base
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8"]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Fetch git base ref
@@ -24,7 +27,7 @@ jobs:
 
       - name: Get npm cache directory
         id: npm-cache-dir
-        run: echo "::set-output name=dir::$(npm config get cache)"
+        run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
 
       - name: npm cache
         uses: actions/cache@v3
@@ -37,23 +40,22 @@ jobs:
       - name: Install node tools
         run: npm i --silent -g markdownlint-cli@0.31.1
 
-      - uses: mfinelli/setup-shfmt@v1
+      - uses: mfinelli/setup-shfmt@v2
         with:
           shfmt-version: 3.5.0
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.7"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+            pyproject.toml
 
       - name: Install pip deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install .[lint]
 
       - name: pre-commit cache
         uses: actions/cache@v3
