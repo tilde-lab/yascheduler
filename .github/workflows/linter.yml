@@ -51,4 +51,4 @@ jobs:
         run: pylint -E yascheduler
 
       - name: pyupgrade
-        run: pyupgrade --py38=plus --keep-percent-format
+        run: pyupgrade --py38-plus --keep-percent-format
