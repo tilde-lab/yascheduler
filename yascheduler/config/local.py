@@ -5,9 +5,9 @@ from configparser import SectionProxy
 from pathlib import Path, PurePath
 from typing import Optional, Sequence
 
-from attrs import define, field, validators
+from attrs import define, field, fields, validators
 
-from .utils import _make_default_field
+from .utils import _make_default_field, warn_unknown_fields
 
 
 @define(frozen=True)
@@ -43,8 +43,16 @@ class ConfigLocal:
         return list(filepaths)
 
     @classmethod
+    def get_valid_config_parser_fields(cls) -> Sequence[str]:
+        "Returns a list of valid config keys"
+        return [f.name for f in fields(cls)]
+
+    @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigLocal":
         "Create config from config parser's section"
+
+        warn_unknown_fields(cls.get_valid_config_parser_fields(), sec)
+
         data_dir = Path(sec.get("data_dir", "./data")).resolve()
         return ConfigLocal(
             data_dir,

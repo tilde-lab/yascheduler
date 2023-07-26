@@ -3,12 +3,12 @@
 
 from configparser import SectionProxy
 from functools import partial
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
-from attrs import define, field, validators
+from attrs import define, field, fields, validators
 from typing_extensions import Self
 
-from .utils import _make_default_field, opt_str_val
+from .utils import _make_default_field, opt_str_val, warn_unknown_fields
 
 
 def _check_az_user(_: "ConfigCloudAzure", __, value: str):
@@ -67,10 +67,30 @@ class ConfigCloudAzure:
     jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
     @classmethod
+    def get_valid_config_parser_fields(cls) -> Sequence[str]:
+        "Returns a list of valid config keys"
+        exclude_names = ["prefix", "username", "jump_username", "vm_image", "vm_size"]
+        include_names = ["user", "jump_user", "image", "size"]
+        return [
+            f"{cls.prefix}_{x}"
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
+        ]
+
+    @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudAzure":
         "Create config from config parser's section"
 
         fmt = partial(_fmt_key, cls.prefix)
+
+        warn_unknown_fields(
+            [
+                *cls.get_valid_config_parser_fields(),
+                *ConfigCloudHetzner.get_valid_config_parser_fields(),
+                *ConfigCloudUpcloud.get_valid_config_parser_fields(),
+            ],
+            sec,
+        )
 
         vm_image = sec.get(fmt("image"))
         image_ref = None
@@ -114,9 +134,30 @@ class ConfigCloudHetzner:
     jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
     @classmethod
+    def get_valid_config_parser_fields(cls) -> Sequence[str]:
+        "Returns a list of valid config keys"
+        exclude_names = ["prefix", "username", "jump_username"]
+        include_names = ["user", "jump_user"]
+        return [
+            f"{cls.prefix}_{x}"
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
+        ]
+
+    @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudHetzner":
         "Create config from config parser's section"
         fmt = partial(_fmt_key, cls.prefix)
+
+        warn_unknown_fields(
+            [
+                *ConfigCloudAzure.get_valid_config_parser_fields(),
+                *cls.get_valid_config_parser_fields(),
+                *ConfigCloudUpcloud.get_valid_config_parser_fields(),
+            ],
+            sec,
+        )
+
         return cls(
             token=sec.get(fmt("token")),
             max_nodes=sec.getint(fmt("max_nodes")),
@@ -145,9 +186,30 @@ class ConfigCloudUpcloud:
     jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
     @classmethod
+    def get_valid_config_parser_fields(cls) -> Sequence[str]:
+        "Returns a list of valid config keys"
+        exclude_names = ["prefix", "username", "jump_username"]
+        include_names = ["user", "jump_user"]
+        return [
+            f"{cls.prefix}_{x}"
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
+        ]
+
+    @classmethod
     def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudUpcloud":
         "Create config from config parser's section"
         fmt = partial(_fmt_key, cls.prefix)
+
+        warn_unknown_fields(
+            [
+                *ConfigCloudAzure.get_valid_config_parser_fields(),
+                *ConfigCloudHetzner.get_valid_config_parser_fields(),
+                *cls.get_valid_config_parser_fields(),
+            ],
+            sec,
+        )
+
         return cls(
             login=sec.get(fmt("login")),
             password=sec.get(fmt("password")),
