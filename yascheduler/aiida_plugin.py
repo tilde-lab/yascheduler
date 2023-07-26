@@ -3,8 +3,10 @@ Aiida plugin for yascheduler,
 with respect to the supported yascheduler engines
 """
 
-import aiida.schedulers
-from aiida.orm import load_node
+import aiida.schedulers  # pylint: disable=import-error
+from aiida.orm import load_node  # pylint: disable=import-error
+
+# pylint: disable=import-error
 from aiida.schedulers.datastructures import JobInfo, JobState, NodeNumberJobResource
 
 _MAP_STATUS_YASCHEDULER = {
@@ -39,6 +41,8 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         The command to report full information on existing jobs.
         """
+
+        # pylint: disable=import-error
         from aiida.common.exceptions import FeatureNotAvailable
 
         if user:
@@ -79,8 +83,10 @@ class YaScheduler(aiida.schedulers.Scheduler):
         # so that the required input file(s) can be deduced
         lines = [f"ENGINE={aiida_node.inputs.code.label.lower()}"]
 
-        try: lines.append(f"PARENT={aiida_node.caller.uuid}")
-        except AttributeError: pass
+        try:
+            lines.append(f"PARENT={aiida_node.caller.uuid}")
+        except AttributeError:
+            pass
 
         lines.append(f"LABEL={job_tmpl.job_name}")
         return "\n".join(lines)

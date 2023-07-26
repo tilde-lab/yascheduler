@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+"Remote machine"
 
 import asyncio
 import logging
@@ -208,7 +208,7 @@ class RemoteMachine(PRemoteMachine):
             await aall(amap(lambda y: with_limit(conn, y), x.checks)) for x in ADAPTERS
         ]
 
-        for candidate, check in zip(ADAPTERS, checks):
+        for candidate, check in zip(ADAPTERS, checks, strict=True):
             if check:
                 platforms.append(candidate.platform)
             if check and not adapter:
@@ -308,11 +308,12 @@ class RemoteMachine(PRemoteMachine):
 
     @property
     def path(self) -> Type[PurePath]:
+        "Return path of the adapter"
         return self.adapter.path
 
-    def quote(self, s: str) -> str:
+    def quote(self, string: str) -> str:
         "Platform-specific shell quoting"
-        return self.adapter.quote(s)
+        return self.adapter.quote(string)
 
     @my_backoff_exc()
     async def run(
@@ -362,6 +363,7 @@ class RemoteMachine(PRemoteMachine):
         """
         self.log.info(f"CPUs count: {await self.get_cpu_cores()}")
         conn = await self.get_conn()
+        # pylint: disable=redundant-keyword-arg
         retry = my_backoff_exc(exception=AllSSHRetryExc)
         await retry(self.adapter.setup_node)(
             conn=conn,
@@ -380,16 +382,16 @@ class RemoteMachine(PRemoteMachine):
             try:
                 if [x async for x in self.pgrep(engine.check_pname)]:
                     return True
-            except SSHRetryExc as e:
-                self.log.info(f"Node {self.hostname} failed pgrep: {e}")
+            except SSHRetryExc as exc:
+                self.log.info(f"Node {self.hostname} failed pgrep: {exc}")
                 await self.renew_conn()
         if engine.check_cmd:
             try:
-                r = await self.run(engine.check_cmd)
-                if r.returncode == engine.check_cmd_code:
+                proc = await self.run(engine.check_cmd)
+                if proc.returncode == engine.check_cmd_code:
                     return True
-            except SSHRetryExc as e:
-                self.log.info(f"Node {self.hostname} failed command: {e}")
+            except SSHRetryExc as exc:
+                self.log.info(f"Node {self.hostname} failed command: {exc}")
                 await self.renew_conn()
         return False
 
@@ -407,9 +409,9 @@ class RemoteMachine(PRemoteMachine):
                         self.occupancy_check(engine), timeout=engine.sleep_interval
                     )
                 except asyncio.TimeoutError:
-                    t = "Engine {} busy check timeouted on {}"
-                    self.log.warning(t.format(engine.name, self.hostname))
-                except Exception as err:
+                    tmpl = "Engine {} busy check timeouted on {}"
+                    self.log.warning(tmpl.format(engine.name, self.hostname))
+                except Exception as err:  # pylint: disable=broad-exception-caught
                     self.log.warning(err)
                 await asyncio.sleep(engine.sleep_interval)
 
