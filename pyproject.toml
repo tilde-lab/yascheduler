@@ -1,0 +1,147 @@
+[build-system]
+# build the package with [flit](https://flit.readthedocs.io)
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "yascheduler"
+version = "1.0.11"
+description = """Yet another computing scheduler and cloud orchestration engine"""
+authors = [
+     {name = "Evgeny Blokhin", email = "eb@tilde.pro"},
+     {name = "Sergei Korolev", email = "knopki@duck.com"},
+     {name = "Andrey Sobolev"}
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Framework :: AiiDA"
+]
+requires-python = ">=3.8"
+dependencies = [
+    "aiohttp~=3.8",
+    "asyncssh~=2.11",
+    "asyncstdlib~=3.10",
+    "attrs~=21.0",
+    "azure-identity~=1.10.0",
+    "azure-mgmt-compute~=27.2.0",
+    "azure-mgmt-network~=20.0.0",
+    "backoff~=2.1.2",
+    "hcloud~=1.17",
+    "pg8000~=1.19",
+    "python-daemon~=2.3",
+    "typing-extensions >= 4.2.0; python_version < '3.11'",
+    "upcloud_api~=2.0",
+]
+
+[project.optional-dependencies]
+lint = [
+     "autoflake",
+     "black >= 23.1",
+     "flake8",
+     "flake8-bugbear",
+     "isort",
+     "pylint",
+     "pylint-per-file-ignores >= 1",
+     "pyupgrade",
+]
+release = [
+    "commitizen",
+    "flit",
+]
+
+[project.urls]
+Home = "https://github.com/tilde-lab/yascheduler"
+Changelog = "https://github.com/tilde-lab/yascheduler/blob/master/CHANGELOG.md"
+Issues = "https://github.com/tilde-lab/yascheduler/issues"
+Source = "https://github.com/tilde-lab/yascheduler"
+
+[project.scripts]
+yascheduler = "yascheduler.utils:daemonize"
+yasubmit = "yascheduler.utils:submit"
+yastatus = "yascheduler.utils:check_status"
+yanodes = "yascheduler.utils:show_nodes"
+yasetnode = "yascheduler.utils:manage_node"
+yainit = "yascheduler.utils:init"
+
+[project.entry-points."aiida.schedulers"]
+yascheduler = "yascheduler.aiida_plugin:YaScheduler"
+
+[tool.flit.external-data]
+directory = "yascheduler/data"
+
+[tool.flit.module]
+name = "yascheduler"
+
+[tool.autoflake]
+expand-star-imports = true
+ignore-init-module-imports = true
+remove-all-unused-imports = true
+remove-duplicate-keys = true
+remove-unused-variables = true
+
+[tool.black]
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.4.0"
+tag_format = "v$version"
+major_version_zero = true
+version_files = [
+    "pyproject.toml:^version",
+    "yascheduler/__init__.py:^__version__",
+]
+update_changelog_on_bump = true
+
+[tool.isort]
+profile = "black"
+py_version = 38
+
+[tool.pylint.MASTER]
+load-plugins=[
+    "pylint_per_file_ignores",
+]
+
+[tool.pylint.main]
+jobs = 0
+py-version = "3.8"
+recursive = true
+suggestion-mode = true
+
+[tool.pylint.basic]
+good-names = ["db", "id", "x", "xy", "y", "_", "__"]
+
+[tool.pylint.design]
+max-args = 7
+max-attributes = 10
+min-public-methods = 1
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.reports]
+output-format = "colorized"
+reports = "no"
+score = "no"
+
+[tool.pylint-per-file-ignores]
+"/tests/" = "redefined-outer-name"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--cov=metis_client --cov-report=term --no-cov-on-fail --cov-fail-under=99"
