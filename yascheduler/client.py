@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from pathlib import PurePath
-from typing import Any, Mapping, MutableMapping, Optional, Sequence, Union
+from typing import Any, Mapping, Optional, Sequence, Union
 
 from attrs import asdict
 

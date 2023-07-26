@@ -292,7 +292,9 @@ class Scheduler:
         engine: Optional[Engine] = self.config.engines.get(engine_name)
         if engine is None:
             self.log.warning(
-                "Unsupported engine '%s' for task_id=%s" % (engine_name, task.task_id)
+                "Unsupported engine '{}' for task_id={}".format(
+                    engine_name, task.task_id
+                )
             )
             await self.db.set_task_error(
                 task.task_id, metadata=task.metadata, error="unsupported engine"
@@ -386,7 +388,7 @@ class Scheduler:
         try:
             await sftp_get_retry(job)()
         except Exception as err:
-            self.log.warning("Cannot scp from %s: %s" % (remote_folder, err))
+            self.log.warning(f"Cannot scp from {remote_folder}: {err}")
             sftp_errors.append((remote_folder, err))
 
         if sftp_errors:

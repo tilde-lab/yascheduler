@@ -1,0 +1,71 @@
+---
+# yamllint disable rule:line-length
+name: Push action
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  release:
+    name: Bump version and create draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        if: ${{ !env.ACT }} # skip during local actions testing
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[release]
+
+      - name: Create bump and changelog
+        id: cz
+        if: github.repository == 'tilde-lab/yascheduler'
+        uses: commitizen-tools/commitizen-action@e41bf7f2029bc8175af362badd6fd0860a329b0f
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          changelog_increment_filename: .CHANGELOG-CURRENT.md
+          push: true
+          commit: true
+
+      - name: Print new version
+        if: github.repository == 'tilde-lab/yascheduler'
+        run: echo "Bumped to version ${{ steps.cz.outputs.version }}"
+
+      - name: Build
+        run: flit build
+
+      - name: Stop if no bump
+        id: no-bump
+        continue-on-error: true
+        # will fail if not on exact tag
+        run: git describe --tags --exact-match
+
+      - name: Create Release Draft
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844
+        if: steps.no-bump.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          draft: true
+          tag_name: v${{ steps.cz.outputs.version }}
+          body_path: .CHANGELOG-CURRENT.md
+          fail_on_unmatched_files: true
+          files: dist/*

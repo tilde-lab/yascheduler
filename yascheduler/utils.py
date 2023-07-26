@@ -44,7 +44,9 @@ def submit():
                 pass
 
     label = script_params.get("LABEL", "AiiDA job")
-    metadata: Mapping[str, Any] = {"local_folder": os.getcwd()} # NB AiiDA chdirs to repo, but if not?
+    metadata: Mapping[str, Any] = {
+        "local_folder": os.getcwd()
+    }  # NB AiiDA chdirs to repo, but if not?
     if not script_params.get("ENGINE"):
         raise ValueError("Script has not defined an engine")
 
@@ -118,7 +120,10 @@ async def _check_status():  # noqa: C901
 
     if args.convergence:
         try:
+            # pylint: disable=import-error
             from numpy import nan
+
+            # pylint: disable=import-error
             from pycrystal import CRYSTOUT, CRYSTOUT_Error
 
             local_parsing_ready = True
@@ -270,7 +275,6 @@ def _init_systemd(install_path: Path):
 
 
 def _init_sysv(install_path: Path):
-
     print("Installing SysV service")
 
     # create sysv script in /etc/init.d
@@ -312,16 +316,25 @@ async def _show_nodes():
     tasks = await db.get_tasks_by_status(statuses=[TaskStatus.RUNNING])
     nodes = await db.get_all_nodes()
     for node in nodes:
-        node_tasks = list(filter(lambda x: x.ip == node.ip, tasks))
-        node_task = ["-", "-"]
-        for x in node_tasks:
-            node_task = [x.label, x.task_id]
-        data = tuple(
-            [node.ip, node.ncpus or "MAX", node.enabled]
-            + node_task
-            + [node.cloud or ""]
+        tmpl = (
+            "ip={ip} ncpus={ncpus} enabled={enabled} "
+            "occupied_by={occ} (task_id={tid}) {cloud}"
         )
-        print("ip=%s ncpus=%s enabled=%s occupied_by=%s (task_id=%s) %s" % data)
+        node_tasks = list(filter(lambda x: x.ip == node.ip, tasks))
+        node_label = "-"
+        task_id = "-"
+        for x in node_tasks:
+            node_label = x.label
+            task_id = x.task_id
+        msg = tmpl.format(
+            ip=node.ip,
+            ncpus=node.ncpus or "MAX",
+            enabled=node.enabled,
+            occ=node_label,
+            tid=task_id,
+            cloud=node.cloud or "",
+        )
+        print(msg)
 
 
 def show_nodes():
@@ -385,7 +398,9 @@ async def _manage_node():
         for task_id in task_ids:
             await db.update_task_status(task_id, TaskStatus.DONE)
             print(
-                "An associated task %s at %s is now marked done!" % (task_id, args.host)
+                "An associated task {} at {} is now marked done!".format(
+                    task_id, args.host
+                )
             )
 
         await db.remove_node(args.host)
@@ -444,10 +459,11 @@ def daemonize(log_file=None):
     logger = get_logger(log_file, level=logging._nameToLevel[args.log_level])
 
     async def on_signal(
-        y: Scheduler, shield: Sequence[asyncio.Task], signame: str, signum: int
+        y: Scheduler, shield: Sequence[asyncio.Task], sig: signal.Signals
     ):
+        signame = signal.strsignal(sig)
         logger.info(f"Received signal {signame}")
-        if signum in [signal.SIGTERM, signal.SIGINT]:
+        if sig in [signal.SIGTERM, signal.SIGINT]:
             await y.stop()
             shielded = [*shield, asyncio.current_task()]
             tasks = [t for t in asyncio.all_tasks() if t not in shielded]
@@ -468,9 +484,8 @@ def daemonize(log_file=None):
         for sig in [signal.SIGTERM, signal.SIGINT]:
 
             def handler():
-                return asyncio.create_task(
-                    on_signal(yac, shielded, sig.name, sig.value)
-                )
+                task = on_signal(yac, shielded, sig)  # noqa: B023
+                return asyncio.create_task(task)
 
             loop.add_signal_handler(sig, handler)
 

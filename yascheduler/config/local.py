@@ -39,7 +39,7 @@ class ConfigLocal:
 
     def get_private_keys(self) -> Sequence[PurePath]:
         "List private key file paths"
-        filepaths = filter(lambda x: x.is_file(), self.keys_dir.iterdir())
+        filepaths = filter(lambda x: x.is_file(), Path(self.keys_dir).iterdir())
         return list(filepaths)
 
     @classmethod

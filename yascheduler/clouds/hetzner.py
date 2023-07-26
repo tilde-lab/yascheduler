@@ -27,7 +27,7 @@ def get_client(cfg: ConfigCloudHetzner) -> HClient:
     return HClient(cfg.token)
 
 
-@lru_cache()
+@lru_cache
 def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
     "Get Hetzner ssh id"
     key_name = get_key_name(key)

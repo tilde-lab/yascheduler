@@ -71,7 +71,7 @@ class CloudAdapter(PCloudAdapter[TConfigCloud_contra]):
             op_limit=op_limit,
         )
 
-    @lru_cache()  # noqa: B019
+    @lru_cache  # noqa: B019
     def get_op_semaphore(self) -> asyncio.Semaphore:
         return asyncio.Semaphore(self.op_limit)
 
