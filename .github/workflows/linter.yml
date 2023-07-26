@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Fetch git base ref
@@ -40,7 +40,7 @@ jobs:
       - name: Install node tools
         run: npm i --silent -g markdownlint-cli@0.31.1
 
-      - uses: mfinelli/setup-shfmt@v1
+      - uses: mfinelli/setup-shfmt@v2
         with:
           shfmt-version: 3.5.0
 
