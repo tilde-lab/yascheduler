@@ -22,15 +22,20 @@ from attrs import define, field, validators
 from typing_extensions import Self
 
 from .adapters import (
+    debian_10_adapter,
+    debian_11_adapter,
+    debian_12_adapter,
+    debian_13_adapter,
+    debian_14_adapter,
+    debian_15_adapter,
     debian_adapter,
-    debian_bullseye_adapter,
-    debian_buster_adapter,
     debian_like_adapter,
     linux_adapter,
     windows7_adapter,
     windows8_adapter,
     windows10_adapter,
     windows11_adapter,
+    windows12_adapter,
     windows_adapter,
 )
 from .exc import PlatformGuessFailed
@@ -47,15 +52,20 @@ from .protocol import (
 )
 
 ADAPTERS: Sequence[PRemoteMachineAdapter] = [
-    debian_bullseye_adapter,
-    debian_buster_adapter,
+    debian_10_adapter,
+    debian_11_adapter,
+    debian_12_adapter,
+    debian_13_adapter,
+    debian_14_adapter,
+    debian_15_adapter,
     debian_adapter,
     debian_like_adapter,
     linux_adapter,
-    windows11_adapter,
     windows10_adapter,
-    windows8_adapter,
+    windows11_adapter,
+    windows12_adapter,
     windows7_adapter,
+    windows8_adapter,
     windows_adapter,
 ]
 
