@@ -1,5 +1,6 @@
 "OS checks"
 
+from functools import partial
 from typing import Optional, Tuple
 
 from asyncssh.connection import SSHClientConnection
@@ -38,16 +39,18 @@ async def check_is_debian(conn: SSHClientConnection) -> bool:
     return os_release[0] == "debian" if os_release else False
 
 
-async def check_is_debian_buster(conn: SSHClientConnection) -> bool:
-    "Check for Debian 10"
+async def _check_debian_version(version: str, conn: SSHClientConnection) -> bool:
+    "Check for Debian version"
     os_release = await _get_os_release(conn)
-    return os_release[2] == "10" if os_release else False
+    return os_release[2] == version if os_release else False
 
 
-async def check_is_debian_bullseye(conn: SSHClientConnection) -> bool:
-    "Check for Debian 11"
-    os_release = await _get_os_release(conn)
-    return os_release[2] == "11" if os_release else False
+check_is_debian_10 = partial(_check_debian_version, "10")
+check_is_debian_11 = partial(_check_debian_version, "11")
+check_is_debian_12 = partial(_check_debian_version, "12")
+check_is_debian_13 = partial(_check_debian_version, "13")
+check_is_debian_14 = partial(_check_debian_version, "14")
+check_is_debian_15 = partial(_check_debian_version, "15")
 
 
 @lru_cache
@@ -65,25 +68,16 @@ async def get_wmi_w32_os_caption(conn: SSHClientConnection) -> Optional[str]:
         return str(proc.stdout)
 
 
-async def check_is_windows7(conn: SSHClientConnection) -> bool:
-    "Check for Windows 7"
+async def _check_is_windows_caption_version(
+    version: str, conn: SSHClientConnection
+) -> bool:
+    "Check for Windows version in caption"
     caption = await get_wmi_w32_os_caption(conn)
-    return "7" in caption if caption else False
+    return version in caption if caption else False
 
 
-async def check_is_windows8(conn: SSHClientConnection) -> bool:
-    "Check for Windows 8"
-    caption = await get_wmi_w32_os_caption(conn)
-    return "8" in caption if caption else False
-
-
-async def check_is_windows10(conn: SSHClientConnection) -> bool:
-    "Check for Windows 10"
-    caption = await get_wmi_w32_os_caption(conn)
-    return "10" in caption if caption else False
-
-
-async def check_is_windows11(conn: SSHClientConnection) -> bool:
-    "Check for Windows 11"
-    caption = await get_wmi_w32_os_caption(conn)
-    return "11" in caption if caption else False
+check_is_windows7 = partial(_check_is_windows_caption_version, "7")
+check_is_windows8 = partial(_check_is_windows_caption_version, "8")
+check_is_windows10 = partial(_check_is_windows_caption_version, "10")
+check_is_windows11 = partial(_check_is_windows_caption_version, "11")
+check_is_windows12 = partial(_check_is_windows_caption_version, "12")

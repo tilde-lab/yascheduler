@@ -8,8 +8,12 @@ from attrs import define, evolve, field
 
 from .checks import (
     check_is_debian,
-    check_is_debian_bullseye,
-    check_is_debian_buster,
+    check_is_debian_10,
+    check_is_debian_11,
+    check_is_debian_12,
+    check_is_debian_13,
+    check_is_debian_14,
+    check_is_debian_15,
     check_is_debian_like,
     check_is_linux,
     check_is_windows,
@@ -17,6 +21,7 @@ from .checks import (
     check_is_windows8,
     check_is_windows10,
     check_is_windows11,
+    check_is_windows12,
 )
 from .common import run, run_bg
 from .linux_methods import (
@@ -90,16 +95,40 @@ debian_adapter = evolve(
     checks=(*debian_like_adapter.checks, check_is_debian),
 )
 
-debian_buster_adapter = evolve(
+debian_10_adapter = evolve(
     debian_adapter,
     platform="debian-10",
-    checks=(*debian_adapter.checks, check_is_debian_buster),
+    checks=(*debian_adapter.checks, check_is_debian_10),
 )
 
-debian_bullseye_adapter = evolve(
+debian_11_adapter = evolve(
     debian_adapter,
     platform="debian-11",
-    checks=(*debian_adapter.checks, check_is_debian_bullseye),
+    checks=(*debian_adapter.checks, check_is_debian_11),
+)
+
+debian_12_adapter = evolve(
+    debian_adapter,
+    platform="debian-12",
+    checks=(*debian_adapter.checks, check_is_debian_12),
+)
+
+debian_13_adapter = evolve(
+    debian_adapter,
+    platform="debian-13",
+    checks=(*debian_adapter.checks, check_is_debian_13),
+)
+
+debian_14_adapter = evolve(
+    debian_adapter,
+    platform="debian-14",
+    checks=(*debian_adapter.checks, check_is_debian_14),
+)
+
+debian_15_adapter = evolve(
+    debian_adapter,
+    platform="debian-15",
+    checks=(*debian_adapter.checks, check_is_debian_15),
 )
 
 windows_adapter = RemoteMachineAdapter(
@@ -137,4 +166,10 @@ windows11_adapter = evolve(
     windows_adapter,
     platform="windows-11",
     checks=(*windows_adapter.checks, check_is_windows11),
+)
+
+windows12_adapter = evolve(
+    windows_adapter,
+    platform="windows-12",
+    checks=(*windows_adapter.checks, check_is_windows12),
 )
