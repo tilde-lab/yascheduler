@@ -30,8 +30,9 @@ def submit():
     if not script_file.exists():
         raise ValueError("Script parameter is not a file name")
 
+    logging.captureWarnings(True)
     log = logging.getLogger()
-    log.setLevel(logging.ERROR)
+    log.setLevel(logging.WARN)
     yac = Yascheduler(logger=log)
 
     script_params = {}

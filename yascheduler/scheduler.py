@@ -46,6 +46,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 def get_logger(log_file, level: int = logging.INFO):
+    logging.captureWarnings(True)
     logger = logging.getLogger("yascheduler")
     logger.setLevel(level)
 

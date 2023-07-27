@@ -5,9 +5,9 @@ from configparser import SectionProxy
 from pathlib import PurePath
 from typing import Optional, Sequence, Tuple, Union
 
-from attrs import Attribute, define, field, validators
+from attrs import Attribute, define, field, fields, validators
 
-from .utils import _make_default_field
+from .utils import _make_default_field, warn_unknown_fields
 
 
 def _check_spawn(instance: "Engine", _, value: str):
@@ -109,10 +109,25 @@ class Engine:
     sleep_interval: int = _make_default_field(10)
 
     @classmethod
+    def get_valid_config_parser_fields(cls) -> Sequence[str]:
+        "Returns a list of valid config keys"
+        exclude_names = ["name", "deployable"]
+        include_names = [
+            "deploy_local_files",
+            "deploy_local_archive",
+            "deploy_remote_archive",
+        ]
+        return [
+            f.name for f in fields(cls) if f.name not in exclude_names
+        ] + include_names
+
+    @classmethod
     def from_config_parser_section(
         cls, sec: SectionProxy, engines_dir: PurePath
     ) -> "Engine":
         "Create config from config parser's section"
+
+        warn_unknown_fields(cls.get_valid_config_parser_fields(), sec)
 
         def gettuple(key: str) -> Tuple[str]:
             return tuple(
