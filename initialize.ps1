@@ -64,7 +64,7 @@ function Setup-OpenSSH {
         New-Item -Path $registryPath -Force | Out-Null
     }
 
-    New-ItemProperty -Path $registryPath -Name DefaultShell -Value "$env:ProgramFiles\Git\bin\bash.exe" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $registryPath -Name DefaultShell -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force | Out-Null
 
     # Start the sshd service
     Set-Service -Name sshd -StartupType 'Automatic'

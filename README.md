@@ -452,6 +452,7 @@ Once set, it cannot be changed later.
 
   A list of task input file names, separated by a space or new line,
   that will be copied to the remote directory of the task before it is started.
+  The first input is considered as the **main** input.
 
   _Example_: `INPUT sibling.file`
 
