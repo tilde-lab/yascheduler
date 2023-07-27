@@ -99,14 +99,14 @@ target-version = ['py38', 'py39', 'py310', 'py311']
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.4.0"
 tag_format = "v$version"
-major_version_zero = true
 version_files = [
     "pyproject.toml:^version",
     "yascheduler/__init__.py:^__version__",
 ]
+version_provider = "pep621"
 update_changelog_on_bump = true
+changelog_incremental = true
 
 [tool.isort]
 profile = "black"
