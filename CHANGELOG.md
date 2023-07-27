@@ -1,3 +1,9 @@
+## v1.2.0 (2023-07-27)
+
+### Feat
+
+- **config**: warn on unknown config fields
+
 ## v1.1.0 (2023-07-27)
 
 ### Feat
