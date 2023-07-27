@@ -5,7 +5,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "yascheduler"
-version = "1.0.13"
+version = "1.1.0"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
      {name = "Evgeny Blokhin", email = "eb@tilde.pro"},

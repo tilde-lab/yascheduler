@@ -1,3 +1,9 @@
+## v1.1.0 (2023-07-27)
+
+### Feat
+
+- **remote_machine**: support more OS checks
+
 ## v1.0.13 (2023-07-27)
 
 ## v1.0.12 (2023-07-27)
