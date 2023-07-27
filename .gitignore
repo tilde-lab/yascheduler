@@ -133,3 +133,6 @@ example/
 
 # node modules
 node_modules
+
+# Current version's temporary CHANGELOG
+.CHANGELOG-CURRENT.md
