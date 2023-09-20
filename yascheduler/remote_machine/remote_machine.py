@@ -218,7 +218,7 @@ class RemoteMachine(PRemoteMachine):
             await aall(amap(lambda y: with_limit(conn, y), x.checks)) for x in ADAPTERS
         ]
 
-        for candidate, check in zip(ADAPTERS, checks, strict=True):
+        for candidate, check in zip(ADAPTERS, checks):
             if check:
                 platforms.append(candidate.platform)
             if check and not adapter:
