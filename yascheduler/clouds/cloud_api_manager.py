@@ -129,8 +129,9 @@ class CloudAPIManager(PCloudAPIManager):
 
         self.log.debug("Used providers: %s", used_providers)
         if not suitable_providers:
-            self.log.debug("No suitable cloud provides")
+            self.log.debug("No suitable cloud providers")
             return
+
         ok_apis = filter(lambda x: x.name in suitable_providers, self.apis.values())
         ok_apis_sorted = sorted(ok_apis, key=lambda x: x.config.priority, reverse=True)
         api = ok_apis_sorted[0]

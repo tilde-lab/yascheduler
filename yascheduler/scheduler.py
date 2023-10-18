@@ -497,7 +497,7 @@ class Scheduler:
         tasks = await self.db.get_tasks_by_status((TaskStatus.TO_DO,), tlim)
         if tasks:
             ids = [str(t.task_id) for t in tasks]
-            self.log.debug("Want allocate tasks: %s" % ", ".join(ids))
+            self.log.debug("Want to allocate tasks: %s" % ", ".join(ids))
         for task in tasks:
             yield UMessage(task.task_id, task)
 

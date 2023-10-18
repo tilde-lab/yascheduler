@@ -47,6 +47,20 @@ result = yac.queue_submit_task(
 print(result)
 ```
 
+Or run directly in console with `yascheduler` (use a key `-l DEBUG` to change the log level).
+
+_Supervisor_ config reads e.g.:
+
+```
+[program:scheduler]
+command=/usr/local/bin/yascheduler
+user=root
+autostart=true
+autorestart=true
+stderr_logfile=/data/yascheduler.log
+stdout_logfile=/data/yascheduler.log
+```
+
 File paths can be set using the environment variables:
 
 - `YASCHEDULER_CONF_PATH`
@@ -104,7 +118,7 @@ Connection to a PostgreSQL database.
   Path to root directory of local data files.
   Can be relative to the current working directory.
 
-  _Default_: `./data`
+  _Default_: `./data` (but it's always a good idea to set up explicitly!)
 
   _Example_: `/srv/yadata`
 
@@ -362,7 +376,7 @@ Settings prefix is `upcloud`.
 
   Password.
 
-#### Engines `[engine.*]`
+### Engines `[engine.*]`
 
 Supported engines should be defined in the section(s) `[engine.name]`.
 The name is alphanumeric string to represent the real engine name.
