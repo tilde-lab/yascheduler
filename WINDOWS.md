@@ -1,6 +1,11 @@
-# How to prepare a Windows node
+# Preparing a Windows node
 
-Install OpenSSH:
+One can manage a remote Windows machine over SSH similarly to Unix.
+This is possible on all the Windows versions, starting from Windows 10.
+For that, on a target Windows machine, follow these one-off instructions or
+run a PowerShell script from this repo: https://github.com/tilde-lab/yascheduler/blob/master/windows_init.ps1
+
+First, install OpenSSH server:
 
 ```powershell
 
@@ -24,7 +29,7 @@ Start-Process "$env:windir\System32\msiexec.exe" -ArgumentList "/i `"$distroFile
 Remove-Item -Recurse $tmpDir
 ```
 
-Add OpenSSH to `$env:PATH`:
+Then add OpenSSH to `$env:PATH`:
 
 ```powershell
 # Append the Win32-OpenSSH install directory to the system path
@@ -35,7 +40,7 @@ Add OpenSSH to `$env:PATH`:
 )
 ```
 
-Set ACLs for authorized keys file:
+Set ACLs for the authorized keys file:
 
 ```powershell
 $akPath = "$env:PROGRAMDATA\ssh\administrators_authorized_keys"
@@ -70,7 +75,7 @@ $sshdConfigPath = "$env:PROGRAMDATA\ssh\sshd_config"
 Add-Content $sshdConfigPath -Value "PasswordAuthentication no"
 ```
 
-Set default shell for SSH:
+Set the PowerShell as the default shell for SSH:
 
 ```powershell
 $registryPath = "HKLM:\SOFTWARE\OpenSSH"
@@ -84,6 +89,8 @@ New-ItemProperty -Path $registryPath -Name DefaultShell `
     -PropertyType String -Force | Out-Null
 ```
 
+(NB we have observed that on some machines only a manual registry edition with `regedit` works.)
+
 Enable and start OpenSSH service:
 
 ```powershell
@@ -91,10 +98,9 @@ Set-Service -Name sshd -StartupType 'Automatic'
 Start-Service sshd
 ```
 
-Add public key to `$env:PROGRAMDATA\ssh\administrators_authorized_keys`
-file.
+Finally, add the public key to `$env:PROGRAMDATA\ssh\administrators_authorized_keys` file.
 
-If you're preparing image, don't forget to delete all SSH keys before capture:
+NB if you are preparing a cloud image, do not forget to delete all the SSH keys before capture:
 
 ```powershell
 Clear-Content "$env:PROGRAMDATA\ssh\administrators_authorized_keys"
@@ -103,5 +109,3 @@ Remove-Item "$env:PROGRAMDATA\ssh\ssh_host_ec25519_key"
 Remove-Item "$env:PROGRAMDATA\ssh\ssh_host_dsa_key"
 Remove-Item "$env:PROGRAMDATA\ssh\ssh_host_rsa_key"
 ```
-
-Add authorized keys on first boot.

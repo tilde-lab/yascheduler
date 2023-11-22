@@ -384,7 +384,7 @@ class Scheduler:
                         )
                 await sftp.rmtree(
                     machine.path(remote_folder)
-                )  # uncomment to keep raw files
+                )  # comment to keep the raw files at the working node (not recommended)
 
         try:
             await sftp_get_retry(job)()

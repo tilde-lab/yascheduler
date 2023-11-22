@@ -48,16 +48,16 @@ function Setup-OpenSSH {
     $akAcl.SetSecurityDescriptorSddlForm("O:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
     Set-Acl -Path $akPath -AclObject $akAcl
 
-    # Confirm the Firewall rule is configured.
+    # Confirm the Firewall rule is configured
     if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue | Select-Object Name, Enabled)) {
         New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
     }
 
-    # config
+    # Disable password authentication
     $sshdConfigPath = "$env:PROGRAMDATA\ssh\sshd_config"
     Add-Content $sshdConfigPath -Value "PasswordAuthentication no"
 
-    # Set default shell
+    # Set the default shell
     $registryPath = "HKLM:\SOFTWARE\OpenSSH"
 
     IF(!(Test-Path $registryPath)) {
