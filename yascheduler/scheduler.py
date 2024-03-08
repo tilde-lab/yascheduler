@@ -148,7 +148,7 @@ class Scheduler:
         if not url:
             return
         async with self.webhook_sem:
-            self.log.info(f"Executing webhook to {url}")
+            self.log.info(f"Executing webhook of type {status.value} to {url}")
             payload = WebhookPayload(
                 task_id, status.value, metadata.get("webhook_custom_params", {})
             )
