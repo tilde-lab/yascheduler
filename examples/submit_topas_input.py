@@ -28,6 +28,6 @@ site Ti  x  0.00000  y  0.00000  z  0.00000  occ Ti  1  beq  1
 
 
 yac = Yascheduler()
-result = yac.queue_submit_task(LABEL, {"calc.inp": PATTERN_REQUEST, "structure.inc": ""}, "topas")
+result = yac.queue_submit_task(LABEL, {"calc.inp": PATTERN_REQUEST, "structure.inc": "", "input.xy: ""}, "topas")
 print(LABEL)
 print(result)

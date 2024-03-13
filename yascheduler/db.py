@@ -17,7 +17,7 @@ from .config import ConfigDb
 
 @unique
 class TaskStatus(int, Enum):
-    """Tast status enum"""
+    """Task possible states enum"""
 
     TO_DO = 0
     RUNNING = 1
@@ -243,7 +243,7 @@ class DB:
     ) -> Sequence[int]:
         """Get task ids by ip and status"""
         rows = await self.run(
-            "SELECT task_id FROM yascheduler_tasks WHERE ip=:ip AND status=:status;",
+            "SELECT task_id FROM yascheduler_tasks WHERE ip=:ip AND status=:status ORDER BY task_id;",
             ip=ip_addr,
             status=status.value,
         )
@@ -254,7 +254,7 @@ class DB:
         rows = await self.run(
             """SELECT task_id, label, ip, status, metadata
             FROM yascheduler_tasks
-            WHERE task_id IN (SELECT unnest(CAST (:task_ids AS int[])));""",
+            WHERE task_id IN (SELECT unnest(CAST (:task_ids AS int[]))) ORDER BY task_id;""",
             task_ids=jobs,
         )
         return [TaskModel(*x) for x in (rows or [])]
@@ -266,7 +266,7 @@ class DB:
         rows = await self.run(
             """SELECT task_id, label, ip, status, metadata
             FROM yascheduler_tasks
-            WHERE status IN (SELECT unnest(CAST (:statuses AS int[])))
+            WHERE status IN (SELECT unnest(CAST (:statuses AS int[]))) ORDER BY task_id
             LIMIT :lim;""",
             statuses=[x.value for x in statuses],
             lim=limit,
@@ -282,7 +282,7 @@ class DB:
             FROM yascheduler_tasks AS t
             JOIN yascheduler_nodes AS n ON n.ip=t.ip
             WHERE status=:status AND
-            task_id IN (SELECT unnest(CAST (:ids AS int[])));""",
+            task_id IN (SELECT unnest(CAST (:ids AS int[]))) ORDER BY task_id;""",
             ids=ids,
             status=status.value,
         )
