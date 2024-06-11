@@ -132,7 +132,7 @@ Connection to a PostgreSQL database.
 
 - `keys_dir`
 
-  Path to directory with SSH keys.
+  Path to directory with SSH keys. Make sure it only contains the private keys.
 
   _Default_: `keys` under `data_dir`
 
@@ -424,7 +424,9 @@ Once set, it cannot be changed later.
 
   _Example_: `https://example.org/dummyengine.tar.gz`
 
-  _Example_:
+- `spawn`
+
+  This command is used by the scheduler to initiate calculations.
 
   ```sh
   cp {task_path}/INPUT OUTPUT && mpirun -np {ncpus} --allow-run-as-root \
