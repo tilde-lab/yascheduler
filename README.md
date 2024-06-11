@@ -132,7 +132,7 @@ Connection to a PostgreSQL database.
 
 - `keys_dir`
 
-  Path to directory with SSH keys. It should contain a private keys only.
+  Path to directory with SSH keys. Make sure it only contains the private keys.
 
   _Default_: `keys` under `data_dir`
 
