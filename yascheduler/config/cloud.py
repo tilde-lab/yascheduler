@@ -127,7 +127,7 @@ class ConfigCloudHetzner:
     max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
     username: str = _make_default_field("root")
     priority: int = _make_default_field(0)
-    server_type: str = _make_default_field("cx51")
+    server_type: str = _make_default_field("cx52")
     image_name: str = _make_default_field("debian-11")
     idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
     jump_username: Optional[str] = field(default=None, validator=opt_str_val)
