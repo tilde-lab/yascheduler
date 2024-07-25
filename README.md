@@ -288,13 +288,13 @@ Settings prefix is `hetzner`.
 
   Server type (size).
 
-  _Default_: `cx51`
+  _Default_: `cx52`
 
 - `hetzner_image_name`
 
   Image name for new nodes.
 
-  _Default_: `debian-10`
+  _Default_: `debian-11`
 
 #### Azure
 
