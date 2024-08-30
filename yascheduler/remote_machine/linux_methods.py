@@ -195,6 +195,7 @@ async def linux_setup_deb_node(
     sudo_prefix = "" if is_root else "sudo "
     apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600 -y"
     pkgs = engines.get_platform_packages()
+    extra_sh = engines.get_extra_commands()
 
     if log:
         log.debug("Upgrade packages...")
@@ -204,6 +205,10 @@ async def linux_setup_deb_node(
         if log:
             log.debug("Install packages: {} ...".format(" ".join(pkgs)))
         await run(f"{apt_cmd} install {' '.join(pkgs)}", check=True)
+    if extra_sh:
+        if log:
+            log.debug("Executing extra command: {} ...".format(" ".join(extra_sh)))
+        await run(" && ".join(extra_sh), check=True)
     if [x for x in pkgs if "mpi" in x]:
         await log_mpi_version(run, log)
 
