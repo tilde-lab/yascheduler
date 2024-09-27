@@ -1,10 +1,12 @@
-"""
-Aiida plugin for yascheduler,
-with respect to the supported yascheduler engines
-"""
+"""Aiida plugin for yascheduler, with respect to the supported yascheduler engines."""
+
+import requests
 
 import aiida.schedulers  # pylint: disable=import-error
 from aiida.orm import load_node  # pylint: disable=import-error
+
+from .config import Config
+from .variables import CONFIG_FILE
 
 # pylint: disable=import-error
 from aiida.schedulers.datastructures import JobInfo, JobState, NodeNumberJobResource
@@ -23,9 +25,7 @@ class YaschedJobResource(NodeNumberJobResource):
 
 
 class YaScheduler(aiida.schedulers.Scheduler):
-    """
-    Support for the YaScheduler designed specifically for MPDS
-    """
+    """Support for the YaScheduler designed specifically for MPDS."""
 
     _logger = aiida.schedulers.Scheduler._logger.getChild("yascheduler")
 
@@ -38,10 +38,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
     _job_resource_class = YaschedJobResource
 
     def _get_joblist_command(self, jobs=None, user=None):
-        """
-        The command to report full information on existing jobs.
-        """
-
+        """The command to report full information on existing jobs."""
         # pylint: disable=import-error
         from aiida.common.exceptions import FeatureNotAvailable
 
@@ -82,6 +79,11 @@ class YaScheduler(aiida.schedulers.Scheduler):
         # We map the lowercase code labels onto yascheduler engines,
         # so that the required input file(s) can be deduced
         lines = [f"ENGINE={aiida_node.inputs.code.label.lower()}"]
+
+        config = Config.from_config_parser(CONFIG_FILE)
+        wh_url = config.local.webhook_url
+        if wh_url:
+            self.handle_task_submission(aiida_node, wh_url)
 
         try:
             lines.append(f"PARENT={aiida_node.caller.uuid}")
@@ -144,3 +146,44 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         Parse the output of the kill command.
         """
+
+    def _send_webhook(self, webhook_url, **argv):
+        """Send task information to the server via a webhook."""
+
+        params = {
+            'payload': argv['payload'],
+            'status': argv['status'],
+        }
+
+        response = requests.get(webhook_url, params=params)
+
+        if response.status_code == 200:
+            self.logger.debug(f"Webhook for {argv['payload']} successfully sent.")
+        else:
+            self.logger.error(f"Failed to send webhook: {response.status_code}, {response.text}")
+
+    def _prepare_task_data(self, aiida_node):
+        """Prepare the task information for the webhook."""
+
+        data = {
+        'payload': aiida_node.label,
+        'status': _process_status(aiida_node)
+        }
+
+        return data
+
+    def handle_task_submission(self, aiida_node, webhook_url):
+        """Handle the task submission, preparing data and sending it to the webhook."""
+
+        data = self._prepare_task_data(aiida_node)
+        self._send_webhook(webhook_url=webhook_url, **data)
+
+def _process_status(node) -> str:
+    """Recive correct node status from node."""
+
+    status = node.process_state.value
+
+    if status.lower() == "finished":
+        status += f'-{node.exit_code.status}' if node.exit_code else "-0"
+
+    return status
