@@ -92,7 +92,7 @@ must be a string or a list of strings"
         config = Config.from_config_parser(CONFIG_FILE)
         wh_url = config.local.webhook_url
         if wh_url:
-            self.handle_task_submission(aiida_node, wh_url)
+            self.intercept_task_submission(aiida_node, wh_url)
 
         try:
             lines.append(f"PARENT={aiida_node.caller.uuid}")
@@ -171,7 +171,7 @@ must be a string or a list of strings"
             'status': _process_status(aiida_node)
         }
 
-    def handle_task_submission(self, aiida_node, webhook_url):
+    def intercept_task_submission(self, aiida_node, webhook_url):
         """Handle the task submission, preparing
         data and sending it to the webhook.
         """
