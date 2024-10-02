@@ -1,19 +1,17 @@
 """
-Aiida plugin for yascheduler.
-
-With respect to the supported yascheduler engines.
+Aiida plugin for yascheduler
+with respect to the supported yascheduler engines.
 """
 
 import aiida.schedulers  # pylint: disable=import-error
-import requests
 from aiida.orm import load_node  # pylint: disable=import-error
-
 # pylint: disable=import-error
 from aiida.schedulers.datastructures import (
     JobInfo,
     JobState,
     NodeNumberJobResource,
 )
+import requests
 
 from .config import Config
 from .variables import CONFIG_FILE
@@ -114,7 +112,7 @@ must be a string or a list of strings"
         command returned by _get_submit_command command.
         """
         if stderr.strip():
-            self.logger.warning(f"Stderr when submitting: {stderr.strip()}")
+            self.logger.warning(f"Stderr while submitting: {stderr.strip()}")
 
         output = stdout.strip()
 
@@ -162,22 +160,16 @@ must be a string or a list of strings"
         }
 
         response = requests.get(webhook_url, params=params)
-
-        if response.status_code == 200:
-            self.logger.debug(f"Webhook for {argv['payload']} \
-successfully sent.")
-        else:
-            self.logger.error(f"Failed to send webhook: \
+        if response.status_code != 200:
+            self.logger.error(f"Webhook received an error: \
 {response.status_code}, {response.text}")
 
     def _prepare_task_data(self, aiida_node):
         """Prepare the task information for the webhook."""
-        data = {
-        'payload': aiida_node.label,
-        'status': _process_status(aiida_node)
+        return {
+            'payload': aiida_node.label,
+            'status': _process_status(aiida_node)
         }
-
-        return data
 
     def handle_task_submission(self, aiida_node, webhook_url):
         """Handle the task submission, preparing
@@ -188,7 +180,7 @@ successfully sent.")
 
 
 def _process_status(node) -> str:
-    """Recive correct node status from node."""
+    """Receive correct node status from node."""
     status = node.process_state.value
 
     if status.lower() == "finished":
