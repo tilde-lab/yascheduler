@@ -21,7 +21,9 @@ async def check_is_linux(conn: SSHClientConnection) -> bool:
 @lru_cache
 async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str, str, str]]:
     "Get os release string on linuxes"
-    proc = await conn.run("source /etc/os-release; echo $ID@@@$ID_LIKE@@@$VERSION_ID")
+    proc = await conn.run(
+        "sh -c 'source /etc/os-release; echo $ID@@@$ID_LIKE@@@$VERSION_ID'"
+    )
     if proc.returncode != 0 or not proc.stdout:
         return None
     return tuple(map(lambda x: x.strip(), str(proc.stdout).split("@@@", maxsplit=3)))
