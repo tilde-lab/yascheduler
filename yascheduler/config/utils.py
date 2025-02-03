@@ -28,4 +28,5 @@ def warn_unknown_fields(known_fields: Sequence[str], sec: SectionProxy) -> None:
         warnings.warn(
             f"Config section {sec.name} unknown fields: {', '.join(unknown_fields)}",
             ConfigWarning,
+            3,
         )
