@@ -75,6 +75,9 @@ class Engine:
     check_cmd: Optional[str] = field(
         validator=[validators.optional(validators.instance_of(str)), _check_check_]
     )
+    extra_command: Optional[str] = field(
+        validator=validators.optional(validators.instance_of(str))
+    )
     check_pname: Optional[str] = field(
         validator=[validators.optional(validators.instance_of(str)), _check_check_]
     )
@@ -107,6 +110,7 @@ class Engine:
     )
     check_cmd_code: int = _make_default_field(0)
     sleep_interval: int = _make_default_field(10)
+
 
     @classmethod
     def get_valid_config_parser_fields(cls) -> Sequence[str]:
@@ -164,4 +168,5 @@ class Engine:
             sleep_interval=sec.getint("sleep_interval"),
             platforms=gettuple("platforms"),
             platform_packages=gettuple("platform_packages"),
+            extra_command=sec.get("extra_command"),
         )
