@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
-import os
 import argparse
+import os
 
 from yascheduler import Yascheduler
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-f", dest="file", action="store", type=str, required=True)
