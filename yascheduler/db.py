@@ -243,7 +243,9 @@ class DB:
     ) -> Sequence[int]:
         """Get task ids by ip and status"""
         rows = await self.run(
-            "SELECT task_id FROM yascheduler_tasks WHERE ip=:ip AND status=:status ORDER BY task_id;",
+            """SELECT task_id FROM yascheduler_tasks
+            WHERE ip=:ip AND status=:status
+            ORDER BY task_id;""",
             ip=ip_addr,
             status=status.value,
         )

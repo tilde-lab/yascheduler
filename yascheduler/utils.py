@@ -1,6 +1,7 @@
 """
 Console scripts for yascheduler
 """
+
 import argparse
 import asyncio
 import logging

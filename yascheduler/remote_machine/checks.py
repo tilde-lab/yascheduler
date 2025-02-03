@@ -19,9 +19,11 @@ async def check_is_linux(conn: SSHClientConnection) -> bool:
 
 
 @lru_cache
-async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str, str, str]]:
+async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str]]:
     "Get os release string on linuxes"
-    proc = await conn.run("source /etc/os-release; echo $ID@@@$ID_LIKE@@@$VERSION_ID")
+    proc = await conn.run(
+        "sh -c 'source /etc/os-release; echo $ID@@@$ID_LIKE@@@$VERSION_ID'"
+    )
     if proc.returncode != 0 or not proc.stdout:
         return None
     return tuple(map(lambda x: x.strip(), str(proc.stdout).split("@@@", maxsplit=3)))
@@ -30,7 +32,7 @@ async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str, str,
 async def check_is_debian_like(conn: SSHClientConnection) -> bool:
     "Check for any Debian-like"
     os_release = await _get_os_release(conn)
-    return "debian" in [os_release[0], os_release[1]] if os_release else False
+    return "debian" in os_release[0:2] if os_release else False
 
 
 async def check_is_debian(conn: SSHClientConnection) -> bool:
@@ -42,7 +44,7 @@ async def check_is_debian(conn: SSHClientConnection) -> bool:
 async def _check_debian_version(version: str, conn: SSHClientConnection) -> bool:
     "Check for Debian version"
     os_release = await _get_os_release(conn)
-    return os_release[2] == version if os_release else False
+    return len(os_release) >= 2 and os_release[2] == version if os_release else False
 
 
 check_is_debian_10 = partial(_check_debian_version, "10")
