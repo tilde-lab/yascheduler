@@ -19,6 +19,17 @@ async def check_is_linux(conn: SSHClientConnection) -> bool:
 
 
 @lru_cache
+async def check_is_darwin(conn: SSHClientConnection) -> bool:
+    "Check for Mac"
+    proc = await conn.run("uname")
+    return (
+        proc.returncode == 0
+        and proc.stdout is not None
+        and proc.stdout.strip() == "Darwin"
+    )
+
+
+@lru_cache
 async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str]]:
     "Get os release string on linuxes"
     proc = await conn.run(

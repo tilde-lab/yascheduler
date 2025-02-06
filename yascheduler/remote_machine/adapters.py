@@ -16,6 +16,7 @@ from .checks import (
     check_is_debian_15,
     check_is_debian_like,
     check_is_linux,
+    check_is_darwin,
     check_is_windows,
     check_is_windows7,
     check_is_windows8,
@@ -129,6 +130,12 @@ debian_15_adapter = evolve(
     debian_adapter,
     platform="debian-15",
     checks=(*debian_adapter.checks, check_is_debian_15),
+)
+
+darwin_adapter = evolve(
+    linux_adapter,
+    platform="darwin",
+    checks=(check_is_darwin,),
 )
 
 windows_adapter = RemoteMachineAdapter(
