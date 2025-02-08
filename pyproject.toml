@@ -5,6 +5,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "yascheduler"
+# version should be changed by automation, not by hand - DON'T TOUCH
 version = "1.2.1"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
@@ -45,6 +46,7 @@ dependencies = [
     "python-daemon~=2.3",
     "typing-extensions >= 4.2.0; python_version < '3.11'",
     "upcloud_api~=2.0",
+    "importlib_metadata; python_version < '3.8'",
 ]
 
 [project.optional-dependencies]
@@ -102,7 +104,6 @@ name = "cz_conventional_commits"
 tag_format = "v$version"
 version_files = [
     "pyproject.toml:^version",
-    "yascheduler/__init__.py:^__version__",
 ]
 version_provider = "pep621"
 update_changelog_on_bump = true
