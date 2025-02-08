@@ -9,8 +9,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  pypi:
+  pypi-publish:
     runs-on: ubuntu-latest
+    # Specifying a GitHub environment is optional, but strongly encouraged
+    environment: pypi
+    permissions:
+      # IMPORTANT: this permission is mandatory for Trusted Publishing
+      id-token: write
     concurrency:
       group: release
 
@@ -38,5 +43,3 @@ jobs:
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
