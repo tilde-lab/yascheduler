@@ -102,7 +102,6 @@ name = "cz_conventional_commits"
 tag_format = "v$version"
 version_files = [
     "pyproject.toml:^version",
-    "yascheduler/__init__.py:^__version__",
 ]
 version_provider = "pep621"
 update_changelog_on_bump = true
