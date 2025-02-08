@@ -1,3 +1,16 @@
+## v1.3.0 (2025-02-08)
+
+### Feat
+
+- stable tasks ordering + minor polishing
+
+### Fix
+
+- **package**: add backport of importlib
+- **package**: one version in one place
+- **remote_machine**: too short tuple
+- **remote_machin**: non-POSIX linux shell
+
 ## v1.2.0 (2023-07-27)
 
 ### Feat
