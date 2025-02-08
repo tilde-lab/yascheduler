@@ -5,6 +5,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "yascheduler"
+# version should be changed by automation, not by hand - DON'T TOUCH
 version = "1.2.1"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
