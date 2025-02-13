@@ -388,7 +388,7 @@ class RemoteMachine(PRemoteMachine):
 
     async def occupancy_check(self, engine: PEngine) -> bool:
         """
-        Check node occupancy by task for target engine
+        Check if a node is occupied by an engine's task
         """
         if engine.check_pname:
             try:
@@ -397,7 +397,7 @@ class RemoteMachine(PRemoteMachine):
             except SSHRetryExc as exc:
                 self.log.info(f"Node {self.hostname} failed pgrep: {exc}")
                 await self.renew_conn()
-        if engine.check_cmd:
+        elif engine.check_cmd:
             try:
                 proc = await self.run(engine.check_cmd)
                 if proc.returncode == engine.check_cmd_code:
@@ -416,6 +416,9 @@ class RemoteMachine(PRemoteMachine):
 
         async def occupancy_checker():
             while not self.cancellation_event.is_set() and self.meta.busy is not False:
+
+                await asyncio.sleep(engine.sleep_interval)
+
                 try:
                     self.meta.busy = await asyncio.wait_for(
                         self.occupancy_check(engine), timeout=engine.sleep_interval
@@ -425,6 +428,5 @@ class RemoteMachine(PRemoteMachine):
                     self.log.warning(tmpl.format(engine.name, self.hostname))
                 except Exception as err:  # pylint: disable=broad-exception-caught
                     self.log.warning(err)
-                await asyncio.sleep(engine.sleep_interval)
 
         self.jobs.add(asyncio.create_task(occupancy_checker()))
