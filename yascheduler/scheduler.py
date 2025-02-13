@@ -537,7 +537,7 @@ class Scheduler:
                 await machine.start_occupancy_check(engine)
         # consume
         if machine.meta.busy is False:
-            self.log.debug(f"machine {machine.hostname} is free for task {task_id}")
+            self.log.debug(f"machine {machine.hostname} is free of task {task_id}")
             await self.consume_task(machine, task)
 
     async def deallocator_producer(
