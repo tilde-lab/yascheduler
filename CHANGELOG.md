@@ -1,3 +1,9 @@
+## v1.3.1 (2025-02-13)
+
+### Fix
+
+- **remote_machine**: change node occupancy algo
+
 ## v1.3.0 (2025-02-08)
 
 ### Feat
