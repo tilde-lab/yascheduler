@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from pathlib import PurePath
@@ -11,7 +12,6 @@ from typing import (
     Coroutine,
     Mapping,
     Optional,
-    ParamSpec,
     Sequence,
     TypeVar,
     Union,
@@ -23,6 +23,11 @@ from .config import Config
 from .db import DB, TaskStatus
 from .scheduler import Scheduler
 from .variables import CONFIG_FILE
+
+if sys.version_info < (3, 10):
+    from typing_extensions import ParamSpec
+else:
+    from typing import ParamSpec
 
 ReturnT_co = TypeVar("ReturnT_co", covariant=True)
 ParamT = ParamSpec("ParamT")
