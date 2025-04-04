@@ -28,6 +28,7 @@ class CloudSetupNodeError(Exception):
 @define(frozen=True)
 class CloudConfig(PCloudConfig):
     "Cloud config init"
+
     bootcmd: Sequence[Union[str, Sequence[str]]] = field(factory=tuple)
     package_upgrade: bool = field(default=False)
     packages: Sequence[str] = field(factory=list)
@@ -44,6 +45,7 @@ class CloudConfig(PCloudConfig):
 @define(frozen=True)
 class CloudAPI(PCloudAPI[TConfigCloud_contra]):
     "Cloud API protocol"
+
     adapter: PCloudAdapter[TConfigCloud_contra] = field()
     config: TConfigCloud_contra = field()
     local_config: ConfigLocal = field()

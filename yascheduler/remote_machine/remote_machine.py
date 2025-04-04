@@ -22,6 +22,7 @@ from attrs import define, field, validators
 from typing_extensions import Self
 
 from .adapters import (
+    darwin_adapter,
     debian_10_adapter,
     debian_11_adapter,
     debian_12_adapter,
@@ -31,7 +32,6 @@ from .adapters import (
     debian_adapter,
     debian_like_adapter,
     linux_adapter,
-    darwin_adapter,
     windows7_adapter,
     windows8_adapter,
     windows10_adapter,
@@ -130,6 +130,7 @@ class RemoteMachineMetadata(PRemoteMachineMetadata):
 @define(frozen=True)
 class RemoteMachine(PRemoteMachine):
     "Remote SSH machine"
+
     conn: SSHClientConnection = field()
     conn_opts: SSHClientConnectionOptions = field()
 
@@ -416,7 +417,6 @@ class RemoteMachine(PRemoteMachine):
 
         async def occupancy_checker():
             while not self.cancellation_event.is_set() and self.meta.busy is not False:
-
                 await asyncio.sleep(engine.sleep_interval)
 
                 try:

@@ -2,6 +2,7 @@
 """
 SystemV Daemon functions
 """
+
 import argparse
 import os
 

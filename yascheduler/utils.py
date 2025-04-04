@@ -12,7 +12,7 @@ from typing import Any, Mapping, Sequence
 
 from pg8000 import ProgrammingError
 
-from .client import Yascheduler
+from .client import Yascheduler, to_sync
 from .config import Config
 from .db import DB, TaskModel, TaskStatus
 from .remote_machine import RemoteMachine
@@ -20,7 +20,8 @@ from .scheduler import Scheduler, get_logger
 from .variables import CONFIG_FILE
 
 
-def submit():
+@to_sync
+async def submit():
     parser = argparse.ArgumentParser(
         description="Submit task to yascheduler via AiiDA script"
     )
@@ -72,7 +73,7 @@ def submit():
         metadata["webhook_custom_params"] = {"parent": script_params["PARENT"]}
         webhook_onsubmit = True
 
-    task_id = yac.queue_submit_task(
+    task_id = await yac.queue_submit_task_async(
         label,
         metadata,
         engine.name,
@@ -83,8 +84,9 @@ def submit():
     print(str(task_id))
 
 
-async def _check_status():  # noqa: C901
-    parser = argparse.ArgumentParser(description="Submit task to yascheduler daemon")
+@to_sync
+async def check_status():  # noqa: C901
+    parser = argparse.ArgumentParser(description="Show status of tasks")
     parser.add_argument("-j", "--jobs", required=False, default=None, nargs="*")
     parser.add_argument(
         "-v", "--view", required=False, default=None, nargs="?", type=bool, const=True
@@ -121,16 +123,7 @@ async def _check_status():  # noqa: C901
         )
 
     if args.convergence:
-        try:
-            # pylint: disable=import-error
-            from numpy import nan
-
-            # pylint: disable=import-error
-            from pycrystal import CRYSTOUT, CRYSTOUT_Error
-
-            local_parsing_ready = True
-        except Exception:
-            pass
+        local_parsing_ready = True
 
     if args.view:
         for task in await db.get_tasks_with_cloud_by_id_status(
@@ -176,6 +169,13 @@ async def _check_status():  # noqa: C901
                         await sftp.get([str(r_output)], local_calc_snippet)
                 except OSError:
                     continue
+
+                # pylint: disable=import-error
+                from numpy import nan
+
+                # pylint: disable=import-error
+                from pycrystal import CRYSTOUT, CRYSTOUT_Error
+
                 try:
                     calc = CRYSTOUT(local_calc_snippet)
                 except CRYSTOUT_Error as err:
@@ -240,24 +240,18 @@ async def _check_status():  # noqa: C901
         os.unlink(local_calc_snippet)
 
 
-def check_status():
-    asyncio.run(_check_status())
-
-
-async def _init():
+@to_sync
+async def init():
     # service initialization
     install_path = Path(__file__).parent
     # check for systemd (exit status is 0 if there is a process)
     has_systemd = not os.system("pidof systemd")
     if has_systemd:
-        _init_systemd(install_path)  # NB. will be absent in *service --status-all*
+        # NB. will be absent in *service --status-all*
+        _init_systemd(install_path)
     else:
         _init_sysv(install_path)
     await _init_db(install_path)
-
-
-def init():
-    asyncio.run(_init())
 
 
 def _init_systemd(install_path: Path):
@@ -311,7 +305,8 @@ async def _init_db(install_path: Path):
         raise
 
 
-async def _show_nodes():
+@to_sync
+async def show_nodes():
     config = Config.from_config_parser(CONFIG_FILE)
     db = await DB.create(config.db)
 
@@ -339,11 +334,8 @@ async def _show_nodes():
         print(msg)
 
 
-def show_nodes():
-    asyncio.run(_show_nodes())
-
-
-async def _manage_node():
+@to_sync
+async def manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
     parser.add_argument("host", help="[user@]IP[~ncpus]")
     parser.add_argument(
@@ -443,10 +435,6 @@ async def _manage_node():
     print(f"Added host to yascheduler: {args.host}")
 
 
-def manage_node():
-    asyncio.run(_manage_node())
-
-
 def daemonize(log_file=None):
     parser = argparse.ArgumentParser(description="Start yascheduler daemon")
     parser.add_argument(
@@ -493,4 +481,4 @@ def daemonize(log_file=None):
 
         await yac.start()
 
-    asyncio.run(run())
+    to_sync(run)()
