@@ -123,16 +123,7 @@ async def check_status():  # noqa: C901
         )
 
     if args.convergence:
-        try:
-            # pylint: disable=import-error
-            from numpy import nan
-
-            # pylint: disable=import-error
-            from pycrystal import CRYSTOUT, CRYSTOUT_Error
-
-            local_parsing_ready = True
-        except Exception:
-            pass
+        local_parsing_ready = True
 
     if args.view:
         for task in await db.get_tasks_with_cloud_by_id_status(
@@ -178,6 +169,13 @@ async def check_status():  # noqa: C901
                         await sftp.get([str(r_output)], local_calc_snippet)
                 except OSError:
                     continue
+
+                # pylint: disable=import-error
+                from numpy import nan
+
+                # pylint: disable=import-error
+                from pycrystal import CRYSTOUT, CRYSTOUT_Error
+
                 try:
                     calc = CRYSTOUT(local_calc_snippet)
                 except CRYSTOUT_Error as err:
