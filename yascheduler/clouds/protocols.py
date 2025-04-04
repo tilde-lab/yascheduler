@@ -22,6 +22,7 @@ TConfigCloud_contra = TypeVar(
 
 class PCloudConfig(Protocol):
     "Cloud config init protocol"
+
     bootcmd: Sequence[Union[str, Sequence[str]]]
     package_upgrade: bool
     packages: Sequence[str]
@@ -65,6 +66,7 @@ class DeleteNodeCallable(Protocol[TConfigCloud_contra]):
 
 class PCloudAdapter(Protocol[TConfigCloud_contra]):
     "Cloud adapter protocol"
+
     name: str
     supported_platform_checks: Sequence[SupportedPlatformChecker]
     create_node: CreateNodeCallable[TConfigCloud_contra]
@@ -100,6 +102,7 @@ class PCloudAdapter(Protocol[TConfigCloud_contra]):
 
 class PCloudAPI(Protocol[TConfigCloud_contra]):
     "Cloud API protocol"
+
     name: str
     config: TConfigCloud_contra
     local_config: ConfigLocal
@@ -155,6 +158,7 @@ class PCloudAPI(Protocol[TConfigCloud_contra]):
 @define(frozen=True)
 class CloudCapacity:
     "Cloud capacity object"
+
     name: str
     max: int
     current: int
@@ -162,6 +166,7 @@ class CloudCapacity:
 
 class PCloudAPIManager(Protocol):
     "Cloud API manager protocol"
+
     apis: Mapping[str, PCloudAPI]
     db: DB
     log: logging.Logger

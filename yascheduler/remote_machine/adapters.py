@@ -56,6 +56,7 @@ from .windows_methods import (
 @define(frozen=True)
 class RemoteMachineAdapter(PRemoteMachineAdapter):
     "Remote machine adapter"
+
     platform: str = field()
     path: Type[PurePath] = field()
 

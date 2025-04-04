@@ -8,7 +8,9 @@ from yascheduler import Yascheduler
 parser = argparse.ArgumentParser()
 parser.add_argument("-f", dest="file", action="store", type=str, required=True)
 parser.add_argument("-e", dest="engine", action="store", type=str, required=True)
-parser.add_argument("-l", dest="localrepo", action="store", type=bool, required=False, default=False)
+parser.add_argument(
+    "-l", dest="localrepo", action="store", type=bool, required=False, default=False
+)
 args = parser.parse_args()
 
 input_data = {}

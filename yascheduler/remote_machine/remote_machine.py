@@ -130,6 +130,7 @@ class RemoteMachineMetadata(PRemoteMachineMetadata):
 @define(frozen=True)
 class RemoteMachine(PRemoteMachine):
     "Remote SSH machine"
+
     conn: SSHClientConnection = field()
     conn_opts: SSHClientConnectionOptions = field()
 
@@ -416,7 +417,6 @@ class RemoteMachine(PRemoteMachine):
 
         async def occupancy_checker():
             while not self.cancellation_event.is_set() and self.meta.busy is not False:
-
                 await asyncio.sleep(engine.sleep_interval)
 
                 try:

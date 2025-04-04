@@ -44,18 +44,21 @@ def _check_at_least_one_elem(
 @define(frozen=True)
 class LocalFilesDeploy:
     "Deploy local files configuration"
+
     files: Tuple[PurePath] = field(factory=tuple)
 
 
 @define(frozen=True)
 class LocalArchiveDeploy:
     "Deploy local archive configuration"
+
     file: PurePath
 
 
 @define(frozen=True)
 class RemoteArchiveDeploy:
     "Deploy remote archive configuration"
+
     url: str
 
 

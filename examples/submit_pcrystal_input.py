@@ -20,7 +20,7 @@ else:
     FOLDER = work_folder
     print("**To save calc in an input folder**")
 
-f34_name = os.path.basename(target).split('.')[0] + '.f34' # e.g. archive with *.f34
+f34_name = os.path.basename(target).split(".")[0] + ".f34"  # e.g. archive with *.f34
 
 if os.path.exists(os.path.join(work_folder, "fort.34")):
     assert "EXTERNAL" in SETUP_INPUT
