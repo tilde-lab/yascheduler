@@ -7,6 +7,7 @@ from typing import Sequence, Type
 from attrs import define, evolve, field
 
 from .checks import (
+    check_is_darwin,
     check_is_debian,
     check_is_debian_10,
     check_is_debian_11,
@@ -16,7 +17,6 @@ from .checks import (
     check_is_debian_15,
     check_is_debian_like,
     check_is_linux,
-    check_is_darwin,
     check_is_windows,
     check_is_windows7,
     check_is_windows8,

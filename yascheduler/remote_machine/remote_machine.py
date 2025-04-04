@@ -22,6 +22,7 @@ from attrs import define, field, validators
 from typing_extensions import Self
 
 from .adapters import (
+    darwin_adapter,
     debian_10_adapter,
     debian_11_adapter,
     debian_12_adapter,
@@ -31,7 +32,6 @@ from .adapters import (
     debian_adapter,
     debian_like_adapter,
     linux_adapter,
-    darwin_adapter,
     windows7_adapter,
     windows8_adapter,
     windows10_adapter,
