@@ -1,3 +1,10 @@
+## v1.3.2 (2025-04-04)
+
+### Fix
+
+- Add conditional import of ParamSpec for Python < 3.10
+- nested asyncio loops problem
+
 ## v1.3.1 (2025-02-13)
 
 ### Fix
