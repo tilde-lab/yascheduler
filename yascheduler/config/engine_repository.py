@@ -69,6 +69,12 @@ class EngineRepository(UserDict, Mapping[str, Engine]):
         mapped = map(lambda x: x.platform_packages, self.values())
         return list(set(chain(*mapped)))
 
+    def get_extra_commands(self) -> Sequence[str]:
+        "Collect extra commands from engines"
+        mapped = list(map(lambda x: x.extra_command, self.values()))
+        mapped = list(filter(None, mapped))
+        return mapped
+
     @classmethod
     def from_config_parser(cls, cfg: ConfigParser, engines_dir: PurePath) -> Self:
         "Create config from path or config file contents"
