@@ -1,3 +1,9 @@
+## v1.4.0 (2025-05-14)
+
+### Feat
+
+- **hetzner, config**: ability to set server location
+
 ## v1.3.2 (2025-04-04)
 
 ### Fix
