@@ -128,6 +128,7 @@ class ConfigCloudHetzner:
     username: str = _make_default_field("root")
     priority: int = _make_default_field(0)
     server_type: str = _make_default_field("cx52")
+    location: Optional[str] = field(default=None, validator=opt_str_val)
     image_name: str = _make_default_field("debian-11")
     idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
     jump_username: Optional[str] = field(default=None, validator=opt_str_val)
@@ -163,6 +164,7 @@ class ConfigCloudHetzner:
             max_nodes=sec.getint(fmt("max_nodes")),
             username=sec.get(fmt("user")),
             server_type=sec.get(fmt("server_type")),
+            location=sec.get(fmt("location")),
             image_name=sec.get(fmt("image_name")),
             priority=sec.getint(fmt("priority")),
             idle_tolerance=sec.getint(fmt("idle_tolerance")),

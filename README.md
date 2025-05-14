@@ -290,6 +290,10 @@ Settings prefix is `hetzner`.
 
   _Default_: `cx52`
 
+- `hetzner_location`
+
+  Location name.
+
 - `hetzner_image_name`
 
   Image name for new nodes.
