@@ -10,6 +10,7 @@ from asyncssh.public_key import SSHKey as ASSHKey
 from hcloud import APIException
 from hcloud import Client as HClient
 from hcloud.images.domain import Image
+from hcloud.locations.domain import Location
 from hcloud.server_types.domain import ServerType
 from hcloud.servers.client import BoundServer
 from hcloud.ssh_keys.domain import SSHKey as HSSHKey
@@ -64,8 +65,9 @@ async def hetzner_create_node(
     create_server = partial(
         client.servers.create,
         name=get_rnd_name("node"),
-        server_type=ServerType(cfg.server_type),
+        server_type=ServerType(name=cfg.server_type),
         image=Image(name=cfg.image_name),
+        location=Location(name=cfg.location) if cfg.location else None,
         ssh_keys=[HSSHKey(id=ssh_key_id, name=get_key_name(key))],
         user_data=cloud_config.render() if cloud_config else None,
     )
