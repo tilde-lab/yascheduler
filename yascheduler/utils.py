@@ -170,10 +170,7 @@ async def check_status():  # noqa: C901
                 except OSError:
                     continue
 
-                # pylint: disable=import-error
                 from numpy import nan
-
-                # pylint: disable=import-error
                 from pycrystal import CRYSTOUT, CRYSTOUT_Error
 
                 try:

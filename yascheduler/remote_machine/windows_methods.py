@@ -18,7 +18,7 @@ from .protocol import OuterRunCallable, PEngineRepository, PProcessInfo, QuoteCa
 class MyPureWindowsPath(PureWindowsPath):
     @classmethod
     def _parse_args(cls, path):
-        drv, root, parts = cls._parse_args(path)  # pylint: disable=no-member
+        drv, root, parts = cls._parse_args(path)
         # prevent leading slash like \C:\Users\user
         if not drv and root == "\\" and len(parts) > 2 and parts[0] == "\\":
             drv = parts[1]

@@ -9,12 +9,12 @@ name = "yascheduler"
 version = "1.4.0"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
-     {name = "Evgeny Blokhin", email = "eb@tilde.pro"},
-     {name = "Sergei Korolev", email = "knopki@duck.com"},
-     {name = "Andrey Sobolev"}
+    { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
+    { name = "Sergei Korolev", email = "knopki@duck.com" },
+    { name = "Andrey Sobolev" },
 ]
 readme = "README.md"
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -49,20 +49,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-lint = [
-     "autoflake",
-     "black >= 23.1",
-     "flake8",
-     "flake8-bugbear",
-     "isort",
-     "pylint",
-     "pylint-per-file-ignores >= 1",
-     "pyupgrade",
-]
-release = [
-    "commitizen",
-    "flit",
-]
+lint = ["ruff"]
+release = ["commitizen", "flit"]
 
 [project.urls]
 Home = "https://github.com/tilde-lab/yascheduler"
@@ -87,61 +75,22 @@ directory = "yascheduler/data"
 [tool.flit.module]
 name = "yascheduler"
 
-[tool.autoflake]
-expand-star-imports = true
-ignore-init-module-imports = true
-remove-all-unused-imports = true
-remove-duplicate-keys = true
-remove-unused-variables = true
-
-[tool.black]
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
-
-
 [tool.commitizen]
 name = "cz_conventional_commits"
 tag_format = "v$version"
-version_files = [
-    "pyproject.toml:^version",
-]
+version_files = ["pyproject.toml:^version"]
 version_provider = "pep621"
 update_changelog_on_bump = true
 changelog_incremental = true
 
-[tool.isort]
-profile = "black"
-py_version = 39
-
-[tool.pylint.MASTER]
-load-plugins=[
-    "pylint_per_file_ignores",
-]
-
-[tool.pylint.main]
-jobs = 0
-py-version = "3.9"
-recursive = true
-suggestion-mode = true
-
-[tool.pylint.basic]
-good-names = ["db", "id", "x", "xy", "y", "_", "__"]
-
-[tool.pylint.design]
-max-args = 7
-max-attributes = 10
-min-public-methods = 1
-
-[tool.pylint.format]
-max-line-length = 88
-
-[tool.pylint.reports]
-output-format = "colorized"
-reports = "no"
-score = "no"
-
-[tool.pylint-per-file-ignores]
-"/tests/" = "redefined-outer-name"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-addopts = "--cov=metis_client --cov-report=term --no-cov-on-fail --cov-fail-under=99"
+[tool.ruff]
+# Enable specific rules
+lint.select = ["E", "F"]
+# Disable specific rules
+lint.ignore = ["E501"]
+# Automatically fix violations
+fix = true
+# Maximum line length
+line-length = 100
+# Target python version
+target-version = "py39"

@@ -376,7 +376,6 @@ class RemoteMachine(PRemoteMachine):
         """
         self.log.info(f"CPUs count: {await self.get_cpu_cores()}")
         conn = await self.get_conn()
-        # pylint: disable=redundant-keyword-arg
         retry = my_backoff_exc(exception=AllSSHRetryExc)
         await retry(self.adapter.setup_node)(
             conn=conn,
