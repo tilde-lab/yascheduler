@@ -252,9 +252,7 @@ class PRemoteMachine(Protocol):
 
     @classmethod
     @abstractmethod
-    async def create(
-        cls, **kwargs: Unpack[PRemoteMachineCreateKwargs]
-    ) -> "PRemoteMachine":
+    async def create(cls, **kwargs: Unpack[PRemoteMachineCreateKwargs]) -> "PRemoteMachine":
         """
         Async init of remote machine.
         If adapter is not set, then platform will be guessed.
@@ -296,9 +294,7 @@ class PRemoteMachine(Protocol):
         raise NotImplementedError
 
     @abstractmethod
-    async def run(
-        self, *args, cwd: Optional[str] = None, **kwargs
-    ) -> SSHCompletedProcess:
+    async def run(self, *args, cwd: Optional[str] = None, **kwargs) -> SSHCompletedProcess:
         "Run process and wait for exit"
         raise NotImplementedError
 

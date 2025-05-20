@@ -19,23 +19,15 @@ class ConfigLocal:
     engines_dir: Path = _make_default_field(Path("./data/engines"))
     keys_dir: Path = _make_default_field(Path("./data/keys"))
     webhook_url: Optional[str] = field(default=None)
-    webhook_reqs_limit: int = _make_default_field(
-        5, extra_validators=[validators.ge(1)]
-    )
-    conn_machine_limit: int = _make_default_field(
-        10, extra_validators=[validators.ge(1)]
-    )
-    conn_machine_pending: int = _make_default_field(
-        10, extra_validators=[validators.ge(1)]
-    )
+    webhook_reqs_limit: int = _make_default_field(5, extra_validators=[validators.ge(1)])
+    conn_machine_limit: int = _make_default_field(10, extra_validators=[validators.ge(1)])
+    conn_machine_pending: int = _make_default_field(10, extra_validators=[validators.ge(1)])
     allocate_limit: int = _make_default_field(20, extra_validators=[validators.ge(1)])
     allocate_pending: int = _make_default_field(1, extra_validators=[validators.ge(1)])
     consume_limit: int = _make_default_field(20, extra_validators=[validators.ge(1)])
     consume_pending: int = _make_default_field(1, extra_validators=[validators.ge(1)])
     deallocate_limit: int = _make_default_field(5, extra_validators=[validators.ge(1)])
-    deallocate_pending: int = _make_default_field(
-        1, extra_validators=[validators.ge(1)]
-    )
+    deallocate_pending: int = _make_default_field(1, extra_validators=[validators.ge(1)])
 
     def get_private_keys(self) -> Sequence[PurePath]:
         "List private key file paths"
@@ -57,9 +49,7 @@ class ConfigLocal:
         return ConfigLocal(
             data_dir,
             tasks_dir=Path(sec.get("tasks_dir", str(data_dir / "tasks"))).resolve(),
-            engines_dir=Path(
-                sec.get("engines_dir", str(data_dir / "engines"))
-            ).resolve(),
+            engines_dir=Path(sec.get("engines_dir", str(data_dir / "engines"))).resolve(),
             keys_dir=Path(sec.get("keys_dir", str(data_dir / "keys"))).resolve(),
             webhook_reqs_limit=sec.getint("webhook_reqs_limit"),
             webhook_url=sec.get("webhook_url"),

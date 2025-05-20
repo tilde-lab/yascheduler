@@ -15,9 +15,7 @@ from ..db import DB
 
 SupportedPlatformChecker = Callable[[str], bool]
 
-TConfigCloud_contra = TypeVar(
-    "TConfigCloud_contra", bound=ConfigCloud, contravariant=True
-)
+TConfigCloud_contra = TypeVar("TConfigCloud_contra", bound=ConfigCloud, contravariant=True)
 
 
 class PCloudConfig(Protocol):

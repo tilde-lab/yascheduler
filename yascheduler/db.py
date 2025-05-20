@@ -205,9 +205,7 @@ class DB:
             username=username,
             enabled=enabled,
         )
-        return NodeModel(
-            ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username
-        )
+        return NodeModel(ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username)
 
     async def enable_node(self, ip_addr: str) -> None:
         """Enable node"""
@@ -354,9 +352,7 @@ class DB:
         self, task_id: int, metadata: Mapping[str, Any], error: Optional[str] = None
     ):
         """Set task error"""
-        new_meta = (
-            dict(list(metadata.items()) + [("error", error)]) if error else metadata
-        )
+        new_meta = dict(list(metadata.items()) + [("error", error)]) if error else metadata
         await self.run(
             """UPDATE yascheduler_tasks
             SET status=:status, metadata=:metadata

@@ -19,9 +19,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
     data: MutableMapping[str, PRemoteMachine] = field(factory=dict)
     connect_in_flight: Set[str] = field(factory=set, init=False)
 
-    def get(
-        self, __key: str, default: Optional[PRemoteMachine] = None
-    ) -> Optional[PRemoteMachine]:
+    def get(self, __key: str, default: Optional[PRemoteMachine] = None) -> Optional[PRemoteMachine]:
         return self.data.get(__key, default)
 
     def keys(self):
@@ -77,9 +75,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
             self,
             data={
                 ip: m
-                for ip, m in sorted(
-                    self.data.items(), key=itemgetter(1), reverse=reverse_sort
-                )
+                for ip, m in sorted(self.data.items(), key=itemgetter(1), reverse=reverse_sort)
                 if all([x(m) for x in checks])
             },
         )

@@ -83,9 +83,7 @@ my_backoff_exc = partial(
 
 
 class MySSHClient(SSHClient):
-    def validate_host_public_key(
-        self, host: str, addr: str, port: int, key: SSHKey
-    ) -> bool:
+    def validate_host_public_key(self, host: str, addr: str, port: int, key: SSHKey) -> bool:
         "Trust all host keys"
         # NOTE: this is insecure for MiM attacks
         return True
@@ -147,9 +145,7 @@ class RemoteMachine(PRemoteMachine):
 
     cancellation_event: Event = field(factory=Event, init=False)
     jobs: Set[asyncio.Task] = field(factory=set, init=False)
-    sessions_limit: Semaphore = field(
-        factory=lambda: Semaphore(MAX_SESSIONS), init=False
-    )
+    sessions_limit: Semaphore = field(factory=lambda: Semaphore(MAX_SESSIONS), init=False)
 
     def __le__(self, other: Self) -> bool:
         if not self.meta._free_since:
@@ -236,9 +232,7 @@ class RemoteMachine(PRemoteMachine):
         if not isinstance(data_dir, Path):
             data_dir = Path(str(data_dir)) if data_dir else Path("./data")
         if not isinstance(engines_dir, Path):
-            engines_dir = (
-                Path(str(engines_dir)) if engines_dir else data_dir / "engines"
-            )
+            engines_dir = Path(str(engines_dir)) if engines_dir else data_dir / "engines"
         if not isinstance(tasks_dir, Path):
             tasks_dir = Path(str(tasks_dir)) if tasks_dir else data_dir / "tasks"
 
@@ -256,9 +250,7 @@ class RemoteMachine(PRemoteMachine):
 
     @classmethod
     @asynccontextmanager
-    async def create_ctx(
-        cls, *args, **kwargs
-    ) -> AsyncGenerator["PRemoteMachine", None]:
+    async def create_ctx(cls, *args, **kwargs) -> AsyncGenerator["PRemoteMachine", None]:
         """
         Create async context.
         :raises asyncssh.Error: An SSH error has occurred.
@@ -329,14 +321,10 @@ class RemoteMachine(PRemoteMachine):
         return self.adapter.quote(string)
 
     @my_backoff_exc()
-    async def run(
-        self, *args, cwd: Optional[str] = None, **kwargs
-    ) -> SSHCompletedProcess:
+    async def run(self, *args, cwd: Optional[str] = None, **kwargs) -> SSHCompletedProcess:
         "Run process and wait for exit"
         conn = await self.get_conn()
-        return await self.adapter.run(
-            conn, self.adapter.quote, *args, cwd=cwd, **kwargs
-        )
+        return await self.adapter.run(conn, self.adapter.quote, *args, cwd=cwd, **kwargs)
 
     async def run_bg(
         self, command: str, *args, cwd: Optional[str] = None, **kwargs

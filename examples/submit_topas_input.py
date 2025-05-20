@@ -38,8 +38,6 @@ Out_Dif( calc.xy )
 
 
 yac = Yascheduler()
-result = yac.queue_submit_task(
-    LABEL, {"calc.inp": PATTERN_REQUEST, "structure.inc": ""}, "topas"
-)
+result = yac.queue_submit_task(LABEL, {"calc.inp": PATTERN_REQUEST, "structure.inc": ""}, "topas")
 print(LABEL)
 print(result)

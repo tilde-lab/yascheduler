@@ -14,13 +14,8 @@ def _check_spawn(instance: "Engine", _, value: str):
     try:
         value.format(task_path="", engine_path="", ncpus="")
     except KeyError as err:
-        msg = (
-            "Engine {name} has unknown template placeholder "
-            "`{placeholder}` in *spawn* command"
-        )
-        raise ValueError(
-            msg.format(name=instance.name, placeholder=err.args[0])
-        ) from err
+        msg = "Engine {name} has unknown template placeholder `{placeholder}` in *spawn* command"
+        raise ValueError(msg.format(name=instance.name, placeholder=err.args[0])) from err
 
 
 def _check_check_(instance: "Engine", attribute: Attribute, value: Optional[str]):
@@ -29,14 +24,10 @@ def _check_check_(instance: "Engine", attribute: Attribute, value: Optional[str]
     if (no_check_cmd_curr and not instance.check_pname) or (
         no_check_pname_curr and not instance.check_cmd
     ):
-        raise ValueError(
-            f"Engine {instance.name} has no *check_cmd* or *check_pname* set"
-        )
+        raise ValueError(f"Engine {instance.name} has no *check_cmd* or *check_pname* set")
 
 
-def _check_at_least_one_elem(
-    instance: "Engine", attribute: Attribute, value: Optional[Sequence]
-):
+def _check_at_least_one_elem(instance: "Engine", attribute: Attribute, value: Optional[Sequence]):
     if not value or len(value) < 1:
         raise ValueError(f"Engine {instance.name} has no *{attribute.name}* config set")
 
@@ -98,15 +89,11 @@ class Engine:
     )
     platforms: Tuple[str, ...] = field(
         factory=tuple,
-        validator=[
-            validators.deep_iterable(member_validator=validators.instance_of(str))
-        ],
+        validator=[validators.deep_iterable(member_validator=validators.instance_of(str))],
     )
     platform_packages: Tuple[str, ...] = field(
         factory=tuple,
-        validator=[
-            validators.deep_iterable(member_validator=validators.instance_of(str))
-        ],
+        validator=[validators.deep_iterable(member_validator=validators.instance_of(str))],
     )
     check_cmd_code: int = _make_default_field(0)
     sleep_interval: int = _make_default_field(10)
@@ -120,30 +107,22 @@ class Engine:
             "deploy_local_archive",
             "deploy_remote_archive",
         ]
-        return [
-            f.name for f in fields(cls) if f.name not in exclude_names
-        ] + include_names
+        return [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
 
     @classmethod
-    def from_config_parser_section(
-        cls, sec: SectionProxy, engines_dir: PurePath
-    ) -> "Engine":
+    def from_config_parser_section(cls, sec: SectionProxy, engines_dir: PurePath) -> "Engine":
         "Create config from config parser's section"
 
         warn_unknown_fields(cls.get_valid_config_parser_fields(), sec)
 
         def gettuple(key: str) -> Tuple[str]:
-            return tuple(
-                x.strip() for x in filter(None, sec.get(key, fallback="").split())
-            )
+            return tuple(x.strip() for x in filter(None, sec.get(key, fallback="").split()))
 
         name = sec.name[7:]
         engine_dir = engines_dir / name
 
         deployable: Sequence[Deploy] = []
-        deploy_local_files = [
-            engine_dir / x.strip() for x in gettuple("deploy_local_files")
-        ]
+        deploy_local_files = [engine_dir / x.strip() for x in gettuple("deploy_local_files")]
         if deploy_local_files:
             deployable.append(LocalFilesDeploy(files=tuple(deploy_local_files)))
         deploy_local_archive = sec.get("deploy_local_archive", None)

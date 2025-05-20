@@ -43,9 +43,7 @@ class EngineRepository(UserDict, Mapping[str, Engine]):
         raise NotImplementedError()
 
     def __hash__(self) -> int:
-        return hash(
-            json.dumps(asdict(self, value_serializer=_value_serializer), sort_keys=True)
-        )
+        return hash(json.dumps(asdict(self, value_serializer=_value_serializer), sort_keys=True))
 
     def get(self, key, default=None):
         if default:

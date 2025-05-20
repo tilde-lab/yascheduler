@@ -101,9 +101,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
                 continue
             ssh_key = read_private_key(filepath)
             ssh_key.set_comment(filepath.name)
-            self.log.debug(
-                "LOADED KEY %s: %s", filepath.name, ssh_key.get_fingerprint("md5")
-            )
+            self.log.debug("LOADED KEY %s: %s", filepath.name, ssh_key.get_fingerprint("md5"))
             return ssh_key
 
         key_name = get_rnd_name(prefix)
@@ -118,9 +116,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
     async def get_ssh_key(self) -> SSHKey:
         "Load or generate ssh key (cached)"
         async with self.ssh_key_lock:
-            return await asyncio.get_running_loop().run_in_executor(
-                None, self.get_ssh_key_sync
-            )
+            return await asyncio.get_running_loop().run_in_executor(None, self.get_ssh_key_sync)
 
     async def get_cloud_config_data(self) -> PCloudConfig:
         "Common cloud-config"
@@ -174,10 +170,7 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
             except (ProcessError, Exception) as err:
                 if isinstance(err, ProcessError):
                     self.log.error(
-                        (
-                            "Setup node %s failed: command '%s' failed "
-                            "with exit code %s; stderr: %s"
-                        ),
+                        ("Setup node %s failed: command '%s' failed with exit code %s; stderr: %s"),
                         ip_addr,
                         err.command,
                         err.returncode,
@@ -190,6 +183,4 @@ class CloudAPI(PCloudAPI[TConfigCloud_contra]):
 
     async def delete_node(self, host: str):
         async with self.adapter.get_op_semaphore():
-            return await self.adapter.delete_node(
-                log=self.log, cfg=self.config, host=host
-            )
+            return await self.adapter.delete_node(log=self.log, cfg=self.config, host=host)

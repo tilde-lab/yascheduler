@@ -162,9 +162,7 @@ def create_vm_params(
                 ssh=SshConfiguration(public_keys=[pub_key]),
             ),
         ),
-        diagnostics_profile=DiagnosticsProfile(
-            boot_diagnostics=BootDiagnostics(enabled=True)
-        ),
+        diagnostics_profile=DiagnosticsProfile(boot_diagnostics=BootDiagnostics(enabled=True)),
     )
 
 
@@ -209,9 +207,7 @@ async def az_create_node(
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
     """Create virtual machine with network interface"""
-    async with ClientSecretCredential(
-        cfg.tenant_id, cfg.client_id, cfg.client_secret
-    ) as cred:
+    async with ClientSecretCredential(cfg.tenant_id, cfg.client_id, cfg.client_secret) as cred:
         cred = cast(AsyncTokenCredential, cred)  # fix library type errors
         async with NetworkManagementClient(cred, cfg.subscription_id) as nmc:
             async with ComputeManagementClient(cred, cfg.subscription_id) as cmc:
@@ -261,9 +257,7 @@ async def az_delete_node(
     host: str,
 ) -> None:
     """Delete virtual machine with network interface"""
-    async with ClientSecretCredential(
-        cfg.tenant_id, cfg.client_id, cfg.client_secret
-    ) as cred:
+    async with ClientSecretCredential(cfg.tenant_id, cfg.client_id, cfg.client_secret) as cred:
         cred = cast(AsyncTokenCredential, cred)  # fix library type errors
         async with NetworkManagementClient(cred, cfg.subscription_id) as nmc:
             async with ComputeManagementClient(cred, cfg.subscription_id) as cmc:

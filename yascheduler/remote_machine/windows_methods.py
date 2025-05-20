@@ -190,9 +190,7 @@ async def windows_deploy_engines(
     for engine in engines.values():
         if log:
             log.info(f"Setup {engine.name} engine...")
-        engine_dir = PureWindowsPath(
-            (await sftp.realpath(engines_dir / engine.name))[1:]
-        )
+        engine_dir = PureWindowsPath((await sftp.realpath(engines_dir / engine.name))[1:])
         # sftp.makedirs is broken for PureWindowsPath
         await sftp.makedirs(PurePath(engine_dir), exist_ok=True)
         for deployment in engine.deployable:
@@ -200,14 +198,10 @@ async def windows_deploy_engines(
                 await deploy_local_files(sftp, engine_dir, deployment.files, log)
 
             if isinstance(deployment, LocalArchiveDeploy):
-                await deploy_local_archive(
-                    run, quote, sftp, engine_dir, deployment.file
-                )
+                await deploy_local_archive(run, quote, sftp, engine_dir, deployment.file)
 
             if isinstance(deployment, RemoteArchiveDeploy):
-                await deploy_remote_archive(
-                    run, quote, sftp, engine_dir, deployment.url
-                )
+                await deploy_remote_archive(run, quote, sftp, engine_dir, deployment.url)
         if log:
             log.info(f"Setup of {engine.name} engine is done...")
 

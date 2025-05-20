@@ -98,9 +98,7 @@ class CloudAPIManager(PCloudAPIManager):
 
         for api in self.apis.values():
             if api.name not in data:
-                data[api.name] = CloudCapacity(
-                    name=api.name, current=0, max=api.config.max_nodes
-                )
+                data[api.name] = CloudCapacity(name=api.name, current=0, max=api.config.max_nodes)
         return data
 
     async def select_best_provider(
@@ -186,9 +184,7 @@ class CloudAPIManager(PCloudAPIManager):
         if not node or not node.cloud:
             return
         if node.cloud not in self.apis:
-            self.log.warning(
-                f"Can't deallocate node {node.ip} - unsupported cloud {node.cloud}"
-            )
+            self.log.warning(f"Can't deallocate node {node.ip} - unsupported cloud {node.cloud}")
         await self.db.disable_node(ip_addr)
         await self.db.commit()
         try:

@@ -34,9 +34,7 @@ class AzureImageReference:
         "Create image reference from urn in forma `publisher:offer:sku:version'"
         parts = urn.split(":", maxsplit=4)
         if len(parts) < 4:
-            raise ValueError(
-                "`Image reference URN should be in format publisher:offer:sku:version"
-            )
+            raise ValueError("`Image reference URN should be in format publisher:offer:sku:version")
 
         return cls(*parts)
 
@@ -58,9 +56,7 @@ class ConfigCloudAzure:
     vm_image: AzureImageReference = _make_default_field(AzureImageReference())
     vm_size: str = _make_default_field("Standard_B1s")
     max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
-    username: str = _make_default_field(
-        "yascheduler", extra_validators=[_check_az_user]
-    )
+    username: str = _make_default_field("yascheduler", extra_validators=[_check_az_user])
     priority: int = _make_default_field(0)
     idle_tolerance: int = _make_default_field(300, extra_validators=[validators.ge(1)])
     jump_username: Optional[str] = field(default=None, validator=opt_str_val)
@@ -73,8 +69,7 @@ class ConfigCloudAzure:
         include_names = ["user", "jump_user", "image", "size"]
         return [
             f"{cls.prefix}_{x}"
-            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
-            + include_names
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
         ]
 
     @classmethod
@@ -141,8 +136,7 @@ class ConfigCloudHetzner:
         include_names = ["user", "jump_user"]
         return [
             f"{cls.prefix}_{x}"
-            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
-            + include_names
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
         ]
 
     @classmethod
@@ -194,8 +188,7 @@ class ConfigCloudUpcloud:
         include_names = ["user", "jump_user"]
         return [
             f"{cls.prefix}_{x}"
-            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
-            + include_names
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
         ]
 
     @classmethod
