@@ -50,7 +50,7 @@ azure = [
 ]
 hetzner = ["hcloud~=1.17"]
 upcloud = ["upcloud_api~=2.0"]
-dev = ["build", "commitizen", "pyright", "ruff", "twine"]
+dev = ["build", "commitizen", "pyright", "pyupgrade", "ruff", "twine"]
 
 [project.urls]
 Home = "https://github.com/tilde-lab/yascheduler"

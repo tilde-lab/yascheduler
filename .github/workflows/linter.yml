@@ -46,3 +46,7 @@ jobs:
           ruff check --exit-non-zero-on-fix
 
       - uses: jakebailey/pyright-action@b5d50e5cde6547546a5c4ac92e416a8c2c1a1dfe
+
+      - name: pyupgrade
+        run: |
+          pyupgrade --py39-plus **.py
