@@ -7,8 +7,9 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence, Union
+from typing import Any, Optional, Union
 
 from pg8000 import ProgrammingError
 
@@ -16,7 +17,6 @@ from .client import Yascheduler, to_sync
 from .config import Config
 from .db import DB, TaskModel, TaskStatus
 from .remote_machine import RemoteMachine
-from .scheduler import Scheduler, get_logger
 from .variables import CONFIG_FILE
 
 
@@ -431,6 +431,8 @@ async def manage_node():
 
 
 def daemonize(log_file: Optional[Union[str, Path]] = None):
+    from .scheduler import Scheduler, get_logger
+
     parser = argparse.ArgumentParser(description="Start yascheduler daemon")
     parser.add_argument(
         "-l",
