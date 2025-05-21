@@ -16,7 +16,7 @@ from .adapters import get_azure_adapter, get_hetzner_adapter, get_upcloud_adapte
 from .cloud_api import CloudAPI
 from .protocols import CloudCapacity
 
-CLOUD_ADAPTED_GETTERS = {
+CLOUD_ADAPTER_GETTERS = {
     "az": get_azure_adapter,
     "hetzner": get_hetzner_adapter,
     "upcloud": get_upcloud_adapter,
@@ -61,7 +61,7 @@ class CloudAPIManager:
                 continue
 
             try:
-                getter = CLOUD_ADAPTED_GETTERS[cfg.prefix]
+                getter = CLOUD_ADAPTER_GETTERS[cfg.prefix]
                 adapter = getter(cfg.prefix)
             except KeyError:
                 continue
