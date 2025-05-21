@@ -3,11 +3,13 @@
 import asyncio
 import logging
 from asyncio.locks import Event, Semaphore
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import PurePath
-from typing import AnyStr, AsyncGenerator, Optional, Pattern, Sequence, Type, Union
+from re import Pattern
+from typing import AnyStr, Optional, Union
 
 import asyncssh
 import backoff
@@ -320,7 +322,7 @@ class RemoteMachine:
             return await self.renew_conn()
 
     @property
-    def path(self) -> Type[PurePath]:
+    def path(self) -> type[PurePath]:
         "Return path of the adapter"
         return self.adapter.path
 

@@ -4,16 +4,11 @@ import asyncio
 import logging
 from asyncio.locks import Event, Semaphore
 from collections import Counter
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path, PurePath, PurePosixPath
-from typing import (
-    Any,
-    AsyncGenerator,
-    Optional,
-    Union,
-)
+from typing import Any, Optional, Union
 
 import aiohttp
 import asyncssh

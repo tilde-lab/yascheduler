@@ -2,8 +2,9 @@
 """Config helper utilities"""
 
 import warnings
+from collections.abc import Sequence
 from configparser import SectionProxy
-from typing import Any, Callable, Optional, Sequence, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 from attrs import Attribute, converters, field, validators
 

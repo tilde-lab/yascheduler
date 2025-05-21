@@ -3,16 +3,10 @@
 import asyncio
 import logging
 from abc import abstractmethod
-from collections.abc import Callable, Coroutine, Sequence, ValuesView
+from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence, ValuesView
 from pathlib import PurePath
-from typing import (
-    Any,
-    AsyncGenerator,
-    Optional,
-    Pattern,
-    Protocol,
-    Union,
-)
+from re import Pattern
+from typing import Any, Optional, Protocol, Union
 
 from asyncssh.connection import SSHClientConnection
 from asyncssh.misc import (

@@ -4,8 +4,10 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import PurePath, PureWindowsPath
-from typing import AsyncGenerator, Optional, Pattern, Sequence, Union
+from re import Pattern
+from typing import Optional, Union
 
 from asyncssh.connection import SSHClientConnection
 from asyncssh.sftp import SFTPClient

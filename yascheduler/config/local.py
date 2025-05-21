@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Local configuration"""
 
+from collections.abc import Sequence
 from configparser import SectionProxy
 from pathlib import Path, PurePath
-from typing import Optional, Sequence
+from typing import Optional
 
 from attrs import define, field, fields, validators
 

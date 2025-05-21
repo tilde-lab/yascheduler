@@ -170,7 +170,7 @@ class DB:
             """SELECT enabled, COUNT(ip) FROM yascheduler_nodes
             GROUP BY enabled ORDER BY enabled;"""
         )
-        data = defaultdict(lambda: 0)
+        data = defaultdict(int)
         for row in rows or []:
             data[bool(row[0])] = row[1]
         return data
@@ -297,7 +297,7 @@ class DB:
             """SELECT status, COUNT(task_id) FROM yascheduler_tasks
             GROUP BY status ORDER BY status;"""
         )
-        data = defaultdict(lambda: 0)
+        data = defaultdict(int)
         for row in rows or []:
             data[TaskStatus(row[0])] = row[1]
         return data

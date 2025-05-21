@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 import shlex
+from collections.abc import Sequence
 from pathlib import PurePath, PurePosixPath
-from typing import Sequence, Type
 
 from attrs import define, evolve, field
 
@@ -57,7 +57,7 @@ class RemoteMachineAdapter:
     "Remote machine adapter"
 
     platform: str = field()
-    path: Type[PurePath] = field()
+    path: type[PurePath] = field()
 
     quote: QuoteCallable = field()
     run: RunCallable = field()

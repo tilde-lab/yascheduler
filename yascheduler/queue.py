@@ -2,7 +2,8 @@
 
 import asyncio
 from collections import deque
-from typing import Generic, Hashable, TypeVar
+from collections.abc import Hashable
+from typing import Generic, TypeVar
 
 from attrs import define, field
 

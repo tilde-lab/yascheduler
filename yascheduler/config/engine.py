@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Engine configuration"""
 
+from collections.abc import Sequence
 from configparser import SectionProxy
 from pathlib import PurePath
-from typing import Optional, Sequence, Union
+from typing import Optional, Union
 
 from attrs import Attribute, define, field, fields, validators
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Main config module"""
 
+from collections.abc import Sequence
 from configparser import ConfigParser
 from pathlib import PurePath
-from typing import Sequence, Union
+from typing import Union
 
 from attrs import define, field, validators
 

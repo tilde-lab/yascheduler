@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Cloud configurations"""
 
+from collections.abc import Sequence
 from configparser import SectionProxy
 from functools import partial
-from typing import Optional, Sequence, Union
+from typing import Optional, Union
 
 from attrs import define, field, fields, validators
 
