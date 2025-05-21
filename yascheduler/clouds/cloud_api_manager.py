@@ -12,9 +12,15 @@ from attrs import define, field
 from ..compat import Self
 from ..config import ConfigCloud, ConfigLocal, ConfigRemote, EngineRepository
 from ..db import DB
-from .adapters import CloudAdapter, azure_adapter, hetzner_adapter, upcloud_adapter
+from .adapters import get_azure_adapter, get_hetzner_adapter, get_upcloud_adapter
 from .cloud_api import CloudAPI
 from .protocols import CloudCapacity
+
+CLOUD_ADAPTED_GETTERS = {
+    "az": get_azure_adapter,
+    "hetzner": get_hetzner_adapter,
+    "upcloud": get_upcloud_adapter,
+}
 
 
 @define(frozen=True)
@@ -44,31 +50,38 @@ class CloudAPIManager:
         else:
             log = logging.getLogger(cls.__name__)
 
-        adapters: Sequence[CloudAdapter[ConfigCloud]] = [
-            azure_adapter,
-            hetzner_adapter,
-            upcloud_adapter,
-        ]
         apis: dict[str, CloudAPI[ConfigCloud]] = {}
-
-        def filter_adapters(prefix: str):
-            return filter(lambda x: x.name == prefix, adapters)
-
         ssh_key_lock = asyncio.Lock()
+
         for cfg in cloud_configs:
             if cfg.max_nodes <= 0:
-                log.debug("Cloud %s is skipped because of <1 max nodes", cfg.prefix)
-                continue
-            for adapter in filter_adapters(cfg.prefix):
-                apis[adapter.name] = CloudAPI(
-                    adapter=adapter,
-                    config=cfg,
-                    local_config=local_config,
-                    remote_config=remote_config,
-                    engines=engines,
-                    ssh_key_lock=ssh_key_lock,
-                    log=log,
+                log.warning(
+                    "The cloud %s is skipped because of <1 max nodes", cfg.prefix
                 )
+                continue
+
+            try:
+                getter = CLOUD_ADAPTED_GETTERS[cfg.prefix]
+                adapter = getter(cfg.prefix)
+            except KeyError:
+                continue
+            except ImportError:
+                log.error(
+                    "The cloud %s is skipped because the dependencies are not installed",
+                    cfg.prefix,
+                )
+                continue
+
+            apis[adapter.name] = CloudAPI(
+                adapter=adapter,
+                config=cfg,
+                local_config=local_config,
+                remote_config=remote_config,
+                engines=engines,
+                ssh_key_lock=ssh_key_lock,
+                log=log,
+            )
+
         log.info("Active cloud APIs: %s", (", ".join(apis.keys()) or "-"))
 
         return cls(

@@ -36,18 +36,20 @@ dependencies = [
     "asyncssh~=2.11",
     "asyncstdlib~=3.10",
     "attrs>=22.2.0",
-    "azure-identity~=1.10.0",
-    "azure-mgmt-compute~=27.2.0",
-    "azure-mgmt-network~=20.0.0",
     "backoff~=2.1.2",
-    "hcloud~=1.17",
     "pg8000~=1.19",
     "python-daemon~=2.3",
     "typing-extensions >= 4.2.0; python_version < '3.11'",
-    "upcloud_api~=2.0",
 ]
 
 [project.optional-dependencies]
+azure = [
+    "azure-identity~=1.10.0",
+    "azure-mgmt-compute~=27.2.0",
+    "azure-mgmt-network~=20.0.0",
+]
+hetzner = ["hcloud~=1.17"]
+upcloud = ["upcloud_api~=2.0"]
 dev = ["build", "commitizen", "pyright", "ruff", "twine"]
 
 [project.urls]
@@ -79,6 +81,7 @@ changelog_incremental = true
 pythonVersion = "3.9"
 executionEnvironments = [
     { root = "yascheduler/aiida_plugin.py", reportMissingImports = "warning" },
+    { root = "yascheduler/clouds", reportMissingImports = "warning" },
 ]
 
 [tool.ruff]

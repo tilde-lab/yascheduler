@@ -6,15 +6,12 @@ from typing import Generic
 
 from attrs import define, field
 
-from .az import az_create_node, az_delete_node
-from .hetzner import hetzner_create_node, hetzner_delete_node
 from .protocols import (
     CreateNodeCallable,
     DeleteNodeCallable,
     SupportedPlatformChecker,
     TConfigCloud_co,
 )
-from .upcloud import upcload_delete_node, upcloud_create_node
 
 
 def can_debian_buster(platform: str) -> bool:
@@ -59,24 +56,37 @@ class CloudAdapter(Generic[TConfigCloud_co]):
         return asyncio.Semaphore(self.op_limit)
 
 
-azure_adapter = CloudAdapter(
-    name="az",
-    supported_platform_checks=(can_debian_bullseye, can_win11),
-    create_node=az_create_node,
-    delete_node=az_delete_node,
-    op_limit=5,
-)
-hetzner_adapter = CloudAdapter(
-    name="hetzner",
-    supported_platform_checks=(can_debian_buster,),
-    create_node=hetzner_create_node,
-    delete_node=hetzner_delete_node,
-    op_limit=5,
-)
-upcloud_adapter = CloudAdapter(
-    name="upcloud",
-    supported_platform_checks=(can_debian_buster,),
-    create_node=upcloud_create_node,
-    delete_node=upcload_delete_node,
-    op_limit=1,
-)
+def get_azure_adapter(name: str):
+    from .az import az_create_node, az_delete_node
+
+    return CloudAdapter(
+        name=name,
+        supported_platform_checks=(can_debian_bullseye, can_win11),
+        create_node=az_create_node,
+        delete_node=az_delete_node,
+        op_limit=5,
+    )
+
+
+def get_hetzner_adapter(name: str):
+    from .hetzner import hetzner_create_node, hetzner_delete_node
+
+    return CloudAdapter(
+        name=name,
+        supported_platform_checks=(can_debian_buster,),
+        create_node=hetzner_create_node,
+        delete_node=hetzner_delete_node,
+        op_limit=5,
+    )
+
+
+def get_upcloud_adapter(name: str):
+    from .upcloud import upcload_delete_node, upcloud_create_node
+
+    return CloudAdapter(
+        name=name,
+        supported_platform_checks=(can_debian_buster,),
+        create_node=upcloud_create_node,
+        delete_node=upcload_delete_node,
+        op_limit=1,
+    )
