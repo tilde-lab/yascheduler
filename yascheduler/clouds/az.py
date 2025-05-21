@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import PurePosixPath
-from typing import Dict, Optional, Tuple, cast
+from typing import Optional, cast
 
 from asyncssh.public_key import SSHKey
 from attrs import asdict, evolve
@@ -69,7 +69,7 @@ async def create_nic(
     cfg: ConfigCloudAzure,
     client: NetworkManagementClient,
     vm_name: str,
-) -> Tuple[NetworkInterface, str]:
+) -> tuple[NetworkInterface, str]:
     "Create network interface"
     nic_name = f"{vm_name}-nic"
     ip_config_name = f"{nic_name}-ip-config"
@@ -122,7 +122,7 @@ def create_vm_params(
     nic: NetworkInterface,
     username: str,
     ssh_key: SSHKey,
-    tags: Dict[str, str],
+    tags: dict[str, str],
     cloud_config: Optional[PCloudConfig] = None,
 ) -> VirtualMachine:
     """Create VirtualMachine params"""
@@ -162,7 +162,9 @@ def create_vm_params(
                 ssh=SshConfiguration(public_keys=[pub_key]),
             ),
         ),
-        diagnostics_profile=DiagnosticsProfile(boot_diagnostics=BootDiagnostics(enabled=True)),
+        diagnostics_profile=DiagnosticsProfile(
+            boot_diagnostics=BootDiagnostics(enabled=True)
+        ),
     )
 
 
@@ -207,7 +209,9 @@ async def az_create_node(
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
     """Create virtual machine with network interface"""
-    async with ClientSecretCredential(cfg.tenant_id, cfg.client_id, cfg.client_secret) as cred:
+    async with ClientSecretCredential(
+        cfg.tenant_id, cfg.client_id, cfg.client_secret
+    ) as cred:
         cred = cast(AsyncTokenCredential, cred)  # fix library type errors
         async with NetworkManagementClient(cred, cfg.subscription_id) as nmc:
             async with ComputeManagementClient(cred, cfg.subscription_id) as cmc:
@@ -257,7 +261,9 @@ async def az_delete_node(
     host: str,
 ) -> None:
     """Delete virtual machine with network interface"""
-    async with ClientSecretCredential(cfg.tenant_id, cfg.client_id, cfg.client_secret) as cred:
+    async with ClientSecretCredential(
+        cfg.tenant_id, cfg.client_id, cfg.client_secret
+    ) as cred:
         cred = cast(AsyncTokenCredential, cred)  # fix library type errors
         async with NetworkManagementClient(cred, cfg.subscription_id) as nmc:
             async with ComputeManagementClient(cred, cfg.subscription_id) as cmc:

@@ -3,15 +3,16 @@
 import asyncio
 import json
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, unique
-from typing import Any, List, Mapping, Optional, Sequence, cast
+from typing import Any, Optional, cast
 
 import backoff
 from attrs import asdict, define, field
 from pg8000.native import Connection, InterfaceError
-from typing_extensions import Self
 
+from .compat import Self
 from .config import ConfigDb
 
 
@@ -184,7 +185,7 @@ class DB:
             cloud=cloud,
             username=username,
         )
-        rows = cast(List[List[str]], rows)
+        rows = cast(list[list[str]], rows)
         return rows[0][0]
 
     async def add_node(
@@ -205,7 +206,9 @@ class DB:
             username=username,
             enabled=enabled,
         )
-        return NodeModel(ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username)
+        return NodeModel(
+            ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username
+        )
 
     async def enable_node(self, ip_addr: str) -> None:
         """Enable node"""
@@ -352,7 +355,9 @@ class DB:
         self, task_id: int, metadata: Mapping[str, Any], error: Optional[str] = None
     ):
         """Set task error"""
-        new_meta = dict(list(metadata.items()) + [("error", error)]) if error else metadata
+        new_meta = (
+            dict(list(metadata.items()) + [("error", error)]) if error else metadata
+        )
         await self.run(
             """UPDATE yascheduler_tasks
             SET status=:status, metadata=:metadata

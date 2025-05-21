@@ -4,20 +4,14 @@ import asyncio
 import logging
 from asyncio.locks import Event, Semaphore
 from collections import Counter
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path, PurePath, PurePosixPath
 from typing import (
     Any,
     AsyncGenerator,
-    Awaitable,
-    Callable,
-    List,
-    Mapping,
     Optional,
-    Sequence,
-    Set,
-    Tuple,
     Union,
 )
 
@@ -26,15 +20,14 @@ import asyncssh
 import backoff
 from asyncssh.sftp import SFTPClient, SFTPError
 from attrs import asdict, define, evolve, field
-from typing_extensions import Self
 
-from .clouds import CloudAPIManager, PCloudAPIManager
+from .clouds import CloudAPIManager
+from .compat import Self
 from .config import Config, Engine
 from .db import DB, NodeModel, TaskModel, TaskStatus
 from .queue import TUMsgId, TUMsgPayload, UMessage, UniqueQueue
 from .remote_machine import (
     AllSSHRetryExc,
-    PRemoteMachine,
     RemoteMachine,
     RemoteMachineRepository,
     SFTPRetryExc,
@@ -45,7 +38,7 @@ from .variables import CONFIG_FILE
 logging.basicConfig(level=logging.INFO)
 
 
-def get_logger(log_file, level: int = logging.INFO):
+def get_logger(log_file: Optional[Union[str, Path]] = None, level: int = logging.INFO):
     logging.captureWarnings(True)
     logger = logging.getLogger("yascheduler")
     logger.setLevel(level)
@@ -56,7 +49,9 @@ def get_logger(log_file, level: int = logging.INFO):
     if log_file:
         fh = logging.FileHandler(log_file)
         fh.setLevel(logging.DEBUG)
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         fh.setFormatter(formatter)
         logger.addHandler(fh)
         backoff_logger.addHandler(fh)
@@ -75,9 +70,9 @@ class WebhookPayload:
 class Scheduler:
     config: Config = field()
     db: DB = field()
-    clouds: PCloudAPIManager = field()
+    clouds: CloudAPIManager = field()
     log: logging.Logger = field()
-    bg_jobs: Set[asyncio.Task] = field(factory=set, init=False)
+    bg_jobs: set[asyncio.Task[None]] = field(factory=set, init=False)
     conn_machine_q: UniqueQueue[str, NodeModel] = field(init=False)
     allocate_q: UniqueQueue[int, TaskModel] = field(init=False)
     consume_q: UniqueQueue[int, TaskModel] = field(init=False)
@@ -91,7 +86,9 @@ class Scheduler:
     def __attrs_post_init__(self):
         lcfg = self.config.local
         self.webhook_sem = Semaphore(lcfg.webhook_reqs_limit)
-        self.conn_machine_q = UniqueQueue("conn_machine", maxsize=lcfg.conn_machine_pending)
+        self.conn_machine_q = UniqueQueue(
+            "conn_machine", maxsize=lcfg.conn_machine_pending
+        )
         self.allocate_q = UniqueQueue("allocate", maxsize=lcfg.allocate_pending)
         self.consume_q = UniqueQueue("consume", maxsize=lcfg.consume_pending)
         self.deallocate_q = UniqueQueue("deallocate", maxsize=lcfg.deallocate_pending)
@@ -135,7 +132,9 @@ class Scheduler:
         diff = max_nodes - n_busy_cloud_nodes
         return max(0, diff)
 
-    async def do_task_webhook(self, task_id: int, metadata: Mapping[str, Any], status: TaskStatus):
+    async def do_task_webhook(
+        self, task_id: int, metadata: Mapping[str, Any], status: TaskStatus
+    ):
         "Send webhook with task status"
         retry = backoff.on_exception(backoff.fibo, aiohttp.ClientError, max_time=60)
         url = metadata.get("webhook_url")
@@ -187,7 +186,9 @@ class Scheduler:
             label, ip_addr=None, status=TaskStatus.TO_DO, metadata=new_meta
         )
         dt_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        remote_folder = self.config.remote.tasks_dir / "{}_{}".format(dt_str, task.task_id)
+        remote_folder = self.config.remote.tasks_dir / "{}_{}".format(
+            dt_str, task.task_id
+        )
         new_meta.update({"remote_folder": str(remote_folder)})
         await self.db.update_task_meta(task.task_id, new_meta)
         await self.db.commit()
@@ -219,14 +220,15 @@ class Scheduler:
                     await f.write(task.metadata[input_file])
             except asyncssh.misc.Error as err:
                 self.log.error(
-                    "Write %s - SFTPError: %s (%s)" % (str(r_input_file), err.reason, err.code)
+                    "Write %s - SFTPError: %s (%s)"
+                    % (str(r_input_file), err.reason, err.code)
                 )
                 raise err
         return True
 
     async def start_task_on_machine(
         self,
-        machine: PRemoteMachine,
+        machine: RemoteMachine,
         engine: Engine,
         task: TaskModel,
     ) -> bool:
@@ -243,12 +245,16 @@ class Scheduler:
             try:
                 root_dir = machine.path(await sftp.realpath("."))
                 task_dir = (
-                    remote_folder if remote_folder.is_absolute() else root_dir / remote_folder
+                    remote_folder
+                    if remote_folder.is_absolute()
+                    else root_dir / remote_folder
                 )
                 if self.config.remote.engines_dir.is_absolute():
                     engine_path = self.config.remote.engines_dir / engine.name
                 else:
-                    engine_path = root_dir / self.config.remote.engines_dir / engine.name
+                    engine_path = (
+                        root_dir / self.config.remote.engines_dir / engine.name
+                    )
                 # upload files
                 await self.upload_task_data(sftp, task, task_dir, engine.input_files)
             except Exception as err:
@@ -277,10 +283,14 @@ class Scheduler:
         "Allocate task to a free remote machine or ask allocation of new cloud machine"
         self.log.debug(f"Allocating task {task.task_id}")
         engine_name: Optional[str] = task.metadata.get("engine", None)
-        engine: Optional[Engine] = self.config.engines.get(engine_name)
+        engine: Optional[Engine] = (
+            self.config.engines.get(engine_name) if engine_name else None
+        )
         if engine is None:
             self.log.warning(
-                "Unsupported engine '{}' for task_id={}".format(engine_name, task.task_id)
+                "Unsupported engine '{}' for task_id={}".format(
+                    engine_name, task.task_id
+                )
             )
             await self.db.set_task_error(
                 task.task_id, metadata=task.metadata, error="unsupported engine"
@@ -288,7 +298,9 @@ class Scheduler:
             await self.do_task_webhook(task.task_id, task.metadata, TaskStatus.DONE)
             return False
 
-        busy_node_ips = [t.ip for t in await self.db.get_tasks_by_status((TaskStatus.RUNNING,))]
+        busy_node_ips = [
+            t.ip for t in await self.db.get_tasks_by_status((TaskStatus.RUNNING,))
+        ]
         free_machines = {
             ip: m
             for ip, m in self.remote_machines.filter(
@@ -298,7 +310,8 @@ class Scheduler:
         }
         if free_machines:
             self.log.debug(
-                "Free machines with platform match: %s" % ", ".join(free_machines.keys())
+                "Free machines with platform match: %s"
+                % ", ".join(free_machines.keys())
             )
         for ip, machine in free_machines.items():
             task_m = evolve(task, ip=ip)
@@ -308,23 +321,31 @@ class Scheduler:
                 await machine.start_occupancy_check(engine)
                 await self.db.set_task_running(task.task_id, task_m.ip)
                 await self.db.commit()
-                await self.do_task_webhook(task.task_id, task_m.metadata, TaskStatus.RUNNING)
+                await self.do_task_webhook(
+                    task.task_id, task_m.metadata, TaskStatus.RUNNING
+                )
                 self.clouds.mark_task_done(task.task_id)
                 return True
 
         # free machine not found - try to allocate new node
-        self.log.debug(f"No free machine for task {task.task_id} - want to allocate new node")
-        await self.clouds.allocate(task.task_id, want_platforms=engine.platforms, throttle=True)
+        self.log.debug(
+            f"No free machine for task {task.task_id} - want to allocate new node"
+        )
+        await self.clouds.allocate(
+            task.task_id, want_platforms=engine.platforms, throttle=True
+        )
         return False
 
-    async def consume_task(self, machine: PRemoteMachine, task: TaskModel):
+    async def consume_task(self, machine: RemoteMachine, task: TaskModel):
         "Consume done tasks"
         meta = task.metadata
         local_folder: Union[str, None] = meta.get("local_folder")
         remote_folder: str = meta["remote_folder"]
         engine: Engine = self.config.engines[meta["engine"]]
         # NOTE: PureWindowsPath is not supported but posix is fine
-        output_files = [str(PurePosixPath(remote_folder) / x) for x in engine.output_files]
+        output_files = [
+            str(PurePosixPath(remote_folder) / x) for x in engine.output_files
+        ]
         if local_folder:
             store_folder = Path(local_folder)
         else:
@@ -333,19 +354,21 @@ class Scheduler:
             None, store_folder.mkdir, 0o777, True, True
         )
 
-        meta_add = [
+        meta_add: list[tuple[str, Any]] = [
             ("remote_folder", remote_folder),
             ("local_folder", str(store_folder)),
         ]
 
-        sftp_errors: List[Tuple[Optional[str], Exception]] = []
+        sftp_errors: list[tuple[Optional[str], Exception]] = []
         sftp_get_retry = backoff.on_exception(backoff.fibo, SFTPRetryExc, max_time=60)
 
         async def job():
             async with machine.sftp() as sftp:
                 for out_file in output_files:
                     try:
-                        await sftp_get_retry(sftp.get)(out_file, store_folder, preserve=True)
+                        await sftp_get_retry(sftp.get)(
+                            out_file, store_folder, preserve=True
+                        )
                     except (OSError, SFTPError) as err:
                         sftp_errors.append((out_file, err))
                         self.log.warning(
@@ -376,7 +399,8 @@ class Scheduler:
             await self.do_task_webhook(task.task_id, new_meta, TaskStatus.DONE)
         await self.db.commit()
         self.log.info(
-            "task_id=%s %s done and saved in %s" % (task.task_id, task.label, store_folder)
+            "task_id=%s %s done and saved in %s"
+            % (task.task_id, task.label, store_folder)
         )
         self.clouds.mark_task_done(task.task_id)
 
@@ -421,7 +445,9 @@ class Scheduler:
     ) -> AsyncGenerator[UMessage[str, NodeModel], None]:
         """Produce messages with new machines for connecting"""
         enabled_nodes = await self.db.get_enabled_nodes()
-        new_nodes = [n for n in enabled_nodes if n.ip not in self.remote_machines.keys()]
+        new_nodes = [
+            n for n in enabled_nodes if n.ip not in self.remote_machines.keys()
+        ]
         for node in new_nodes:
             yield UMessage(node.ip, node)
 
@@ -494,7 +520,9 @@ class Scheduler:
             self.log.warning(f"Task {task_id} - machine {task.ip} is gone")
             machine_not_found.update([task_id])
             if machine_not_found[task_id] > broken_tasks_passes:
-                await self.db.set_task_error(task_id, metadata=task.metadata, error="node is gone")
+                await self.db.set_task_error(
+                    task_id, metadata=task.metadata, error="node is gone"
+                )
                 await self.do_task_webhook(task_id, task.metadata, TaskStatus.DONE)
             return
         # if machine state is unknown
@@ -538,7 +566,9 @@ class Scheduler:
             for node in await self.db.get_disabled_nodes()
             if node.ip not in busy_ips and "." in node.ip
         ]
-        to_disconnect = [n.ip for n in free_disabled_nodes if n.ip in self.remote_machines.keys()]
+        to_disconnect = [
+            n.ip for n in free_disabled_nodes if n.ip in self.remote_machines.keys()
+        ]
         await self.remote_machines.disconnect_many(to_disconnect)
         for node in free_disabled_nodes:
             yield UMessage(node.ip, node)
@@ -565,7 +595,7 @@ class Scheduler:
                 finally:
                     queue.item_done(msg)
 
-        workers: Set[asyncio.Task] = set()
+        workers: set[asyncio.Task] = set()
         [workers.add(asyncio.create_task(worker())) for _ in range(0, workers_num)]
 
         try:
@@ -589,7 +619,9 @@ class Scheduler:
     #
 
     async def start(self):
-        self.log.debug("Available computing engines: %s" % ", ".join(self.config.engines.keys()))
+        self.log.debug(
+            "Available computing engines: %s" % ", ".join(self.config.engines.keys())
+        )
 
         self.bg_jobs.add(asyncio.create_task(self.print_stats()))
 
@@ -623,7 +655,9 @@ class Scheduler:
         consume_co = self.create_producer_consumers(
             queue=self.consume_q,
             producer=self.task_consumer_producer,
-            consumer=partial(self.task_consumer_consumer, machine_not_found=machine_not_found),
+            consumer=partial(
+                self.task_consumer_consumer, machine_not_found=machine_not_found
+            ),
             workers_num=self.config.local.consume_limit,
         )
         self.bg_jobs.add(asyncio.create_task(consume_co))

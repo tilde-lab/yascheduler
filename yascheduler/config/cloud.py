@@ -6,9 +6,9 @@ from functools import partial
 from typing import Optional, Sequence, Union
 
 from attrs import define, field, fields, validators
-from typing_extensions import Self
 
-from .utils import _make_default_field, opt_str_val, warn_unknown_fields
+from ..compat import Self
+from .utils import make_default_field, opt_str_val, warn_unknown_fields
 
 
 def _check_az_user(_: "ConfigCloudAzure", __, value: str):
@@ -34,7 +34,9 @@ class AzureImageReference:
         "Create image reference from urn in forma `publisher:offer:sku:version'"
         parts = urn.split(":", maxsplit=4)
         if len(parts) < 4:
-            raise ValueError("`Image reference URN should be in format publisher:offer:sku:version")
+            raise ValueError(
+                "`Image reference URN should be in format publisher:offer:sku:version"
+            )
 
         return cls(*parts)
 
@@ -48,17 +50,17 @@ class ConfigCloudAzure:
     client_id: str = field(validator=validators.instance_of(str))
     client_secret: str = field(validator=validators.instance_of(str))
     subscription_id: str = field(validator=validators.instance_of(str))
-    resource_group: str = _make_default_field("yascheduler-rg")
-    location: str = _make_default_field("westeurope")
-    vnet: str = _make_default_field("yascheduler-vnet")
-    subnet: str = _make_default_field("yascheduler-subnet")
-    nsg: str = _make_default_field("yascheduler-nsg")
-    vm_image: AzureImageReference = _make_default_field(AzureImageReference())
-    vm_size: str = _make_default_field("Standard_B1s")
-    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
-    username: str = _make_default_field("yascheduler", extra_validators=[_check_az_user])
-    priority: int = _make_default_field(0)
-    idle_tolerance: int = _make_default_field(300, extra_validators=[validators.ge(1)])
+    resource_group: str = make_default_field("yascheduler-rg")
+    location: str = make_default_field("westeurope")
+    vnet: str = make_default_field("yascheduler-vnet")
+    subnet: str = make_default_field("yascheduler-subnet")
+    nsg: str = make_default_field("yascheduler-nsg")
+    vm_image: AzureImageReference = make_default_field(AzureImageReference())
+    vm_size: str = make_default_field("Standard_B1s")
+    max_nodes: int = make_default_field(10, extra_validators=[validators.ge(0)])
+    username: str = make_default_field("yascheduler", extra_validators=[_check_az_user])
+    priority: int = make_default_field(0)
+    idle_tolerance: int = make_default_field(300, extra_validators=[validators.ge(1)])
     jump_username: Optional[str] = field(default=None, validator=opt_str_val)
     jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
@@ -69,7 +71,8 @@ class ConfigCloudAzure:
         include_names = ["user", "jump_user", "image", "size"]
         return [
             f"{cls.prefix}_{x}"
-            for x in [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
         ]
 
     @classmethod
@@ -93,21 +96,21 @@ class ConfigCloudAzure:
             image_ref = AzureImageReference.from_urn(vm_image)
 
         return cls(
-            tenant_id=sec.get(fmt("tenant_id")),
-            client_id=sec.get(fmt("client_id")),
-            client_secret=sec.get(fmt("client_secret")),
-            subscription_id=sec.get(fmt("subscription_id")),
-            resource_group=sec.get(fmt("resource_group")),
-            location=sec.get(fmt("location")),
-            vnet=sec.get(fmt("vnet")),
-            subnet=sec.get(fmt("subnet")),
-            nsg=sec.get(fmt("nsg")),
+            tenant_id=sec.get(fmt("tenant_id")),  # type: ignore
+            client_id=sec.get(fmt("client_id")),  # type: ignore
+            client_secret=sec.get(fmt("client_secret")),  # type: ignore
+            subscription_id=sec.get(fmt("subscription_id")),  # type: ignore
+            resource_group=sec.get(fmt("resource_group")),  # type: ignore
+            location=sec.get(fmt("location")),  # type: ignore
+            vnet=sec.get(fmt("vnet")),  # type: ignore
+            subnet=sec.get(fmt("subnet")),  # type: ignore
+            nsg=sec.get(fmt("nsg")),  # type: ignore
             vm_image=image_ref or AzureImageReference(),
-            vm_size=sec.get(fmt("size")),
-            max_nodes=sec.getint(fmt("max_nodes")),
-            username=sec.get(fmt("user")),
-            priority=sec.getint(fmt("priority")),
-            idle_tolerance=sec.getint(fmt("idle_tolerance")),
+            vm_size=sec.get(fmt("size")),  # type: ignore
+            max_nodes=sec.getint(fmt("max_nodes")),  # type: ignore
+            username=sec.get(fmt("user")),  # type: ignore
+            priority=sec.getint(fmt("priority")),  # type: ignore
+            idle_tolerance=sec.getint(fmt("idle_tolerance")),  # type: ignore
             jump_username=sec.get(fmt("jump_user"), None),
             jump_host=sec.get(fmt("jump_host"), None),
         )
@@ -119,13 +122,13 @@ class ConfigCloudHetzner:
 
     prefix = "hetzner"
     token: str = field(validator=validators.instance_of(str))
-    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
-    username: str = _make_default_field("root")
-    priority: int = _make_default_field(0)
-    server_type: str = _make_default_field("cx52")
+    max_nodes: int = make_default_field(10, extra_validators=[validators.ge(0)])
+    username: str = make_default_field("root")
+    priority: int = make_default_field(0)
+    server_type: str = make_default_field("cx52")
     location: Optional[str] = field(default=None, validator=opt_str_val)
-    image_name: str = _make_default_field("debian-11")
-    idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
+    image_name: str = make_default_field("debian-11")
+    idle_tolerance: int = make_default_field(120, extra_validators=[validators.ge(1)])
     jump_username: Optional[str] = field(default=None, validator=opt_str_val)
     jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
@@ -136,7 +139,8 @@ class ConfigCloudHetzner:
         include_names = ["user", "jump_user"]
         return [
             f"{cls.prefix}_{x}"
-            for x in [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
         ]
 
     @classmethod
@@ -154,14 +158,14 @@ class ConfigCloudHetzner:
         )
 
         return cls(
-            token=sec.get(fmt("token")),
-            max_nodes=sec.getint(fmt("max_nodes")),
-            username=sec.get(fmt("user")),
-            server_type=sec.get(fmt("server_type")),
+            token=sec.get(fmt("token")),  # type: ignore
+            max_nodes=sec.getint(fmt("max_nodes")),  # type: ignore
+            username=sec.get(fmt("user")),  # type: ignore
+            server_type=sec.get(fmt("server_type")),  # type: ignore
             location=sec.get(fmt("location")),
-            image_name=sec.get(fmt("image_name")),
-            priority=sec.getint(fmt("priority")),
-            idle_tolerance=sec.getint(fmt("idle_tolerance")),
+            image_name=sec.get(fmt("image_name")),  # type: ignore
+            priority=sec.getint(fmt("priority")),  # type: ignore
+            idle_tolerance=sec.getint(fmt("idle_tolerance")),  # type: ignore
             jump_username=sec.get(fmt("jump_user"), None),
             jump_host=sec.get(fmt("jump_host"), None),
         )
@@ -174,10 +178,10 @@ class ConfigCloudUpcloud:
     prefix = "upcloud"
     login: str = field(validator=validators.instance_of(str))
     password: str = field(validator=validators.instance_of(str))
-    max_nodes: int = _make_default_field(10, extra_validators=[validators.ge(0)])
-    username: str = _make_default_field("root")
-    priority: int = _make_default_field(0)
-    idle_tolerance: int = _make_default_field(120, extra_validators=[validators.ge(1)])
+    max_nodes: int = make_default_field(10, extra_validators=[validators.ge(0)])
+    username: str = make_default_field("root")
+    priority: int = make_default_field(0)
+    idle_tolerance: int = make_default_field(120, extra_validators=[validators.ge(1)])
     jump_username: Optional[str] = field(default=None, validator=opt_str_val)
     jump_host: Optional[str] = field(default=None, validator=opt_str_val)
 
@@ -188,7 +192,8 @@ class ConfigCloudUpcloud:
         include_names = ["user", "jump_user"]
         return [
             f"{cls.prefix}_{x}"
-            for x in [f.name for f in fields(cls) if f.name not in exclude_names] + include_names
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
         ]
 
     @classmethod
@@ -206,12 +211,12 @@ class ConfigCloudUpcloud:
         )
 
         return cls(
-            login=sec.get(fmt("login")),
-            password=sec.get(fmt("password")),
-            max_nodes=sec.getint(fmt("max_nodes")),
-            username=sec.get(fmt("user")),
-            priority=sec.getint(fmt("priority")),
-            idle_tolerance=sec.getint(fmt("idle_tolerance")),
+            login=sec.get(fmt("login")),  # type: ignore
+            password=sec.get(fmt("password")),  # type: ignore
+            max_nodes=sec.getint(fmt("max_nodes")),  # type: ignore
+            username=sec.get(fmt("user")),  # type: ignore
+            priority=sec.getint(fmt("priority")),  # type: ignore
+            idle_tolerance=sec.getint(fmt("idle_tolerance")),  # type: ignore
             jump_username=sec.get(fmt("jump_user"), None),
             jump_host=sec.get(fmt("jump_host"), None),
         )

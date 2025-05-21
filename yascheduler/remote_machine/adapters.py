@@ -36,7 +36,6 @@ from .protocol import (
     GetCPUCoresCallable,
     ListProcessesCallable,
     PgrepCallable,
-    PRemoteMachineAdapter,
     QuoteCallable,
     RunBgCallable,
     RunCallable,
@@ -54,7 +53,7 @@ from .windows_methods import (
 
 
 @define(frozen=True)
-class RemoteMachineAdapter(PRemoteMachineAdapter):
+class RemoteMachineAdapter:
     "Remote machine adapter"
 
     platform: str = field()

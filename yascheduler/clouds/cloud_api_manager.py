@@ -3,27 +3,28 @@
 import asyncio
 import logging
 from asyncio.locks import Lock
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Mapping, Optional, Sequence, Set, Union
+from typing import Optional
 
 from attrs import define, field
-from typing_extensions import Self
 
+from ..compat import Self
 from ..config import ConfigCloud, ConfigLocal, ConfigRemote, EngineRepository
 from ..db import DB
-from .adapters import azure_adapter, hetzner_adapter, upcloud_adapter
+from .adapters import CloudAdapter, azure_adapter, hetzner_adapter, upcloud_adapter
 from .cloud_api import CloudAPI
-from .protocols import CloudCapacity, PCloudAdapter, PCloudAPI, PCloudAPIManager
+from .protocols import CloudCapacity
 
 
 @define(frozen=True)
-class CloudAPIManager(PCloudAPIManager):
+class CloudAPIManager:
     """Cloud API manager"""
 
-    apis: Mapping[str, PCloudAPI] = field()
+    apis: dict[str, CloudAPI[ConfigCloud]] = field()
     db: DB = field()
     log: logging.Logger = field()
-    on_tasks: Set[int] = field(init=False, factory=set)
+    on_tasks: set[int] = field(init=False, factory=set)
     keys_dir: Path = field(factory=Path)
     allocation_lock: Lock = field(factory=Lock, init=False)
 
@@ -43,12 +44,12 @@ class CloudAPIManager(PCloudAPIManager):
         else:
             log = logging.getLogger(cls.__name__)
 
-        adapters: Sequence[PCloudAdapter] = [
+        adapters: Sequence[CloudAdapter[ConfigCloud]] = [
             azure_adapter,
             hetzner_adapter,
             upcloud_adapter,
         ]
-        apis: Mapping[str, PCloudAPI] = {}
+        apis: dict[str, CloudAPI[ConfigCloud]] = {}
 
         def filter_adapters(prefix: str):
             return filter(lambda x: x.name == prefix, adapters)
@@ -59,7 +60,7 @@ class CloudAPIManager(PCloudAPIManager):
                 log.debug("Cloud %s is skipped because of <1 max nodes", cfg.prefix)
                 continue
             for adapter in filter_adapters(cfg.prefix):
-                apis[adapter.name] = await CloudAPI.create(
+                apis[adapter.name] = CloudAPI(
                     adapter=adapter,
                     config=cfg,
                     local_config=local_config,
@@ -86,8 +87,8 @@ class CloudAPIManager(PCloudAPIManager):
     def mark_task_done(self, on_task: int) -> None:
         self.on_tasks.discard(on_task)
 
-    async def get_capacity(self) -> Mapping[str, CloudCapacity]:
-        data = {}
+    async def get_capacity(self) -> dict[str, CloudCapacity]:
+        data: dict[str, CloudCapacity] = {}
         for name, count in (await self.db.count_nodes_clouds()).items():
             api = self.apis.get("name")
             data[name] = CloudCapacity(
@@ -98,12 +99,14 @@ class CloudAPIManager(PCloudAPIManager):
 
         for api in self.apis.values():
             if api.name not in data:
-                data[api.name] = CloudCapacity(name=api.name, current=0, max=api.config.max_nodes)
+                data[api.name] = CloudCapacity(
+                    name=api.name, current=0, max=api.config.max_nodes
+                )
         return data
 
     async def select_best_provider(
         self, want_platforms: Optional[Sequence[str]] = None
-    ) -> Optional[PCloudAPI]:
+    ) -> Optional[CloudAPI[ConfigCloud]]:
         """Select best cloud API"""
         self.log.debug("Enabled providers: %s", ", ".join(self.apis.keys()))
         used_providers = []
@@ -138,7 +141,7 @@ class CloudAPIManager(PCloudAPIManager):
 
     async def allocate_node(
         self, want_platforms: Optional[Sequence[str]] = None, throttle: bool = False
-    ):
+    ) -> Optional[str]:
         """Allocate new node"""
         async with self.allocation_lock:
             api = await self.select_best_provider(want_platforms)
@@ -166,7 +169,7 @@ class CloudAPIManager(PCloudAPIManager):
         on_task: Optional[int] = None,
         want_platforms: Optional[Sequence[str]] = None,
         throttle: bool = True,
-    ) -> Union[str, None]:
+    ) -> Optional[str]:
         if on_task in self.on_tasks:
             return
         if on_task:
@@ -184,7 +187,9 @@ class CloudAPIManager(PCloudAPIManager):
         if not node or not node.cloud:
             return
         if node.cloud not in self.apis:
-            self.log.warning(f"Can't deallocate node {node.ip} - unsupported cloud {node.cloud}")
+            self.log.warning(
+                f"Can't deallocate node {node.ip} - unsupported cloud {node.cloud}"
+            )
         await self.db.disable_node(ip_addr)
         await self.db.commit()
         try:

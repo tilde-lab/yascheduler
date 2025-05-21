@@ -12,7 +12,11 @@ T = TypeVar("T")
 
 def get_rnd_name(prefix: str) -> str:
     """Create random string with prefix"""
-    return prefix + "-" + "".join([random.choice(string.ascii_lowercase) for _ in range(8)])
+    return (
+        prefix
+        + "-"
+        + "".join([random.choice(string.ascii_lowercase) for _ in range(8)])
+    )
 
 
 def get_key_name(key: SSHKey) -> str:

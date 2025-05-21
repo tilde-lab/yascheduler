@@ -8,7 +8,7 @@ import logging
 import os
 import signal
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence, Union
 
 from pg8000 import ProgrammingError
 
@@ -22,7 +22,9 @@ from .variables import CONFIG_FILE
 
 @to_sync
 async def submit():
-    parser = argparse.ArgumentParser(description="Submit task to yascheduler via AiiDA script")
+    parser = argparse.ArgumentParser(
+        description="Submit task to yascheduler via AiiDA script"
+    )
     parser.add_argument("script")
 
     args = parser.parse_args()
@@ -57,9 +59,13 @@ async def submit():
 
     for input_file in engine.input_files:
         try:
-            metadata[input_file] = Path(metadata["local_folder"], input_file).read_text()
+            metadata[input_file] = Path(
+                metadata["local_folder"], input_file
+            ).read_text()
         except Exception as err:
-            raise ValueError("Script was not supplied with the required input file") from err
+            raise ValueError(
+                "Script was not supplied with the required input file"
+            ) from err
 
     webhook_onsubmit = False
     if "PARENT" in script_params and yac.config.local.webhook_url:
@@ -112,7 +118,9 @@ async def check_status():  # noqa: C901
     if args.jobs:
         tasks = await db.get_tasks_by_jobs(jobs=args.jobs)
     else:
-        tasks = await db.get_tasks_by_status(statuses=(TaskStatus.RUNNING, TaskStatus.TO_DO))
+        tasks = await db.get_tasks_by_status(
+            statuses=(TaskStatus.RUNNING, TaskStatus.TO_DO)
+        )
 
     if args.convergence:
         local_parsing_ready = True
@@ -142,7 +150,7 @@ async def check_status():  # noqa: C901
                 username=ssh_user,
                 client_keys=config.local.get_private_keys(),
             )
-            r_output = machine.path(task.metadata.get("remote_folder")) / "OUTPUT"
+            r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
             result = await machine.run(f"tail -n15 {machine.quote(str(r_output))}")
             if result.returncode:
                 print("OUTDATED TASK, SKIPPING")
@@ -150,16 +158,21 @@ async def check_status():  # noqa: C901
                 print(result.stdout)
 
             if local_parsing_ready:
-                local_calc_snippet = Path(config.local.data_dir, "local_calc_snippet.tmp")
+                local_calc_snippet = Path(
+                    config.local.data_dir, "local_calc_snippet.tmp"
+                )
                 try:
-                    r_output = machine.path(task.metadata.get("remote_folder")) / "OUTPUT"
+                    r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
                     async with machine.sftp() as sftp:
                         await sftp.get([str(r_output)], local_calc_snippet)
                 except OSError:
                     continue
 
-                from numpy import nan
-                from pycrystal import CRYSTOUT, CRYSTOUT_Error
+                from numpy import nan  # pyright: ignore[reportMissingImports]
+                from pycrystal import (  # pyright: ignore[reportMissingImports, reportMissingTypeStubs]
+                    CRYSTOUT,
+                    CRYSTOUT_Error,
+                )
 
                 try:
                     calc = CRYSTOUT(local_calc_snippet)
@@ -373,7 +386,11 @@ async def manage_node():
         task_ids = await db.get_task_ids_by_ip_and_status(args.host, TaskStatus.RUNNING)
         for task_id in task_ids:
             await db.update_task_status(task_id, TaskStatus.DONE)
-            print("An associated task {} at {} is now marked done!".format(task_id, args.host))
+            print(
+                "An associated task {} at {} is now marked done!".format(
+                    task_id, args.host
+                )
+            )
 
         await db.remove_node(args.host)
         await db.commit()
@@ -413,7 +430,7 @@ async def manage_node():
     print(f"Added host to yascheduler: {args.host}")
 
 
-def daemonize(log_file=None):
+def daemonize(log_file: Optional[Union[str, Path]] = None):
     parser = argparse.ArgumentParser(description="Start yascheduler daemon")
     parser.add_argument(
         "-l",
@@ -426,7 +443,9 @@ def daemonize(log_file=None):
 
     logger = get_logger(log_file, level=logging._nameToLevel[args.log_level])
 
-    async def on_signal(y: Scheduler, shield: Sequence[asyncio.Task], sig: signal.Signals):
+    async def on_signal(
+        y: Scheduler, shield: Sequence[asyncio.Task], sig: signal.Signals
+    ):
         signame = signal.strsignal(sig)
         logger.info(f"Received signal {signame}")
         if sig in [signal.SIGTERM, signal.SIGINT]:

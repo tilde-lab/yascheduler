@@ -83,14 +83,18 @@ version_provider = "pep621"
 update_changelog_on_bump = true
 changelog_incremental = true
 
+[tool.pyright]
+pythonVersion = "3.9"
+executionEnvironments = [
+    { root = "yascheduler/aiida_plugin.py", reportMissingImports = "warning" },
+]
+
 [tool.ruff]
-# Enable specific rules
-lint.select = ["E", "F"]
-# Disable specific rules
-lint.ignore = ["E501"]
-# Automatically fix violations
-fix = true
-# Maximum line length
-line-length = 100
 # Target python version
 target-version = "py39"
+
+[tool.ruff.lint]
+# Enable specific rules
+select = ["E", "F"]
+# Disable specific rules
+ignore = ["E501"]

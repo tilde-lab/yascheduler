@@ -22,7 +22,9 @@ class Config:
     local: ConfigLocal = field(validator=[validators.instance_of(ConfigLocal)])
     remote: ConfigRemote = field(validator=[validators.instance_of(ConfigRemote)])
     clouds: Sequence[ConfigCloud]
-    engines: EngineRepository = field(validator=[validators.instance_of(EngineRepository)])
+    engines: EngineRepository = field(
+        validator=[validators.instance_of(EngineRepository)]
+    )
 
     @classmethod
     def from_config_parser(cls, files: Union[str, bytes, PurePath]) -> "Config":
@@ -51,7 +53,9 @@ class Config:
             ConfigCloudUpcloud,
         )
         # intersection
-        cloud_variants_match = filter(lambda x: x.prefix in cloud_prefixes, cloud_variants)
+        cloud_variants_match = filter(
+            lambda x: x.prefix in cloud_prefixes, cloud_variants
+        )
         # instantiate
         clouds = map(
             lambda x: x.from_config_parser_section(config["clouds"]),

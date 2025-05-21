@@ -3,9 +3,9 @@
 
 import warnings
 from configparser import SectionProxy
-from typing import Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, TypeVar
 
-from attrs import converters, field, validators
+from attrs import Attribute, converters, field, validators
 
 opt_str_val = validators.optional(validators.instance_of(str))
 
@@ -14,7 +14,15 @@ class ConfigWarning(Warning):
     "Warning about config"
 
 
-def _make_default_field(default, extra_validators: Optional[Sequence] = None):
+_T = TypeVar("_T")
+
+
+def make_default_field(
+    default: _T,
+    extra_validators: Optional[
+        Sequence[Callable[[Any, "Attribute[_T]", _T], Any]]
+    ] = None,
+) -> _T:
     return field(
         default=default,
         converter=converters.default_if_none(default=default),

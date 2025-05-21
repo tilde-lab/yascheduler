@@ -41,7 +41,9 @@ async def linux_list_processes(
     async with conn.create_process(ps_cmd) as proc:
         await proc.stdout.readline()  # skip headers
         async for line in proc.stdout:
-            parts = list(map(lambda x: x.strip(), filter(None, str(line).split(" " * 10))))
+            parts = list(
+                map(lambda x: x.strip(), filter(None, str(line).split(" " * 10)))
+            )
             # skip broken
             if len(parts) < 3:
                 continue
@@ -55,7 +57,7 @@ async def linux_pgrep(
     conn: SSHClientConnection,
     quote: QuoteCallable,
     pattern: Union[str, Pattern[str]],
-    full=True,
+    full: bool = True,
 ) -> AsyncGenerator[PProcessInfo, None]:
     """
     Returns information about running processes, that name matches a pattern.
@@ -63,7 +65,9 @@ async def linux_pgrep(
     :raises asyncssh.Error: An SSH error has occurred.
     """
     str_pattern = pattern.pattern if isinstance(pattern, re.Pattern) else pattern
-    pgrep_query = " ".join(filter(None, ["pgrep", "-f" if full else None, quote(str_pattern)]))
+    pgrep_query = " ".join(
+        filter(None, ["pgrep", "-f" if full else None, quote(str_pattern)])
+    )
     async for x in linux_list_processes(conn, query=pgrep_query):
         yield x
 
@@ -147,10 +151,14 @@ async def linux_deploy_engines(
                 await deploy_local_files(sftp, engine_dir, deployment.files, log)
 
             if isinstance(deployment, LocalArchiveDeploy):
-                await deploy_local_archive(run, quote, sftp, engine_dir, deployment.file)
+                await deploy_local_archive(
+                    run, quote, sftp, engine_dir, deployment.file
+                )
 
             if isinstance(deployment, RemoteArchiveDeploy):
-                await deploy_remote_archive(run, quote, sftp, engine_dir, deployment.url)
+                await deploy_remote_archive(
+                    run, quote, sftp, engine_dir, deployment.url
+                )
         if log:
             log.info(f"Setup of {engine.name} engine is done...")
 
@@ -183,7 +191,8 @@ async def linux_setup_deb_node(
     log: Optional[logging.Logger] = None,
 ):
     "Setup debian-like node"
-    is_root = conn._username == "root"
+
+    is_root = conn.get_extra_info("username") == "root"
     sudo_prefix = "" if is_root else "sudo "
     apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600 -y"
     pkgs = engines.get_platform_packages()

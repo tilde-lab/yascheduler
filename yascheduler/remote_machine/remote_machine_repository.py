@@ -3,33 +3,22 @@
 import asyncio
 import logging
 from collections import UserDict
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from operator import itemgetter
-from typing import Callable, MutableMapping, Optional, Sequence, Set
+from typing import Optional
 
 from attrs import define, evolve, field
-from typing_extensions import Self
 
-from .protocol import PRemoteMachine
+from ..compat import Self
+from .remote_machine import RemoteMachine
 
 
 @define
-class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
+class RemoteMachineRepository(UserDict[str, RemoteMachine]):
     log: Optional[logging.Logger]
-    data: MutableMapping[str, PRemoteMachine] = field(factory=dict)
-    connect_in_flight: Set[str] = field(factory=set, init=False)
-
-    def get(self, __key: str, default: Optional[PRemoteMachine] = None) -> Optional[PRemoteMachine]:
-        return self.data.get(__key, default)
-
-    def keys(self):
-        return self.data.keys()
-
-    def values(self):
-        return self.data.values()
-
-    def items(self):
-        return self.data.items()
+    data: dict[str, RemoteMachine] = field(factory=dict)
+    connect_in_flight: set[str] = field(factory=set, init=False)
 
     async def disconnect_many(self, ips: Sequence[str]) -> None:
         "Disconnect from many remote machines and remove them from registry"
@@ -38,7 +27,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
         if self.log:
             self.log.info("Disconnecting from machines: {}".format(", ".join(ips)))
 
-        tasks = []
+        tasks: list[Awaitable[None]] = []
         for ip, machine in list(self.data.items()):
             # guard
             if machine.meta.busy:
@@ -61,7 +50,7 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
     ) -> Self:
         "Return machines filtered and sorted by `free_since`"
 
-        checks: Sequence[Callable[[PRemoteMachine], bool]] = []
+        checks: Sequence[Callable[[RemoteMachine], bool]] = []
         if busy is True:
             checks.append(lambda x: x.meta.busy is True)
         if busy is False:
@@ -75,7 +64,9 @@ class RemoteMachineRepository(UserDict, MutableMapping[str, PRemoteMachine]):
             self,
             data={
                 ip: m
-                for ip, m in sorted(self.data.items(), key=itemgetter(1), reverse=reverse_sort)
+                for ip, m in sorted(
+                    self.data.items(), key=itemgetter(1), reverse=reverse_sort
+                )
                 if all([x(m) for x in checks])
             },
         )
