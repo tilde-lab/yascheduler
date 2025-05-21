@@ -48,7 +48,7 @@ azure = [
     "azure-mgmt-compute~=27.2.0",
     "azure-mgmt-network~=20.0.0",
 ]
-hetzner = ["hcloud~=1.17"]
+hetzner = ["hcloud~=2.0"]
 upcloud = ["upcloud_api~=2.0"]
 dev = ["build", "commitizen", "pyright", "pyupgrade", "ruff", "twine"]
 

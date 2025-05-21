@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from concurrent.futures.thread import ThreadPoolExecutor
-from functools import lru_cache, partial
+from functools import cache, partial
 from typing import Optional, cast
 
 from asyncssh.public_key import SSHKey as ASSHKey
@@ -22,13 +22,13 @@ from .utils import get_key_name, get_rnd_name
 executor = ThreadPoolExecutor(max_workers=5)
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_client(cfg: ConfigCloudHetzner) -> HClient:
     "Get Hetzner client"
     return HClient(cfg.token)
 
 
-@lru_cache
+@cache
 def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
     "Get Hetzner ssh id"
     key_name = get_key_name(key)
@@ -77,7 +77,7 @@ async def hetzner_create_node(
     )
     response = await loop.run_in_executor(executor, create_server)
     server = response.server
-    ip_addr = server.public_net and server.public_net.ipv4.ip
+    ip_addr = server.public_net and server.public_net.ipv4 and server.public_net.ipv4.ip
     assert ip_addr
     log.info("CREATED %s", ip_addr)
     return ip_addr
@@ -86,7 +86,9 @@ async def hetzner_create_node(
 def find_srv(client: HClient, host: str) -> Optional[BoundServer]:
     """Find BoundServer by IP addr"""
     for server in client.servers.get_all():
-        if (server.public_net and server.public_net.ipv4.ip) == host and server.id:
+        if (
+            server.public_net and server.public_net.ipv4 and server.public_net.ipv4.ip
+        ) == host and server.id:
             return client.servers.get_by_id(server.id)
     return None
 
