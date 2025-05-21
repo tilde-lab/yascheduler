@@ -36,7 +36,7 @@ jobs:
           python-version-file: "pyproject.toml"
 
       - name: Install the project
-        run: uv pip install -e .[release]
+        run: uv pip install -e .[dev]
 
       - name: Build
-        run: flit build
+        run: python -m build
