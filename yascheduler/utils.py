@@ -7,8 +7,9 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Optional, Union
 
 from pg8000 import ProgrammingError
 
@@ -16,7 +17,6 @@ from .client import Yascheduler, to_sync
 from .config import Config
 from .db import DB, TaskModel, TaskStatus
 from .remote_machine import RemoteMachine
-from .scheduler import Scheduler, get_logger
 from .variables import CONFIG_FILE
 
 
@@ -150,7 +150,7 @@ async def check_status():  # noqa: C901
                 username=ssh_user,
                 client_keys=config.local.get_private_keys(),
             )
-            r_output = machine.path(task.metadata.get("remote_folder")) / "OUTPUT"
+            r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
             result = await machine.run(f"tail -n15 {machine.quote(str(r_output))}")
             if result.returncode:
                 print("OUTDATED TASK, SKIPPING")
@@ -162,19 +162,17 @@ async def check_status():  # noqa: C901
                     config.local.data_dir, "local_calc_snippet.tmp"
                 )
                 try:
-                    r_output = (
-                        machine.path(task.metadata.get("remote_folder")) / "OUTPUT"
-                    )
+                    r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
                     async with machine.sftp() as sftp:
                         await sftp.get([str(r_output)], local_calc_snippet)
                 except OSError:
                     continue
 
-                # pylint: disable=import-error
-                from numpy import nan
-
-                # pylint: disable=import-error
-                from pycrystal import CRYSTOUT, CRYSTOUT_Error
+                from numpy import nan  # pyright: ignore[reportMissingImports]
+                from pycrystal import (  # pyright: ignore[reportMissingImports, reportMissingTypeStubs]
+                    CRYSTOUT,
+                    CRYSTOUT_Error,
+                )
 
                 try:
                     calc = CRYSTOUT(local_calc_snippet)
@@ -313,10 +311,7 @@ async def show_nodes():
     tasks = await db.get_tasks_by_status(statuses=[TaskStatus.RUNNING])
     nodes = await db.get_all_nodes()
     for node in nodes:
-        tmpl = (
-            "ip={ip} ncpus={ncpus} enabled={enabled} "
-            "occupied_by={occ} (task_id={tid}) {cloud}"
-        )
+        tmpl = "ip={ip} ncpus={ncpus} enabled={enabled} occupied_by={occ} (task_id={tid}) {cloud}"
         node_tasks = list(filter(lambda x: x.ip == node.ip, tasks))
         node_label = "-"
         task_id = "-"
@@ -435,7 +430,9 @@ async def manage_node():
     print(f"Added host to yascheduler: {args.host}")
 
 
-def daemonize(log_file=None):
+def daemonize(log_file: Optional[Union[str, Path]] = None):
+    from .scheduler import Scheduler, get_logger
+
     parser = argparse.ArgumentParser(description="Start yascheduler daemon")
     parser.add_argument(
         "-l",

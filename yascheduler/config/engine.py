@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 """Engine configuration"""
 
+from collections.abc import Sequence
 from configparser import SectionProxy
 from pathlib import PurePath
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Union
 
 from attrs import Attribute, define, field, fields, validators
 
-from .utils import _make_default_field, warn_unknown_fields
+from .utils import make_default_field, warn_unknown_fields
 
 
 def _check_spawn(instance: "Engine", _, value: str):
     try:
         value.format(task_path="", engine_path="", ncpus="")
     except KeyError as err:
-        msg = (
-            "Engine {name} has unknown template placeholder "
-            "`{placeholder}` in *spawn* command"
-        )
+        msg = "Engine {name} has unknown template placeholder `{placeholder}` in *spawn* command"
         raise ValueError(
             msg.format(name=instance.name, placeholder=err.args[0])
         ) from err
@@ -45,7 +43,7 @@ def _check_at_least_one_elem(
 class LocalFilesDeploy:
     "Deploy local files configuration"
 
-    files: Tuple[PurePath] = field(factory=tuple)
+    files: tuple[PurePath, ...] = field(factory=tuple)
 
 
 @define(frozen=True)
@@ -69,7 +67,7 @@ Deploy = Union[
 ]
 
 
-@define(frozen=True)
+@define
 class Engine:
     """Engine configuration"""
 
@@ -81,35 +79,35 @@ class Engine:
     check_pname: Optional[str] = field(
         validator=[validators.optional(validators.instance_of(str)), _check_check_]
     )
-    deployable: Tuple[Deploy, ...] = field(factory=tuple)
-    input_files: Tuple[str, ...] = field(
+    deployable: tuple[Deploy, ...] = field(factory=tuple)
+    input_files: tuple[str, ...] = field(
         factory=tuple,
         validator=[
             validators.deep_iterable(member_validator=validators.instance_of(str)),
             _check_at_least_one_elem,
         ],
     )
-    output_files: Tuple[str, ...] = field(
+    output_files: tuple[str, ...] = field(
         factory=tuple,
         validator=[
             validators.deep_iterable(member_validator=validators.instance_of(str)),
             _check_at_least_one_elem,
         ],
     )
-    platforms: Tuple[str, ...] = field(
+    platforms: tuple[str, ...] = field(
         factory=tuple,
         validator=[
             validators.deep_iterable(member_validator=validators.instance_of(str))
         ],
     )
-    platform_packages: Tuple[str, ...] = field(
+    platform_packages: tuple[str, ...] = field(
         factory=tuple,
         validator=[
             validators.deep_iterable(member_validator=validators.instance_of(str))
         ],
     )
-    check_cmd_code: int = _make_default_field(0)
-    sleep_interval: int = _make_default_field(10)
+    check_cmd_code: int = make_default_field(0)
+    sleep_interval: int = make_default_field(10)
 
     @classmethod
     def get_valid_config_parser_fields(cls) -> Sequence[str]:
@@ -132,7 +130,7 @@ class Engine:
 
         warn_unknown_fields(cls.get_valid_config_parser_fields(), sec)
 
-        def gettuple(key: str) -> Tuple[str]:
+        def gettuple(key: str) -> tuple[str, ...]:
             return tuple(
                 x.strip() for x in filter(None, sec.get(key, fallback="").split())
             )
@@ -158,13 +156,13 @@ class Engine:
         return cls(
             name=name,
             deployable=tuple(deployable),
-            spawn=sec.get("spawn"),
+            spawn=sec.get("spawn"),  # type: ignore
             check_cmd=sec.get("check_cmd"),
-            check_cmd_code=sec.getint("check_cmd_code"),
+            check_cmd_code=sec.getint("check_cmd_code"),  # type: ignore
             check_pname=sec.get("check_pname"),
             input_files=gettuple("input_files"),
             output_files=gettuple("output_files"),
-            sleep_interval=sec.getint("sleep_interval"),
+            sleep_interval=sec.getint("sleep_interval"),  # type: ignore
             platforms=gettuple("platforms"),
             platform_packages=gettuple("platform_packages"),
         )

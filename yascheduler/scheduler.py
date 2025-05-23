@@ -4,37 +4,25 @@ import asyncio
 import logging
 from asyncio.locks import Event, Semaphore
 from collections import Counter
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path, PurePath, PurePosixPath
-from typing import (
-    Any,
-    AsyncGenerator,
-    Awaitable,
-    Callable,
-    List,
-    Mapping,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Optional, Union
 
 import aiohttp
 import asyncssh
 import backoff
 from asyncssh.sftp import SFTPClient, SFTPError
 from attrs import asdict, define, evolve, field
-from typing_extensions import Self
 
-from .clouds import CloudAPIManager, PCloudAPIManager
+from .clouds import CloudAPIManager
+from .compat import Self
 from .config import Config, Engine
 from .db import DB, NodeModel, TaskModel, TaskStatus
 from .queue import TUMsgId, TUMsgPayload, UMessage, UniqueQueue
 from .remote_machine import (
     AllSSHRetryExc,
-    PRemoteMachine,
     RemoteMachine,
     RemoteMachineRepository,
     SFTPRetryExc,
@@ -45,7 +33,7 @@ from .variables import CONFIG_FILE
 logging.basicConfig(level=logging.INFO)
 
 
-def get_logger(log_file, level: int = logging.INFO):
+def get_logger(log_file: Optional[Union[str, Path]] = None, level: int = logging.INFO):
     logging.captureWarnings(True)
     logger = logging.getLogger("yascheduler")
     logger.setLevel(level)
@@ -77,9 +65,9 @@ class WebhookPayload:
 class Scheduler:
     config: Config = field()
     db: DB = field()
-    clouds: PCloudAPIManager = field()
+    clouds: CloudAPIManager = field()
     log: logging.Logger = field()
-    bg_jobs: Set[asyncio.Task] = field(factory=set, init=False)
+    bg_jobs: set[asyncio.Task[None]] = field(factory=set, init=False)
     conn_machine_q: UniqueQueue[str, NodeModel] = field(init=False)
     allocate_q: UniqueQueue[int, TaskModel] = field(init=False)
     consume_q: UniqueQueue[int, TaskModel] = field(init=False)
@@ -235,7 +223,7 @@ class Scheduler:
 
     async def start_task_on_machine(
         self,
-        machine: PRemoteMachine,
+        machine: RemoteMachine,
         engine: Engine,
         task: TaskModel,
     ) -> bool:
@@ -290,7 +278,9 @@ class Scheduler:
         "Allocate task to a free remote machine or ask allocation of new cloud machine"
         self.log.debug(f"Allocating task {task.task_id}")
         engine_name: Optional[str] = task.metadata.get("engine", None)
-        engine: Optional[Engine] = self.config.engines.get(engine_name)
+        engine: Optional[Engine] = (
+            self.config.engines.get(engine_name) if engine_name else None
+        )
         if engine is None:
             self.log.warning(
                 "Unsupported engine '{}' for task_id={}".format(
@@ -341,7 +331,7 @@ class Scheduler:
         )
         return False
 
-    async def consume_task(self, machine: PRemoteMachine, task: TaskModel):
+    async def consume_task(self, machine: RemoteMachine, task: TaskModel):
         "Consume done tasks"
         meta = task.metadata
         local_folder: Union[str, None] = meta.get("local_folder")
@@ -359,12 +349,12 @@ class Scheduler:
             None, store_folder.mkdir, 0o777, True, True
         )
 
-        meta_add = [
+        meta_add: list[tuple[str, Any]] = [
             ("remote_folder", remote_folder),
             ("local_folder", str(store_folder)),
         ]
 
-        sftp_errors: List[Tuple[Optional[str], Exception]] = []
+        sftp_errors: list[tuple[Optional[str], Exception]] = []
         sftp_get_retry = backoff.on_exception(backoff.fibo, SFTPRetryExc, max_time=60)
 
         async def job():
@@ -600,7 +590,7 @@ class Scheduler:
                 finally:
                     queue.item_done(msg)
 
-        workers: Set[asyncio.Task] = set()
+        workers: set[asyncio.Task] = set()
         [workers.add(asyncio.create_task(worker())) for _ in range(0, workers_num)]
 
         try:

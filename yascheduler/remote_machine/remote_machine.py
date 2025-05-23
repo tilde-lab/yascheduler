@@ -3,11 +3,13 @@
 import asyncio
 import logging
 from asyncio.locks import Event, Semaphore
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import PurePath
-from typing import AsyncGenerator, Optional, Pattern, Sequence, Set, Type, Union
+from re import Pattern
+from typing import AnyStr, Optional, Union
 
 import asyncssh
 import backoff
@@ -19,9 +21,10 @@ from asyncssh.sftp import SFTPClient
 from asyncstdlib import all as aall
 from asyncstdlib import map as amap
 from attrs import define, field, validators
-from typing_extensions import Self
 
+from ..compat import Self
 from .adapters import (
+    RemoteMachineAdapter,
     darwin_adapter,
     debian_10_adapter,
     debian_11_adapter,
@@ -45,14 +48,11 @@ from .protocol import (
     PEngine,
     PEngineRepository,
     PProcessInfo,
-    PRemoteMachine,
-    PRemoteMachineAdapter,
-    PRemoteMachineMetadata,
     SSHCheck,
     SSHRetryExc,
 )
 
-ADAPTERS: Sequence[PRemoteMachineAdapter] = [
+ADAPTERS: Sequence[RemoteMachineAdapter] = [
     debian_10_adapter,
     debian_11_adapter,
     debian_12_adapter,
@@ -103,10 +103,13 @@ DEFAULT_CONN_OPTS = SSHClientConnectionOptions(
 
 
 @define
-class RemoteMachineMetadata(PRemoteMachineMetadata):
+class RemoteMachineMetadata:
+    _busy: Optional[bool]
+    free_since: Optional[datetime]
+
     def __init__(self):
         self._busy = None
-        self._free_since: Optional[datetime] = datetime.now()
+        self.free_since = datetime.now()
 
     @property
     def busy(self) -> Optional[bool]:
@@ -116,19 +119,19 @@ class RemoteMachineMetadata(PRemoteMachineMetadata):
     def busy(self, new_busy: bool):
         if new_busy:
             self._busy = True
-            self._free_since = None
+            self.free_since = None
         else:
             self._busy = False
-            self._free_since = datetime.now()
+            self.free_since = datetime.now()
 
     def is_free_longer_than(self, delta: timedelta) -> bool:
-        if not self._free_since or self.busy:
+        if not self.free_since or self.busy:
             return False
-        return datetime.now() - delta > self._free_since
+        return datetime.now() - delta > self.free_since
 
 
 @define(frozen=True)
-class RemoteMachine(PRemoteMachine):
+class RemoteMachine:
     "Remote SSH machine"
 
     conn: SSHClientConnection = field()
@@ -136,9 +139,10 @@ class RemoteMachine(PRemoteMachine):
 
     meta: RemoteMachineMetadata = field()
 
-    adapter: PRemoteMachineAdapter = field()
+    adapter: RemoteMachineAdapter = field()
     log: logging.Logger = field()
 
+    # supported platforms (like debian-10, debian, debian-like and linux)
     platforms: Sequence[str] = field()
 
     data_dir: PurePath = field(validator=validators.instance_of(PurePath))
@@ -146,24 +150,24 @@ class RemoteMachine(PRemoteMachine):
     tasks_dir: PurePath = field(validator=validators.instance_of(PurePath))
 
     cancellation_event: Event = field(factory=Event, init=False)
-    jobs: Set[asyncio.Task] = field(factory=set, init=False)
+    jobs: set[asyncio.Task[None]] = field(factory=set, init=False)
     sessions_limit: Semaphore = field(
         factory=lambda: Semaphore(MAX_SESSIONS), init=False
     )
 
     def __le__(self, other: Self) -> bool:
-        if not self.meta._free_since:
+        if not self.meta.free_since:
             return True
-        if not other.meta._free_since:
+        if not other.meta.free_since:
             return False
-        return self.meta._free_since <= other.meta._free_since
+        return self.meta.free_since <= other.meta.free_since
 
     def __gt__(self, other: Self) -> bool:
-        if not self.meta._free_since:
+        if not self.meta.free_since:
             return False
-        if not other.meta._free_since:
+        if not other.meta.free_since:
             return True
-        return self.meta._free_since > other.meta._free_since
+        return self.meta.free_since > other.meta.free_since
 
     @classmethod
     @my_backoff_exc()
@@ -179,7 +183,7 @@ class RemoteMachine(PRemoteMachine):
         tasks_dir: Optional[PurePath] = None,
         jump_host: Optional[str] = None,
         jump_username: Optional[str] = None,
-    ) -> "PRemoteMachine":
+    ) -> Self:
         logger_name = f"{cls.__name__}:{username}@{host}"
         if logger:
             log = logger.getChild(logger_name)
@@ -256,9 +260,7 @@ class RemoteMachine(PRemoteMachine):
 
     @classmethod
     @asynccontextmanager
-    async def create_ctx(
-        cls, *args, **kwargs
-    ) -> AsyncGenerator["PRemoteMachine", None]:
+    async def create_ctx(cls, *args, **kwargs) -> AsyncGenerator["RemoteMachine", None]:
         """
         Create async context.
         :raises asyncssh.Error: An SSH error has occurred.
@@ -320,13 +322,13 @@ class RemoteMachine(PRemoteMachine):
             return await self.renew_conn()
 
     @property
-    def path(self) -> Type[PurePath]:
+    def path(self) -> type[PurePath]:
         "Return path of the adapter"
         return self.adapter.path
 
-    def quote(self, string: str) -> str:
+    def quote(self, s: str) -> str:
         "Platform-specific shell quoting"
-        return self.adapter.quote(string)
+        return self.adapter.quote(s)
 
     @my_backoff_exc()
     async def run(
@@ -340,7 +342,7 @@ class RemoteMachine(PRemoteMachine):
 
     async def run_bg(
         self, command: str, *args, cwd: Optional[str] = None, **kwargs
-    ) -> SSHClientProcess:
+    ) -> SSHClientProcess[AnyStr]:
         "Run process in background"
         conn = await self.get_conn()
         return await self.adapter.run_bg(
@@ -376,7 +378,6 @@ class RemoteMachine(PRemoteMachine):
         """
         self.log.info(f"CPUs count: {await self.get_cpu_cores()}")
         conn = await self.get_conn()
-        # pylint: disable=redundant-keyword-arg
         retry = my_backoff_exc(exception=AllSSHRetryExc)
         await retry(self.adapter.setup_node)(
             conn=conn,

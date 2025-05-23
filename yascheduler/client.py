@@ -2,32 +2,18 @@
 
 import asyncio
 import logging
-import sys
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from pathlib import PurePath
-from typing import (
-    Any,
-    Callable,
-    Coroutine,
-    Mapping,
-    Optional,
-    Sequence,
-    TypeVar,
-    Union,
-)
+from typing import Any, Optional, TypeVar, Union
 
 from attrs import asdict
 
+from .compat import ParamSpec
 from .config import Config
 from .db import DB, TaskStatus
-from .scheduler import Scheduler
 from .variables import CONFIG_FILE
-
-if sys.version_info < (3, 10):
-    from typing_extensions import ParamSpec
-else:
-    from typing import ParamSpec
 
 ReturnT_co = TypeVar("ReturnT_co", covariant=True)
 ParamT = ParamSpec("ParamT")
@@ -84,6 +70,8 @@ class Yascheduler:
         webhook_onsubmit=False,
     ) -> int:
         """Submit new task"""
+        from .scheduler import Scheduler
+
         yac = await Scheduler.create(config=self.config, log=self._logger)
         task = await yac.create_new_task(
             label=label,

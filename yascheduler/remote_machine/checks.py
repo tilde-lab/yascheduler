@@ -1,7 +1,7 @@
 "OS checks"
 
 from functools import partial
-from typing import Optional, Tuple
+from typing import Optional
 
 from asyncssh.connection import SSHClientConnection
 from asyncstdlib import lru_cache
@@ -30,7 +30,7 @@ async def check_is_darwin(conn: SSHClientConnection) -> bool:
 
 
 @lru_cache
-async def _get_os_release(conn: SSHClientConnection) -> Optional[Tuple[str]]:
+async def _get_os_release(conn: SSHClientConnection) -> Optional[tuple[str, ...]]:
     "Get os release string on linuxes"
     proc = await conn.run(
         "sh -c 'source /etc/os-release; echo $ID@@@$ID_LIKE@@@$VERSION_ID'"

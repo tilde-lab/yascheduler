@@ -3,8 +3,8 @@
 import asyncio
 import logging
 from concurrent.futures.thread import ThreadPoolExecutor
-from functools import lru_cache, partial
-from typing import Optional
+from functools import cache, partial
+from typing import Optional, cast
 
 from asyncssh.public_key import SSHKey as ASSHKey
 from hcloud import APIException
@@ -22,32 +22,36 @@ from .utils import get_key_name, get_rnd_name
 executor = ThreadPoolExecutor(max_workers=5)
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_client(cfg: ConfigCloudHetzner) -> HClient:
     "Get Hetzner client"
     return HClient(cfg.token)
 
 
-@lru_cache
+@cache
 def get_ssh_key_id(client: HClient, key: ASSHKey) -> int:
     "Get Hetzner ssh id"
     key_name = get_key_name(key)
     pub_key = key.export_public_key("openssh").decode("utf-8")
 
     try:
-        return client.ssh_keys.create(name=key_name, public_key=pub_key).id
+        hkey = client.ssh_keys.create(name=key_name, public_key=pub_key)
+        return cast(int, hkey.id)
     except APIException as err:
         if "already" in str(err):
             hkey = client.ssh_keys.get_by_fingerprint(
                 key.get_fingerprint("md5").split(":", maxsplit=1)[1]
             ) or client.ssh_keys.get_by_name(key_name)
             if hkey:
-                return hkey.id
+                return cast(int, hkey.id)
             prefix = "yakey"
             name_len = len(get_rnd_name(prefix))
             for hkey in client.ssh_keys.get_all():
-                if hkey.name.startswith(prefix) and len(hkey.name) == name_len:
-                    return hkey.id
+                if (
+                    cast(str, hkey.name).startswith(prefix)
+                    and len(cast(str, hkey.name)) == name_len
+                ):
+                    return cast(int, hkey.id)
         raise err
 
 
@@ -73,7 +77,8 @@ async def hetzner_create_node(
     )
     response = await loop.run_in_executor(executor, create_server)
     server = response.server
-    ip_addr = server.public_net.ipv4.ip
+    ip_addr = server.public_net and server.public_net.ipv4 and server.public_net.ipv4.ip
+    assert ip_addr
     log.info("CREATED %s", ip_addr)
     return ip_addr
 
@@ -81,7 +86,9 @@ async def hetzner_create_node(
 def find_srv(client: HClient, host: str) -> Optional[BoundServer]:
     """Find BoundServer by IP addr"""
     for server in client.servers.get_all():
-        if server.public_net.ipv4.ip == host:
+        if (
+            server.public_net and server.public_net.ipv4 and server.public_net.ipv4.ip
+        ) == host and server.id:
             return client.servers.get_by_id(server.id)
     return None
 

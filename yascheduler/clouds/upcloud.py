@@ -5,7 +5,7 @@ import logging
 import time
 from concurrent.futures.thread import ThreadPoolExecutor
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, cast
 
 from asyncssh.public_key import SSHKey
 from upcloud_api import CloudManager, Server, Storage, login_user_block
@@ -50,7 +50,8 @@ def upcloud_create_node_sync(
             user_data=cloud_config.render() if cloud_config else None,
         )
     )
-    ip_addr = server.get_public_ip()
+    ip_addr = cast(Optional[str], server.get_public_ip())
+    assert ip_addr is not None
     log.info("CREATED %s", ip_addr)
     return ip_addr
 

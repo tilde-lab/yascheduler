@@ -4,8 +4,10 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import PurePath, PureWindowsPath
-from typing import AsyncGenerator, Optional, Pattern, Sequence, Union
+from re import Pattern
+from typing import Optional, Union
 
 from asyncssh.connection import SSHClientConnection
 from asyncssh.sftp import SFTPClient
@@ -18,7 +20,7 @@ from .protocol import OuterRunCallable, PEngineRepository, PProcessInfo, QuoteCa
 class MyPureWindowsPath(PureWindowsPath):
     @classmethod
     def _parse_args(cls, path):
-        drv, root, parts = cls._parse_args(path)  # pylint: disable=no-member
+        drv, root, parts = cls._parse_args(path)
         # prevent leading slash like \C:\Users\user
         if not drv and root == "\\" and len(parts) > 2 and parts[0] == "\\":
             drv = parts[1]

@@ -1,7 +1,9 @@
 """Async queue with message deduplication"""
 
 import asyncio
-from typing import Deque, Generic, Hashable, Set, TypeVar
+from collections import deque
+from collections.abc import Hashable
+from typing import Generic, TypeVar
 
 from attrs import define, field
 
@@ -21,8 +23,8 @@ class UniqueQueue(asyncio.Queue, Generic[TUMsgId, TUMsgPayload]):
     """Async queue with message deduplication"""
 
     name: str
-    _queue: Deque[UMessage[TUMsgId, TUMsgPayload]]
-    _done_pending: Set[UMessage[TUMsgId, TUMsgPayload]]
+    _queue: deque[UMessage[TUMsgId, TUMsgPayload]]
+    _done_pending: set[UMessage[TUMsgId, TUMsgPayload]]
 
     def __init__(self, name: str, *argv, maxsize: int = 0, **kwargs):
         self.name = name

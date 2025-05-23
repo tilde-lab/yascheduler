@@ -2,8 +2,10 @@
 
 import logging
 import re
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import PurePath
-from typing import AsyncGenerator, Optional, Pattern, Sequence, Union
+from re import Pattern
+from typing import Optional, Union
 
 from asyncssh.connection import SSHClientConnection
 from asyncssh.sftp import SFTPClient
@@ -57,7 +59,7 @@ async def linux_pgrep(
     conn: SSHClientConnection,
     quote: QuoteCallable,
     pattern: Union[str, Pattern[str]],
-    full=True,
+    full: bool = True,
 ) -> AsyncGenerator[PProcessInfo, None]:
     """
     Returns information about running processes, that name matches a pattern.
@@ -191,7 +193,8 @@ async def linux_setup_deb_node(
     log: Optional[logging.Logger] = None,
 ):
     "Setup debian-like node"
-    is_root = conn._username == "root"
+
+    is_root = conn.get_extra_info("username") == "root"
     sudo_prefix = "" if is_root else "sudo "
     apt_cmd = f"{sudo_prefix}apt-get -o DPkg::Lock::Timeout=600 -y"
     pkgs = engines.get_platform_packages()
