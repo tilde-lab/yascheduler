@@ -8,9 +8,9 @@ name = "yascheduler"
 version = "1.4.0"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
-    { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
     { name = "Sergei Korolev", email = "knopki@duck.com" },
-    { name = "Andrey Sobolev" },
+    { name = "Andrey Sobolev", email = "as@tilde.pro" },
+    { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
