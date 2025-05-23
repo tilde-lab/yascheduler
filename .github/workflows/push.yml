@@ -57,7 +57,7 @@ jobs:
         run: echo "Bumped to version ${{ steps.cz.outputs.version }}"
 
       - name: Build
-        run: pythin -m build
+        run: python -m build
 
       - name: Stop if no bump
         id: no-bump
