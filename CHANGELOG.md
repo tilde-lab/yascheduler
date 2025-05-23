@@ -1,3 +1,23 @@
+## v1.5.0 (2025-05-23)
+
+### Feat
+
+- add yascheduler.conf to .gitignore
+
+### Fix
+
+- typo
+- **clouds**: dynamic loading of only needed cloud adapters
+
+### Refactor
+
+- more simple python 3.9 upgrades
+- typing things
+
+### Perf
+
+- more small lazy loading tricks
+
 ## v1.4.0 (2025-05-14)
 
 ### Feat

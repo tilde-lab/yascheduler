@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "yascheduler"
 # version should be changed by automation, not by hand - DON'T TOUCH
-version = "1.4.0"
+version = "1.5.0"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
     { name = "Sergei Korolev", email = "knopki@duck.com" },
