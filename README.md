@@ -250,7 +250,7 @@ Connection to a PostgreSQL database.
 
 ### Providers `[clouds]`
 
-All cloud providers settings are set in the `[cloud]` group.
+All cloud providers settings are set in the `[clouds]` group.
 Each provider has its own settings prefix.
 
 These settings are common to all the providers:
