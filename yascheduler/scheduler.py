@@ -511,6 +511,7 @@ class Scheduler:
                 connect_timeout=10,
                 jump_username=jump_username,
                 jump_host=jump_host,
+                port=node.port,
             )
         except asyncssh.misc.Error as err:
             self.log.error(f"Can't connect to machine with error: {err}")

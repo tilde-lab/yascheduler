@@ -1,9 +1,10 @@
 CREATE TABLE yascheduler_nodes (
     ip VARCHAR(15) UNIQUE,
+    port INTEGER DEFAULT 22,
+    username VARCHAR(255) DEFAULT 'root',
     ncpus SMALLINT DEFAULT NULL,
     enabled BOOLEAN DEFAULT TRUE,
-    cloud VARCHAR(32) DEFAULT NULL,
-    username VARCHAR(255) DEFAULT 'root'
+    cloud VARCHAR(32) DEFAULT NULL
 );
 
 CREATE TABLE yascheduler_tasks (

@@ -176,6 +176,7 @@ class RemoteMachine:
         host: str,
         username: str,
         client_keys: Optional[Sequence[PurePath]],
+        port: int = 22,
         logger: Optional[logging.Logger] = None,
         connect_timeout: Optional[int] = None,
         data_dir: Optional[PurePath] = None,
@@ -184,7 +185,7 @@ class RemoteMachine:
         jump_host: Optional[str] = None,
         jump_username: Optional[str] = None,
     ) -> Self:
-        logger_name = f"{cls.__name__}:{username}@{host}"
+        logger_name = f"{cls.__name__}:{username}@{host}:{port}"
         if logger:
             log = logger.getChild(logger_name)
         else:
@@ -198,6 +199,7 @@ class RemoteMachine:
         conn_opts = SSHClientConnectionOptions(
             options=DEFAULT_CONN_OPTS,
             host=host,
+            port=port,
             username=username,
             tunnel=jump_host and jump_username and f"{jump_username}@{jump_host}",
             client_keys=client_keys or (),
@@ -209,6 +211,7 @@ class RemoteMachine:
         conn = await asyncssh.connection.connect(
             options=conn_opts,
             host=conn_opts.host,
+            port=conn_opts.port,
             tunnel=conn_opts.tunnel,
         )
 

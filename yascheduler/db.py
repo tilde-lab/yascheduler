@@ -34,6 +34,7 @@ class NodeModel:
     enabled: bool = field(default=True)
     cloud: Optional[str] = field(default=None)
     username: str = field(default="root")
+    port: int = field(default=22)
 
 
 @define(frozen=True)
@@ -93,8 +94,12 @@ class DB:
     async def migrate(self) -> None:
         """Migrate database scheme"""
         await self.run(
-            """ALTER TABLE yascheduler_nodes
-            ADD COLUMN IF NOT EXISTS username VARCHAR(255) DEFAULT 'root';"""
+            """
+            ALTER TABLE yascheduler_nodes
+            ADD COLUMN IF NOT EXISTS username VARCHAR(255) DEFAULT 'root';
+            ALTER TABLE yascheduler_nodes
+            ADD COLUMN IF NOT EXISTS port INTEGER DEFAULT 22;
+            """
         )
 
     async def commit(self):
@@ -122,14 +127,14 @@ class DB:
     async def get_all_nodes(self) -> Sequence[NodeModel]:
         """Get all nodes"""
         rows = await self.run(
-            """SELECT ip, ncpus, enabled, cloud, username FROM yascheduler_nodes;"""
+            """SELECT ip, ncpus, enabled, cloud, username, port FROM yascheduler_nodes;"""
         )
         return [NodeModel(*x) for x in (rows or [])]
 
     async def get_enabled_nodes(self) -> Sequence[NodeModel]:
         """Get all enabled nodes"""
         rows = await self.run(
-            """SELECT ip, ncpus, enabled, cloud, username
+            """SELECT ip, ncpus, enabled, cloud, username, port
             FROM yascheduler_nodes WHERE enabled=TRUE;"""
         )
         return [y for y in [NodeModel(*x) for x in (rows or [])] if "." in y.ip]
@@ -137,7 +142,7 @@ class DB:
     async def get_disabled_nodes(self) -> Sequence[NodeModel]:
         """Get all disabled nodes"""
         rows = await self.run(
-            """SELECT ip, ncpus, enabled, cloud, username
+            """SELECT ip, ncpus, enabled, cloud, username, port
             FROM yascheduler_nodes WHERE enabled=FALSE;"""
         )
         return [y for y in [NodeModel(*x) for x in (rows or [])] if "." in y.ip]
@@ -145,7 +150,7 @@ class DB:
     async def get_node(self, ip_addr: str) -> Optional[NodeModel]:
         """Get node by ip"""
         rows = await self.run(
-            """SELECT ip, ncpus, enabled, cloud, username
+            """SELECT ip, ncpus, enabled, cloud, username, port
             FROM yascheduler_nodes
             WHERE ip=:ip;""",
             ip=ip_addr,
@@ -192,22 +197,24 @@ class DB:
         self,
         ip_addr: str,
         username: str,
+        port: int = 22,
         ncpus: Optional[int] = None,
         cloud: Optional[str] = None,
         enabled: bool = False,
     ) -> NodeModel:
         """Add new node"""
         await self.run(
-            """INSERT INTO yascheduler_nodes (ip, ncpus, enabled, cloud, username)
-            VALUES (:ip, :ncpus, :enabled, :cloud, :username);""",
+            """INSERT INTO yascheduler_nodes (ip, ncpus, enabled, cloud, username, port)
+            VALUES (:ip, :ncpus, :enabled, :cloud, :username, :port);""",
             ip=ip_addr,
             ncpus=ncpus,
             cloud=cloud,
             username=username,
             enabled=enabled,
+            port=port,
         )
         return NodeModel(
-            ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username
+            ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username, port=port
         )
 
     async def enable_node(self, ip_addr: str) -> None:

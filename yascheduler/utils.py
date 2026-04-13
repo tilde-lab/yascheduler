@@ -311,7 +311,7 @@ async def show_nodes():
     tasks = await db.get_tasks_by_status(statuses=[TaskStatus.RUNNING])
     nodes = await db.get_all_nodes()
     for node in nodes:
-        tmpl = "ip={ip} ncpus={ncpus} enabled={enabled} occupied_by={occ} (task_id={tid}) {cloud}"
+        tmpl = "ip={ip}{port} ncpus={ncpus} enabled={enabled} occupied_by={occ} (task_id={tid}) {cloud}"
         node_tasks = list(filter(lambda x: x.ip == node.ip, tasks))
         node_label = "-"
         task_id = "-"
@@ -320,6 +320,7 @@ async def show_nodes():
             task_id = x.task_id
         msg = tmpl.format(
             ip=node.ip,
+            port=f":{node.port}" if node.port != 22 else "",
             ncpus=node.ncpus or "MAX",
             enabled=node.enabled,
             occ=node_label,
@@ -332,7 +333,7 @@ async def show_nodes():
 @to_sync
 async def manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
-    parser.add_argument("host", help="[user@]IP[~ncpus]")
+    parser.add_argument("host", help="[user@]IP[:port][~ncpus]")
     parser.add_argument(
         "--skip-setup",
         required=False,
@@ -366,12 +367,16 @@ async def manage_node():
     db = await DB.create(config.db)
 
     ncpus = None
+    port = 22
     username = config.remote.username
     if "@" in args.host:
         username, args.host = args.host.split("@")
     if "~" in args.host:
         args.host, ncpus = args.host.split("~")
         ncpus = int(ncpus)
+    if ":" in args.host:
+        args.host, port_str = args.host.rsplit(":", 1)
+        port = int(port_str)
 
     already_there = await db.has_node(args.host)
     if already_there and not args.remove_hard and not args.remove_soft:
@@ -417,17 +422,20 @@ async def manage_node():
         username=username,
         client_keys=config.local.get_private_keys(),
         engines_dir=config.remote.engines_dir,
+        port=port,
     )
 
     if not args.skip_setup:
         print("Setup host...")
         await machine.setup_node(config.engines)
 
-    await db.add_node(ip_addr=args.host, username=username, ncpus=ncpus, enabled=True)
+    await db.add_node(
+        ip_addr=args.host, port=port, username=username, ncpus=ncpus, enabled=True
+    )
     await db.commit()
     await db.close()
 
-    print(f"Added host to yascheduler: {args.host}")
+    print(f"Added host to yascheduler: {args.host}:{port}")
 
 
 def daemonize(log_file: Optional[Union[str, Path]] = None):
