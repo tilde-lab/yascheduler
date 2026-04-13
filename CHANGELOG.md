@@ -1,3 +1,14 @@
+## v1.6.0 (2026-04-13)
+
+### Feat
+
+- connection with custom port
+
+### Fix
+
+- py39 compat
+- db.add_node misuse + types
+
 ## v1.5.1 (2026-01-14)
 
 ### Fix
