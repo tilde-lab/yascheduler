@@ -197,12 +197,13 @@ class DB:
         self,
         ip_addr: str,
         username: str,
-        port: int = 22,
+        port: Optional[int] = 22,
         ncpus: Optional[int] = None,
         cloud: Optional[str] = None,
         enabled: bool = False,
     ) -> NodeModel:
         """Add new node"""
+        port = port or 22
         await self.run(
             """INSERT INTO yascheduler_nodes (ip, ncpus, enabled, cloud, username, port)
             VALUES (:ip, :ncpus, :enabled, :cloud, :username, :port);""",
@@ -214,7 +215,12 @@ class DB:
             port=port,
         )
         return NodeModel(
-            ip_addr, ncpus, enabled=enabled, cloud=cloud, username=username, port=port
+            ip_addr,
+            ncpus,
+            enabled=enabled,
+            cloud=cloud,
+            username=username,
+            port=port,
         )
 
     async def enable_node(self, ip_addr: str) -> None:

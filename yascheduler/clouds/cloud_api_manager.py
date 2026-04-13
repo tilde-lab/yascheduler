@@ -173,7 +173,13 @@ class CloudAPIManager:
             await self.db.remove_node(tmp_ip)
             await self.db.commit()
 
-        await self.db.add_node(ip_addr, api.config.username, None, api.name, True)
+        _ = await self.db.add_node(
+            ip_addr=ip_addr,
+            username=api.config.username,
+            port=None,
+            cloud=api.name,
+            enabled=True,
+        )
         await self.db.commit()
         return ip_addr
 
