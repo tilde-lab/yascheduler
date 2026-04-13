@@ -201,19 +201,19 @@ class Scheduler:
         input_files: Sequence[str],
     ) -> bool:
         "Upload task data to remote machine"
-        
+
         def safe_b64decode(b64_data: str | bytes) -> bytes:
             """Decodes base64 data, adding padding if necessary and stripping whitespace"""
             if isinstance(b64_data, bytes):
                 # bytes to str
-                b64_data = b64_data.decode() 
-            b64_data = b64_data.strip().replace('\n', '').replace(' ', '')
+                b64_data = b64_data.decode()
+            b64_data = b64_data.strip().replace("\n", "").replace(" ", "")
             # if len(b64_data) % 4 != 0
             missing_padding = len(b64_data) % 4
             if missing_padding:
-                b64_data += '=' * (4 - missing_padding)
+                b64_data += "=" * (4 - missing_padding)
             return base64.b64decode(b64_data)
-        
+
         try:
             await sftp.makedirs(PurePosixPath(remote_dir), exist_ok=True)
         except asyncssh.misc.Error as err:
@@ -225,7 +225,7 @@ class Scheduler:
 
         for input_file in input_files:
             r_input_file = remote_dir / input_file
-            if input_file == 'fort.9':
+            if input_file == "fort.9":
                 try:
                     b64_data = task.metadata[input_file]
 
@@ -241,13 +241,13 @@ class Scheduler:
                     )
                     raise err
                 except Exception as e:
-                    self.log.error(
-                        f"Error processing file {input_file}: {e}"
-                    )
+                    self.log.error(f"Error processing file {input_file}: {e}")
             # if not binary
             else:
                 try:
-                    async with sftp.open(r_input_file.as_posix(), pflags_or_mode="w") as f:
+                    async with sftp.open(
+                        r_input_file.as_posix(), pflags_or_mode="w"
+                    ) as f:
                         await f.write(task.metadata[input_file])
                 except asyncssh.misc.Error as err:
                     self.log.error(
@@ -255,9 +255,7 @@ class Scheduler:
                         % (str(r_input_file), err.reason, err.code)
                     )
                 except Exception as e:
-                    self.log.error(
-                        f"Error processing file {input_file}: {e}"
-                    )
+                    self.log.error(f"Error processing file {input_file}: {e}")
         return True
 
     async def start_task_on_machine(

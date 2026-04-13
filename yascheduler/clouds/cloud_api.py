@@ -113,9 +113,11 @@ class CloudAPI(Generic[TConfigCloud_inv]):
     async def get_cloud_config_data(self) -> PCloudConfig:
         "Common cloud-config"
         engines = self.engines.filter(
-            lambda e: bool(e.platforms)
-            and any(map(self.is_platform_supported, e.platforms))
-            or not e.platforms
+            lambda e: (
+                bool(e.platforms)
+                and any(map(self.is_platform_supported, e.platforms))
+                or not e.platforms
+            )
         )
         pkgs = engines.get_platform_packages()
         return CloudConfig(package_upgrade=True, packages=pkgs)
