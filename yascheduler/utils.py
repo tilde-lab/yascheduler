@@ -55,7 +55,7 @@ async def submit():
 
     engine = yac.config.engines.get(script_params["ENGINE"])
     if not engine:
-        raise ValueError("Engine %s is not supported" % script_params["ENGINE"])
+        raise ValueError("Engine {} is not supported".format(script_params["ENGINE"]))
 
     for input_file in engine.input_files:
         try:
@@ -135,8 +135,7 @@ async def check_status():  # noqa: C901
             ssh_user = ssh_user or config.remote.username
             print(
                 "." * 50
-                + "ID%s %s at %s@%s:%s:%s"
-                % (
+                + "ID{} {} at {}@{}:{}:{}".format(
                     task.task_id,
                     task.label,
                     ssh_user,
@@ -200,7 +199,7 @@ async def check_status():  # noqa: C901
                             + "E={:12f}".format(calc.info["optgeom"][n][4] or nan)
                             + " eV"
                             + "  "
-                            + "(%s)" % ncycles
+                            + f"({ncycles})"
                             + "\n"
                         )
                 print(output_lines)
@@ -259,7 +258,7 @@ def _init_systemd(install_path: Path):
     unit_file = Path("/lib/systemd/system/yascheduler.service")
     if not unit_file.is_file():
         if not os.access(unit_file, os.W_OK):
-            print("Error: cannot write to %s" % unit_file)
+            print(f"Error: cannot write to {unit_file}")
             return
         daemon_file = install_path / "daemon_systemd.py"
         systemd_script = src_unit_file.read_text("utf-8").replace(
@@ -276,7 +275,7 @@ def _init_sysv(install_path: Path):
     startup_file = Path("/etc/init.d/yascheduler")
     if not startup_file.is_file():
         if not os.access(startup_file, os.W_OK):
-            print("Error: cannot write to %s" % startup_file)
+            print(f"Error: cannot write to {startup_file}")
             return
 
         daemon_file = install_path / "daemon_sysv.py"
@@ -311,7 +310,7 @@ async def show_nodes():
     tasks = await db.get_tasks_by_status(statuses=[TaskStatus.RUNNING])
     nodes = await db.get_all_nodes()
     for node in nodes:
-        tmpl = "ip={ip} ncpus={ncpus} enabled={enabled} occupied_by={occ} (task_id={tid}) {cloud}"
+        tmpl = "ip={ip}{port} ncpus={ncpus} enabled={enabled} occupied_by={occ} (task_id={tid}) {cloud}"
         node_tasks = list(filter(lambda x: x.ip == node.ip, tasks))
         node_label = "-"
         task_id = "-"
@@ -320,6 +319,7 @@ async def show_nodes():
             task_id = x.task_id
         msg = tmpl.format(
             ip=node.ip,
+            port=f":{node.port}" if node.port != 22 else "",
             ncpus=node.ncpus or "MAX",
             enabled=node.enabled,
             occ=node_label,
@@ -332,7 +332,7 @@ async def show_nodes():
 @to_sync
 async def manage_node():
     parser = argparse.ArgumentParser(description="Add nodes to yascheduler daemon")
-    parser.add_argument("host", help="[user@]IP[~ncpus]")
+    parser.add_argument("host", help="[user@]IP[:port][~ncpus]")
     parser.add_argument(
         "--skip-setup",
         required=False,
@@ -366,12 +366,16 @@ async def manage_node():
     db = await DB.create(config.db)
 
     ncpus = None
+    port = 22
     username = config.remote.username
     if "@" in args.host:
         username, args.host = args.host.split("@")
     if "~" in args.host:
         args.host, ncpus = args.host.split("~")
         ncpus = int(ncpus)
+    if ":" in args.host:
+        args.host, port_str = args.host.rsplit(":", 1)
+        port = int(port_str)
 
     already_there = await db.has_node(args.host)
     if already_there and not args.remove_hard and not args.remove_soft:
@@ -386,11 +390,7 @@ async def manage_node():
         task_ids = await db.get_task_ids_by_ip_and_status(args.host, TaskStatus.RUNNING)
         for task_id in task_ids:
             await db.update_task_status(task_id, TaskStatus.DONE)
-            print(
-                "An associated task {} at {} is now marked done!".format(
-                    task_id, args.host
-                )
-            )
+            print(f"An associated task {task_id} at {args.host} is now marked done!")
 
         await db.remove_node(args.host)
         await db.commit()
@@ -417,17 +417,20 @@ async def manage_node():
         username=username,
         client_keys=config.local.get_private_keys(),
         engines_dir=config.remote.engines_dir,
+        port=port,
     )
 
     if not args.skip_setup:
         print("Setup host...")
         await machine.setup_node(config.engines)
 
-    await db.add_node(ip_addr=args.host, username=username, ncpus=ncpus, enabled=True)
+    await db.add_node(
+        ip_addr=args.host, port=port, username=username, ncpus=ncpus, enabled=True
+    )
     await db.commit()
     await db.close()
 
-    print(f"Added host to yascheduler: {args.host}")
+    print(f"Added host to yascheduler: {args.host}:{port}")
 
 
 def daemonize(log_file: Optional[Union[str, Path]] = None):

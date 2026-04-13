@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import asyncio
+import base64
 import logging
 from asyncio.locks import Event, Semaphore
 from collections import Counter
@@ -9,7 +10,6 @@ from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, Optional, Union
-import base64
 
 import aiohttp
 import asyncssh
@@ -169,11 +169,11 @@ class Scheduler:
     ) -> TaskModel:
         "Create new task in DB"
         if engine_name not in self.config.engines:
-            raise RuntimeError("Engine %s requested, but not supported" % engine_name)
+            raise RuntimeError(f"Engine {engine_name} requested, but not supported")
 
         for input_file in self.config.engines[engine_name].input_files:
             if input_file not in metadata:
-                raise RuntimeError("Input file %s was not provided" % input_file)
+                raise RuntimeError(f"Input file {input_file} was not provided")
 
         meta_add = [("engine", engine_name)]
         new_meta = dict(list(metadata.items()) + meta_add)
@@ -182,15 +182,13 @@ class Scheduler:
             label, ip_addr=None, status=TaskStatus.TO_DO, metadata=new_meta
         )
         dt_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        remote_folder = self.config.remote.tasks_dir / "{}_{}".format(
-            dt_str, task.task_id
-        )
+        remote_folder = self.config.remote.tasks_dir / f"{dt_str}_{task.task_id}"
         new_meta.update({"remote_folder": str(remote_folder)})
         await self.db.update_task_meta(task.task_id, new_meta)
         await self.db.commit()
         if webhook_onsubmit:
             await self.do_task_webhook(task.task_id, new_meta, TaskStatus.TO_DO)
-        self.log.info(":::submitted: %s" % label)
+        self.log.info(f":::submitted: {label}")
         return task
 
     async def upload_task_data(
@@ -201,31 +199,30 @@ class Scheduler:
         input_files: Sequence[str],
     ) -> bool:
         "Upload task data to remote machine"
-        
-        def safe_b64decode(b64_data: str | bytes) -> bytes:
+
+        def safe_b64decode(b64_data: Union[str, bytes]) -> bytes:
             """Decodes base64 data, adding padding if necessary and stripping whitespace"""
             if isinstance(b64_data, bytes):
                 # bytes to str
-                b64_data = b64_data.decode() 
-            b64_data = b64_data.strip().replace('\n', '').replace(' ', '')
+                b64_data = b64_data.decode()
+            b64_data = b64_data.strip().replace("\n", "").replace(" ", "")
             # if len(b64_data) % 4 != 0
             missing_padding = len(b64_data) % 4
             if missing_padding:
-                b64_data += '=' * (4 - missing_padding)
+                b64_data += "=" * (4 - missing_padding)
             return base64.b64decode(b64_data)
-        
+
         try:
             await sftp.makedirs(PurePosixPath(remote_dir), exist_ok=True)
         except asyncssh.misc.Error as err:
             self.log.error(
-                "Create %s - SFTPError: %s (%s) (task_id=%s)"
-                % (str(remote_dir), err.reason, err.code, task.task_id)
+                f"Create {str(remote_dir)} - SFTPError: {err.reason} ({err.code}) (task_id={task.task_id})"
             )
             raise err
 
         for input_file in input_files:
             r_input_file = remote_dir / input_file
-            if input_file == 'fort.9':
+            if input_file == "fort.9":
                 try:
                     b64_data = task.metadata[input_file]
 
@@ -236,28 +233,24 @@ class Scheduler:
 
                 except asyncssh.misc.Error as err:
                     self.log.error(
-                        "Write %s - SFTPError: %s (%s)"
-                        % (str(r_input_file), err.reason, err.code)
+                        f"Write {str(r_input_file)} - SFTPError: {err.reason} ({err.code})"
                     )
                     raise err
                 except Exception as e:
-                    self.log.error(
-                        f"Error processing file {input_file}: {e}"
-                    )
+                    self.log.error(f"Error processing file {input_file}: {e}")
             # if not binary
             else:
                 try:
-                    async with sftp.open(r_input_file.as_posix(), pflags_or_mode="w") as f:
+                    async with sftp.open(
+                        r_input_file.as_posix(), pflags_or_mode="w"
+                    ) as f:
                         await f.write(task.metadata[input_file])
                 except asyncssh.misc.Error as err:
                     self.log.error(
-                        "Write %s - SFTPError: %s (%s)"
-                        % (str(r_input_file), err.reason, err.code)
+                        f"Write {str(r_input_file)} - SFTPError: {err.reason} ({err.code})"
                     )
                 except Exception as e:
-                    self.log.error(
-                        f"Error processing file {input_file}: {e}"
-                    )
+                    self.log.error(f"Error processing file {input_file}: {e}")
         return True
 
     async def start_task_on_machine(
@@ -268,8 +261,7 @@ class Scheduler:
     ) -> bool:
         "Run task on remote machine"
         self.log.info(
-            "Submitting task_id=%s %s with %s to %s"
-            % (task.task_id, task.label, engine.name, machine.hostname)
+            f"Submitting task_id={task.task_id} {task.label} with {engine.name} to {machine.hostname}"
         )
         assert task.metadata.get("remote_folder")
         machine.meta.busy = True
@@ -308,7 +300,7 @@ class Scheduler:
             )
             await machine.run_bg(run_cmd, cwd=str(task_dir))
         except Exception as err:
-            self.log.error("SSH spawn cmd error: %s" % err)
+            self.log.error(f"SSH spawn cmd error: {err}")
             raise err
 
         return True
@@ -322,9 +314,7 @@ class Scheduler:
         )
         if engine is None:
             self.log.warning(
-                "Unsupported engine '{}' for task_id={}".format(
-                    engine_name, task.task_id
-                )
+                f"Unsupported engine '{engine_name}' for task_id={task.task_id}"
             )
             await self.db.set_task_error(
                 task.task_id, metadata=task.metadata, error="unsupported engine"
@@ -344,8 +334,9 @@ class Scheduler:
         }
         if free_machines:
             self.log.debug(
-                "Free machines with platform match: %s"
-                % ", ".join(free_machines.keys())
+                "Free machines with platform match: {}".format(
+                    ", ".join(free_machines.keys())
+                )
             )
         for ip, machine in free_machines.items():
             task_m = evolve(task, ip=ip)
@@ -433,8 +424,7 @@ class Scheduler:
             await self.do_task_webhook(task.task_id, new_meta, TaskStatus.DONE)
         await self.db.commit()
         self.log.info(
-            "task_id=%s %s done and saved in %s"
-            % (task.task_id, task.label, store_folder)
+            f"task_id={task.task_id} {task.label} done and saved in {store_folder}"
         )
         self.clouds.mark_task_done(task.task_id)
 
@@ -471,7 +461,7 @@ class Scheduler:
                 self.consume_q,
             ]
             qmsgs = [f"{q.name}: {q.psize()}/{q.qsize()}" for q in queues]
-            self.log.info("QUEUES: %s" % " ".join(qmsgs))
+            self.log.info("QUEUES: {}".format(" ".join(qmsgs)))
             await asleep_until(end_time)
 
     async def connect_machine_producer(
@@ -511,6 +501,7 @@ class Scheduler:
                 connect_timeout=10,
                 jump_username=jump_username,
                 jump_host=jump_host,
+                port=node.port,
             )
         except asyncssh.misc.Error as err:
             self.log.error(f"Can't connect to machine with error: {err}")
@@ -526,7 +517,7 @@ class Scheduler:
         tasks = await self.db.get_tasks_by_status((TaskStatus.TO_DO,), tlim)
         if tasks:
             ids = [str(t.task_id) for t in tasks]
-            self.log.debug("Want to allocate tasks: %s" % ", ".join(ids))
+            self.log.debug("Want to allocate tasks: {}".format(", ".join(ids)))
         for task in tasks:
             yield UMessage(task.task_id, task)
 
@@ -654,7 +645,9 @@ class Scheduler:
 
     async def start(self):
         self.log.debug(
-            "Available computing engines: %s" % ", ".join(self.config.engines.keys())
+            "Available computing engines: {}".format(
+                ", ".join(self.config.engines.keys())
+            )
         )
 
         self.bg_jobs.add(asyncio.create_task(self.print_stats()))
