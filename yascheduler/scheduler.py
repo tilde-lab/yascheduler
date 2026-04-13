@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import asyncio
+import base64
 import logging
 from asyncio.locks import Event, Semaphore
 from collections import Counter
@@ -9,7 +10,6 @@ from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, Optional, Union
-import base64
 
 import aiohttp
 import asyncssh
@@ -202,7 +202,7 @@ class Scheduler:
     ) -> bool:
         "Upload task data to remote machine"
 
-        def safe_b64decode(b64_data: str | bytes) -> bytes:
+        def safe_b64decode(b64_data: Union[str, bytes]) -> bytes:
             """Decodes base64 data, adding padding if necessary and stripping whitespace"""
             if isinstance(b64_data, bytes):
                 # bytes to str
