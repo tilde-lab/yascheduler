@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures.thread import ThreadPoolExecutor
-from functools import lru_cache
+from functools import cache
 from typing import Optional, cast
 
 from asyncssh.public_key import SSHKey
@@ -17,7 +17,7 @@ from .utils import get_rnd_name
 executor = ThreadPoolExecutor(max_workers=5)
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_client(cfg: ConfigCloudUpcloud) -> CloudManager:
     """Get Upcloud client"""
     client = CloudManager(cfg.login, cfg.password)

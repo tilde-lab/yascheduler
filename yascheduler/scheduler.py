@@ -182,9 +182,7 @@ class Scheduler:
             label, ip_addr=None, status=TaskStatus.TO_DO, metadata=new_meta
         )
         dt_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        remote_folder = self.config.remote.tasks_dir / "{}_{}".format(
-            dt_str, task.task_id
-        )
+        remote_folder = self.config.remote.tasks_dir / f"{dt_str}_{task.task_id}"
         new_meta.update({"remote_folder": str(remote_folder)})
         await self.db.update_task_meta(task.task_id, new_meta)
         await self.db.commit()
@@ -320,9 +318,7 @@ class Scheduler:
         )
         if engine is None:
             self.log.warning(
-                "Unsupported engine '{}' for task_id={}".format(
-                    engine_name, task.task_id
-                )
+                f"Unsupported engine '{engine_name}' for task_id={task.task_id}"
             )
             await self.db.set_task_error(
                 task.task_id, metadata=task.metadata, error="unsupported engine"

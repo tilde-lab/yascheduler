@@ -392,9 +392,7 @@ async def manage_node():
         for task_id in task_ids:
             await db.update_task_status(task_id, TaskStatus.DONE)
             print(
-                "An associated task {} at {} is now marked done!".format(
-                    task_id, args.host
-                )
+                f"An associated task {task_id} at {args.host} is now marked done!"
             )
 
         await db.remove_node(args.host)
