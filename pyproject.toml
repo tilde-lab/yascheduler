@@ -8,49 +8,49 @@ name = "yascheduler"
 version = "1.5.1"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 authors = [
-    { name = "Sergei Korolev", email = "knopki@duck.com" },
-    { name = "Andrey Sobolev", email = "as@tilde.pro" },
-    { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
+  { name = "Sergei Korolev", email = "knopki@duck.com" },
+  { name = "Andrey Sobolev", email = "as@tilde.pro" },
+  { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
 license-files = ["LICENSE"]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: Chemistry",
-    "Topic :: Scientific/Engineering :: Physics",
-    "Topic :: Scientific/Engineering :: Information Analysis",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Framework :: AiiDA",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Framework :: AiiDA",
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "aiohttp~=3.8",
-    "asyncssh~=2.11",
-    "asyncstdlib~=3.10",
-    "attrs>=22.2.0",
-    "backoff~=2.1.2",
-    "pg8000~=1.19",
-    "python-daemon~=2.3",
-    "typing-extensions >= 4.2.0; python_version < '3.11'",
+  "aiohttp~=3.8",
+  "asyncssh~=2.11",
+  "asyncstdlib~=3.10",
+  "attrs>=22.2.0",
+  "backoff~=2.1.2",
+  "pg8000~=1.19",
+  "python-daemon~=2.3",
+  "typing-extensions >= 4.2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 azure = [
-    "azure-identity~=1.10.0",
-    "azure-mgmt-compute~=27.2.0",
-    "azure-mgmt-network~=20.0.0",
+  "azure-identity~=1.10.0",
+  "azure-mgmt-compute~=27.2.0",
+  "azure-mgmt-network~=20.0.0",
 ]
 hetzner = ["hcloud~=2.0"]
 upcloud = ["upcloud_api~=2.0"]
-dev = ["build", "commitizen", "pyright", "pyupgrade", "ruff", "twine"]
+dev = ["build", "commitizen", "pyright", "ruff", "twine"]
 
 [project.urls]
 Home = "https://github.com/tilde-lab/yascheduler"
@@ -80,8 +80,8 @@ changelog_incremental = true
 [tool.pyright]
 pythonVersion = "3.9"
 executionEnvironments = [
-    { root = "yascheduler/aiida_plugin.py", reportMissingImports = "warning" },
-    { root = "yascheduler/clouds", reportMissingImports = "warning" },
+  { root = "yascheduler/aiida_plugin.py", reportMissingImports = "warning" },
+  { root = "yascheduler/clouds", reportMissingImports = "warning" },
 ]
 
 [tool.ruff]
@@ -90,16 +90,16 @@ target-version = "py39"
 
 [tool.ruff.lint]
 # Enable specific rules
-select = ["E", "F"]
+select = ["E", "F", "UP"]
 # Disable specific rules
 ignore = ["E501"]
 
 [tool.setuptools.package-data]
 "yascheduler.data" = [
-    "schema.sql",
-    "yascheduler.conf",
-    "yascheduler.service",
-    "yascheduler.sh",
+  "schema.sql",
+  "yascheduler.conf",
+  "yascheduler.service",
+  "yascheduler.sh",
 ]
 
 [tool.setuptools.packages.find]
