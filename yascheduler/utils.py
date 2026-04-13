@@ -55,7 +55,7 @@ async def submit():
 
     engine = yac.config.engines.get(script_params["ENGINE"])
     if not engine:
-        raise ValueError("Engine %s is not supported" % script_params["ENGINE"])
+        raise ValueError("Engine {} is not supported".format(script_params["ENGINE"]))
 
     for input_file in engine.input_files:
         try:
@@ -135,8 +135,7 @@ async def check_status():  # noqa: C901
             ssh_user = ssh_user or config.remote.username
             print(
                 "." * 50
-                + "ID%s %s at %s@%s:%s:%s"
-                % (
+                + "ID{} {} at {}@{}:{}:{}".format(
                     task.task_id,
                     task.label,
                     ssh_user,
@@ -200,7 +199,7 @@ async def check_status():  # noqa: C901
                             + "E={:12f}".format(calc.info["optgeom"][n][4] or nan)
                             + " eV"
                             + "  "
-                            + "(%s)" % ncycles
+                            + f"({ncycles})"
                             + "\n"
                         )
                 print(output_lines)
@@ -259,7 +258,7 @@ def _init_systemd(install_path: Path):
     unit_file = Path("/lib/systemd/system/yascheduler.service")
     if not unit_file.is_file():
         if not os.access(unit_file, os.W_OK):
-            print("Error: cannot write to %s" % unit_file)
+            print(f"Error: cannot write to {unit_file}")
             return
         daemon_file = install_path / "daemon_systemd.py"
         systemd_script = src_unit_file.read_text("utf-8").replace(
@@ -276,7 +275,7 @@ def _init_sysv(install_path: Path):
     startup_file = Path("/etc/init.d/yascheduler")
     if not startup_file.is_file():
         if not os.access(startup_file, os.W_OK):
-            print("Error: cannot write to %s" % startup_file)
+            print(f"Error: cannot write to {startup_file}")
             return
 
         daemon_file = install_path / "daemon_sysv.py"
@@ -391,9 +390,7 @@ async def manage_node():
         task_ids = await db.get_task_ids_by_ip_and_status(args.host, TaskStatus.RUNNING)
         for task_id in task_ids:
             await db.update_task_status(task_id, TaskStatus.DONE)
-            print(
-                f"An associated task {task_id} at {args.host} is now marked done!"
-            )
+            print(f"An associated task {task_id} at {args.host} is now marked done!")
 
         await db.remove_node(args.host)
         await db.commit()
