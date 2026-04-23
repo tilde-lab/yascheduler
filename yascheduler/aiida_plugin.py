@@ -46,7 +46,9 @@ class YaScheduler(aiida.schedulers.Scheduler):
         Older AiiDA versions provided the same behavior through submit_from_script.
         """
         self.transport.chdir(working_directory)
-        result = self.transport.exec_command_wait(self._get_submit_command(escape_for_bash(filename)))
+        result = self.transport.exec_command_wait(
+            self._get_submit_command(escape_for_bash(filename))
+        )
         return self._parse_submit_output(*result)
 
     def get_jobs(self, jobs=None, user=None, as_dict=False):
@@ -56,7 +58,9 @@ class YaScheduler(aiida.schedulers.Scheduler):
         AiiDA 2.7 makes this public method abstract on the base Scheduler.
         """
         with self.transport:
-            retval, stdout, stderr = self.transport.exec_command_wait(self._get_joblist_command(jobs=jobs, user=user))
+            retval, stdout, stderr = self.transport.exec_command_wait(
+                self._get_joblist_command(jobs=jobs, user=user)
+            )
 
         joblist = self._parse_joblist_output(retval, stdout, stderr)
         if as_dict:
@@ -75,7 +79,9 @@ class YaScheduler(aiida.schedulers.Scheduler):
         cancellation command. Returning False lets AiiDA handle this as an
         unsuccessful kill without pretending the remote task was stopped.
         """
-        self.logger.warning(f"Job cancellation is not supported by yascheduler: {jobid}")
+        self.logger.warning(
+            f"Job cancellation is not supported by yascheduler: {jobid}"
+        )
         return False
 
     def _get_joblist_command(self, jobs=None, user=None):
@@ -93,7 +99,9 @@ class YaScheduler(aiida.schedulers.Scheduler):
                 joblist.append(jobs)
             else:
                 if not isinstance(jobs, (tuple, list)):
-                    raise TypeError("If provided, the 'jobs' variable must be a string or a list of strings")
+                    raise TypeError(
+                        "If provided, the 'jobs' variable must be a string or a list of strings"
+                    )
                 joblist = jobs
             command.append("--jobs {}".format(" ".join(joblist)))
         return " ".join(command)
