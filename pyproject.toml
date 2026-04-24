@@ -11,6 +11,7 @@ authors = [
   { name = "Sergei Korolev", email = "knopki@duck.com" },
   { name = "Andrey Sobolev", email = "as@tilde.pro" },
   { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
+  { name = "Anton Domnin", email = "a.v.daomnin@gmail.com" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"

@@ -4,8 +4,11 @@ with respect to the supported yascheduler engines
 """
 
 import aiida.schedulers
+from aiida.common.escaping import escape_for_bash
+from aiida.common.exceptions import FeatureNotAvailable
 from aiida.orm import load_node
 from aiida.schedulers.datastructures import JobInfo, JobState, NodeNumberJobResource
+from aiida.schedulers.scheduler import SchedulerError
 
 _MAP_STATUS_YASCHEDULER = {
     "TO_DO": JobState.QUEUED,
@@ -35,12 +38,56 @@ class YaScheduler(aiida.schedulers.Scheduler):
     # The class to be used for the job resource.
     _job_resource_class = YaschedJobResource
 
+    def submit_job(self, working_directory, filename):
+        """
+        Submit a job script to yascheduler.
+
+        AiiDA 2.7 makes this public method abstract on the base Scheduler.
+        Older AiiDA versions provided the same behavior through submit_from_script.
+        """
+        self.transport.chdir(working_directory)
+        result = self.transport.exec_command_wait(
+            self._get_submit_command(escape_for_bash(filename))
+        )
+        return self._parse_submit_output(*result)
+
+    def get_jobs(self, jobs=None, user=None, as_dict=False):
+        """
+        Return the list of currently active jobs.
+
+        AiiDA 2.7 makes this public method abstract on the base Scheduler.
+        """
+        with self.transport:
+            retval, stdout, stderr = self.transport.exec_command_wait(
+                self._get_joblist_command(jobs=jobs, user=user)
+            )
+
+        joblist = self._parse_joblist_output(retval, stdout, stderr)
+        if as_dict:
+            jobdict = {job.job_id: job for job in joblist}
+            if None in jobdict:
+                raise SchedulerError("Found at least one job without jobid")
+            return jobdict
+
+        return joblist
+
+    def kill_job(self, jobid):
+        """
+        Report that job cancellation is not supported by yascheduler.
+
+        The CLI currently exposes status and submit commands, but no task
+        cancellation command. Returning False lets AiiDA handle this as an
+        unsuccessful kill without pretending the remote task was stopped.
+        """
+        self.logger.warning(
+            f"Job cancellation is not supported by yascheduler: {jobid}"
+        )
+        return False
+
     def _get_joblist_command(self, jobs=None, user=None):
         """
         The command to report full information on existing jobs.
         """
-
-        from aiida.common.exceptions import FeatureNotAvailable
 
         if user:
             raise FeatureNotAvailable("Cannot query by user in Yascheduler")
@@ -65,6 +112,15 @@ class YaScheduler(aiida.schedulers.Scheduler):
         even after the job has finished.
         """
         return f"{_CMD_PREFIX}yastatus --jobs {jobid}"
+
+    def _get_detailed_job_info_command(self, job_id):
+        """
+        Return the command to run to get detailed information on a job.
+
+        This is the method name expected by AiiDA. Keep the older misspelled
+        variant above as an alias for any external callers.
+        """
+        return self._get_detailed_jobinfo_command(job_id)
 
     def _get_submit_script_header(self, job_tmpl):
         """
@@ -136,8 +192,10 @@ class YaScheduler(aiida.schedulers.Scheduler):
         """
         Return the command to kill the job with specified jobid.
         """
+        raise FeatureNotAvailable("Job cancellation is not supported by Yascheduler")
 
     def _parse_kill_output(self, retval, stdout, stderr):
         """
         Parse the output of the kill command.
         """
+        return False
