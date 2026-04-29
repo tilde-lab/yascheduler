@@ -4,8 +4,7 @@ import asyncio
 import logging
 import socket
 import time
-from concurrent.futures import ThreadPoolExecutor
-from functools import cache
+from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
 
 import requests
@@ -18,20 +17,16 @@ BASE_URL = "https://console.vast.ai/api/v0"
 executor = ThreadPoolExecutor(max_workers=5)
 
 
-@cache
 def get_client(api_key: str) -> str:
-    """Validate API key by making a test request"""
+    """Validate API key"""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     resp = requests.get(f"{BASE_URL}/instances/", headers=headers, timeout=30)
     resp.raise_for_status()
     return api_key
 
 
-def search_offers_sync(
-    api_key: str,
-    min_vram_mb: int = 80 * 1024,
-    num_gpus: int = 1,
-    max_price: float = 1.50,
+def search_offers(
+    api_key: str, min_vram_mb: int, num_gpus: int, max_price: float
 ) -> list:
     """Search for available GPU offers"""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -46,7 +41,7 @@ def search_offers_sync(
         "order": [["dph_total", "asc"]],
         "limit": 20,
     }
-    params = {"q": requests.utils.quote(str(query))}
+    params = {"q": str(query)}
     resp = requests.get(
         f"{BASE_URL}/bundles/", headers=headers, params=params, timeout=30
     )
@@ -54,16 +49,16 @@ def search_offers_sync(
     return resp.json().get("offers", [])
 
 
-def create_instance_sync(
+def create_instance(
     api_key: str,
     offer_id: int,
-    image: str = "pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel",
-    disk_gb: int = 80,
-    onstart_script: str = "",
-    docker_options: str = "",
-    env: Optional[dict] = None,
+    image: str,
+    disk_gb: int,
+    onstart_script: str,
+    docker_options: str,
+    env: dict,
 ) -> dict:
-    """Create VastAI instance from offer"""
+    """Create VastAI instance"""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "client_id": "me",
@@ -72,21 +67,18 @@ def create_instance_sync(
         "onstart": onstart_script,
         "runtype": "ssh_direct",
         "docker_options": docker_options,
-        "env": env or {},
+        "env": env,
         "force": False,
     }
     resp = requests.put(
-        f"{BASE_URL}/asks/{offer_id}/",
-        headers=headers,
-        json=payload,
-        timeout=30,
+        f"{BASE_URL}/asks/{offer_id}/", headers=headers, json=payload, timeout=30
     )
     resp.raise_for_status()
     return resp.json()
 
 
-def get_instance_info_sync(api_key: str, instance_id: int) -> dict:
-    """Get instance information"""
+def get_instance_info(api_key: str, instance_id: int) -> dict:
+    """Get instance info"""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     resp = requests.get(
         f"{BASE_URL}/instances/{instance_id}/", headers=headers, timeout=30
@@ -101,33 +93,28 @@ def get_instance_info_sync(api_key: str, instance_id: int) -> dict:
     return data
 
 
-def find_instance_by_ip(api_key: str, host: str) -> Optional[dict]:
-    """Find instance by IP address"""
+def find_instance_by_ip(api_key: str, host: str):
+    """Find instance by IP"""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     resp = requests.get(f"{BASE_URL}/instances/", headers=headers, timeout=30)
     resp.raise_for_status()
-    data = resp.json()
-    instances = data.get("instances", [])
+    instances = resp.json().get("instances", [])
     if isinstance(instances, dict):
         instances = [instances]
     for inst in instances:
-        inst_host = inst.get("ssh_host") or inst.get("public_ipaddr")
-        if inst_host == host:
+        if inst.get("ssh_host") == host or inst.get("public_ipaddr") == host:
             return inst
     return None
 
 
-def delete_instance_sync(api_key: str, instance_id: int) -> None:
-    """Delete VastAI instance"""
+def delete_instance(api_key: str, instance_id: int):
+    """Delete instance"""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    resp = requests.delete(
-        f"{BASE_URL}/instances/{instance_id}/", headers=headers, timeout=30
-    )
-    resp.raise_for_status()
+    requests.delete(f"{BASE_URL}/instances/{instance_id}/", headers=headers, timeout=30)
 
 
 def wait_for_ssh(host: str, port: int = 22, timeout: int = 120) -> bool:
-    """Wait for SSH port to become available"""
+    """Wait for SSH"""
     start = time.time()
     while time.time() - start < timeout:
         try:
@@ -145,86 +132,43 @@ def vastai_create_node_sync(
     key: SSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
-    """Create node on VastAI - returns IP address when ready"""
-    # Validate API key
+    """Create node - returns IP when ready"""
     get_client(cfg.api_key)
-
-    # Search for offers
-    log.info("Searching for VastAI offers...")
-    offers = search_offers_sync(
-        api_key=cfg.api_key,
-        min_vram_mb=cfg.min_vram_mb,
-        num_gpus=cfg.num_gpus,
-        max_price=cfg.max_price_per_hr,
+    log.info("Searching VastAI offers...")
+    offers = search_offers(
+        cfg.api_key, cfg.min_vram_mb, cfg.num_gpus, cfg.max_price_per_hr
     )
-
     if not offers:
-        raise RuntimeError(
-            "No matching VastAI offers found. "
-            f"Try raising max_price_per_hr (current: ${cfg.max_price_per_hr}/hr) "
-            "or relaxing filters."
-        )
+        raise RuntimeError("No VastAI offers found")
 
-    # Log available offers
-    for i, o in enumerate(offers[:5], 1):
-        vram_gb = o.get("gpu_ram", 0) / 1024
-        gpu_name = o.get("gpu_name", "unknown")
-        price = o.get("dph_total", 0)
-        log.info(f"  Offer {i}: {gpu_name} ({vram_gb:.0f}GB) - ${price:.3f}/hr")
-
-    # Create instance from first (cheapest) offer
     offer = offers[0]
-    offer_id = offer.get("id")
-    log.info(f"Creating instance from offer {offer_id}...")
-
-    result = create_instance_sync(
-        api_key=cfg.api_key,
-        offer_id=offer_id,
-        image=cfg.image,
-        disk_gb=cfg.disk_gb,
-        onstart_script=cfg.onstart_script,
-        docker_options=cfg.docker_options,
-        env=cfg.env,
+    log.info(f"Creating instance from offer {offer.get('id')}")
+    result = create_instance(
+        cfg.api_key,
+        offer["id"],
+        cfg.image,
+        cfg.disk_gb,
+        cfg.onstart_script,
+        cfg.docker_options,
+        cfg.env,
     )
-
     instance_id = result.get("new_contract")
     if not instance_id:
-        raise RuntimeError(f"Failed to create instance: {result}")
+        raise RuntimeError("Failed to create instance")
 
-    log.info(f"Instance created: {instance_id}, waiting for running state...")
-
-    # Wait for instance to be running and get SSH info
-    deadline = time.time() + 600  # 10 minutes timeout
-    last_status = None
+    deadline = time.time() + 600
     while time.time() < deadline:
-        info = get_instance_info_sync(cfg.api_key, instance_id)
-        status = info.get("actual_status") or info.get("status") or "unknown"
-
-        if status != last_status:
-            log.info(f"Instance status: {status}")
-            last_status = status
-
+        info = get_instance_info(cfg.api_key, instance_id)
+        status = info.get("actual_status") or info.get("status")
+        log.info(f"Instance status: {status}")
         if status == "running":
             ssh_host = info.get("ssh_host") or info.get("public_ipaddr")
             ssh_port = info.get("ssh_port", 22)
-
-            if not ssh_host:
-                raise RuntimeError("Instance running but no SSH host found")
-
-            log.info(f"Instance running at {ssh_host}:{ssh_port}")
-
-            # Wait for SSH to be available
-            log.info("Waiting for SSH...")
-            ssh_ready = wait_for_ssh(ssh_host, ssh_port, timeout=120)
-            if not ssh_ready:
-                raise RuntimeError("SSH not available after timeout")
-
-            log.info(f"SSH ready at {ssh_host}:{ssh_port}")
-            return ssh_host
-
+            if ssh_host and wait_for_ssh(ssh_host, ssh_port, 120):
+                log.info(f"SSH ready at {ssh_host}:{ssh_port}")
+                return ssh_host
         time.sleep(8)
-
-    raise TimeoutError(f"Instance {instance_id} did not reach 'running' within timeout")
+    raise TimeoutError("Instance did not start in time")
 
 
 async def vastai_create_node(
@@ -233,26 +177,20 @@ async def vastai_create_node(
     key: SSHKey,
     cloud_config: Optional[PCloudConfig] = None,
 ) -> str:
-    """Create node on VastAI (async wrapper)"""
+    """Create node"""
     return await asyncio.get_running_loop().run_in_executor(
         executor, vastai_create_node_sync, log, cfg, key, cloud_config
     )
 
 
 def vastai_delete_node_sync(
-    log: logging.Logger,
-    cfg: ConfigCloudVastAI,
-    host: str,
+    log: logging.Logger, cfg: ConfigCloudVastAI, host: str
 ) -> None:
-    """Delete node on VastAI by IP address"""
-    log.info(f"Looking for instance with IP {host}...")
-
-    instance = find_instance_by_ip(cfg.api_key, host)
-    if instance:
-        instance_id = instance.get("id")
-        log.info(f"Deleting instance {instance_id}...")
-        delete_instance_sync(cfg.api_key, instance_id)
-        log.info(f"Instance {instance_id} deleted")
+    """Delete node by IP"""
+    inst = find_instance_by_ip(cfg.api_key, host)
+    if inst:
+        delete_instance(cfg.api_key, inst["id"])
+        log.info(f"Deleted instance {inst['id']}")
     else:
         log.warning(f"No instance found with IP {host}")
 
@@ -262,7 +200,7 @@ async def vastai_delete_node(
     cfg: ConfigCloudVastAI,
     host: str,
 ) -> None:
-    """Delete node on VastAI (async wrapper)"""
-    return await asyncio.get_running_loop().run_in_executor(
+    """Delete node"""
+    await asyncio.get_running_loop().run_in_executor(
         executor, vastai_delete_node_sync, log, cfg, host
     )

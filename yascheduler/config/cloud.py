@@ -87,6 +87,7 @@ class ConfigCloudAzure:
                 *cls.get_valid_config_parser_fields(),
                 *ConfigCloudHetzner.get_valid_config_parser_fields(),
                 *ConfigCloudUpcloud.get_valid_config_parser_fields(),
+                *ConfigCloudVastAI.get_valid_config_parser_fields(),
             ],
             sec,
         )
@@ -154,6 +155,7 @@ class ConfigCloudHetzner:
                 *ConfigCloudAzure.get_valid_config_parser_fields(),
                 *cls.get_valid_config_parser_fields(),
                 *ConfigCloudUpcloud.get_valid_config_parser_fields(),
+                *ConfigCloudVastAI.get_valid_config_parser_fields(),
             ],
             sec,
         )
@@ -207,6 +209,7 @@ class ConfigCloudUpcloud:
                 *ConfigCloudAzure.get_valid_config_parser_fields(),
                 *ConfigCloudHetzner.get_valid_config_parser_fields(),
                 *cls.get_valid_config_parser_fields(),
+                *ConfigCloudVastAI.get_valid_config_parser_fields(),
             ],
             sec,
         )

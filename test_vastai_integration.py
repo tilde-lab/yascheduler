@@ -11,11 +11,11 @@ log = logging.getLogger("test_vastai")
 from yascheduler.clouds.vastai import (
     vastai_create_node,
     vastai_delete_node,
-    search_offers_sync,
-    create_instance_sync,
-    get_instance_info_sync,
+    search_offers,
+    create_instance,
+    get_instance_info,
     find_instance_by_ip,
-    delete_instance_sync,
+    delete_instance,
 )
 from yascheduler.config import ConfigCloudVastAI
 
@@ -51,6 +51,12 @@ print("   and run the create/delete functions with proper async handling.")
 print("\n✓ VastAI integration with yascheduler is complete!")
 print("\nNext steps:")
 print("1. Install yascheduler with: pip install -e /path/to/yascheduler")
-print("2. Configure /etc/yascheduler/yascheduler.conf with [vastai] section")
+print("2. Configure /etc/yascheduler/yascheduler.conf - add to [clouds] section:")
+print("""
+[clouds]
+vastai_api_key = YOUR_KEY
+vastai_max_price_per_hr = 1.50
+vastai_max_nodes = 10
+...""")
 print("3. Run yainit to initialize")
 print("4. Start yascheduler service")
