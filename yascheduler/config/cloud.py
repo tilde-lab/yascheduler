@@ -223,4 +223,76 @@ class ConfigCloudUpcloud:
         )
 
 
-ConfigCloud = Union[ConfigCloudAzure, ConfigCloudHetzner, ConfigCloudUpcloud]
+@define(frozen=True)
+class ConfigCloudVastAI:
+    """VastAI cloud configuration"""
+
+    prefix = "vastai"
+    api_key: str = field(validator=validators.instance_of(str))
+    image: str = make_default_field("pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel")
+    disk_gb: int = make_default_field(80, extra_validators=[validators.ge(1)])
+    min_vram_mb: int = make_default_field(
+        80 * 1024, extra_validators=[validators.ge(1024)]
+    )
+    num_gpus: int = make_default_field(1, extra_validators=[validators.ge(1)])
+    max_price_per_hr: float = make_default_field(
+        1.50, extra_validators=[validators.ge(0)]
+    )
+    max_nodes: int = make_default_field(10, extra_validators=[validators.ge(0)])
+    username: str = make_default_field("root")
+    priority: int = make_default_field(0)
+    idle_tolerance: int = make_default_field(300, extra_validators=[validators.ge(1)])
+    onstart_script: str = make_default_field("")
+    docker_options: str = make_default_field("")
+    env: dict = make_default_field({})
+    jump_username: Optional[str] = field(default=None, validator=opt_str_val)
+    jump_host: Optional[str] = field(default=None, validator=opt_str_val)
+
+    @classmethod
+    def get_valid_config_parser_fields(cls) -> Sequence[str]:
+        "Returns a list of valid config keys"
+        exclude_names = ["prefix", "username", "jump_username", "env"]
+        include_names = ["user", "jump_user"]
+        return [
+            f"{cls.prefix}_{x}"
+            for x in [f.name for f in fields(cls) if f.name not in exclude_names]
+            + include_names
+        ]
+
+    @classmethod
+    def from_config_parser_section(cls, sec: SectionProxy) -> "ConfigCloudVastAI":
+        "Create config from config parser's section"
+        fmt = partial(_fmt_key, cls.prefix)
+
+        warn_unknown_fields(
+            [
+                *ConfigCloudAzure.get_valid_config_parser_fields(),
+                *ConfigCloudHetzner.get_valid_config_parser_fields(),
+                *ConfigCloudUpcloud.get_valid_config_parser_fields(),
+                *cls.get_valid_config_parser_fields(),
+            ],
+            sec,
+        )
+
+        return cls(
+            api_key=sec.get(fmt("api_key")),  # type: ignore
+            image=sec.get(fmt("image")),  # type: ignore
+            disk_gb=sec.getint(fmt("disk_gb")),  # type: ignore
+            min_vram_mb=sec.getint(fmt("min_vram_mb")),  # type: ignore
+            num_gpus=sec.getint(fmt("num_gpus")),  # type: ignore
+            max_price_per_hr=sec.getfloat(fmt("max_price_per_hr")),  # type: ignore
+            max_nodes=sec.getint(fmt("max_nodes")),  # type: ignore
+            username=sec.get(fmt("user")),  # type: ignore
+            priority=sec.getint(fmt("priority")),  # type: ignore
+            idle_tolerance=sec.getint(fmt("idle_tolerance")),  # type: ignore
+            onstart_script=sec.get(fmt("onstart_script"), ""),
+            docker_options=sec.get(fmt("docker_options"), ""),
+            env={},  # Parse from config if needed
+            jump_username=sec.get(fmt("jump_user"), None),
+            jump_host=sec.get(fmt("jump_host"), None),
+        )
+
+
+ConfigCloud = Union[
+    ConfigCloudAzure, ConfigCloudHetzner, ConfigCloudUpcloud, ConfigCloudVastAI
+]

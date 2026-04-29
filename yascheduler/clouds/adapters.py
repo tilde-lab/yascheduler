@@ -90,3 +90,15 @@ def get_upcloud_adapter(name: str):
         delete_node=upcload_delete_node,
         op_limit=1,
     )
+
+
+def get_vastai_adapter(name: str):
+    from .vastai import vastai_create_node, vastai_delete_node
+
+    return CloudAdapter(
+        name=name,
+        supported_platform_checks=(can_debian_bullseye,),
+        create_node=vastai_create_node,
+        delete_node=vastai_delete_node,
+        op_limit=5,
+    )
