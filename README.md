@@ -23,6 +23,7 @@ To install the appropriate connector, use one of the commands:
 - for Microsoft Azure: `pip install yascheduler[azure]`
 - for Hetzner Cloud: `pip install yascheduler[hetzner]`
 - for UpCloud: `pip install yascheduler[upcloud]`
+- for VastAI: `pip install yascheduler[vastai]`
 
 The last updates and bugfixes can be obtained cloning the repository:
 
@@ -386,6 +387,67 @@ Settings prefix is `upcloud`.
 - `upcloud_password`
 
   Password.
+
+#### VastAI
+
+VastAI is a GPU marketplace for on-demand GPU instances.
+See [Cloud Providers](CLOUD.md) for setup instructions.
+
+Settings prefix is `vastai`.
+
+- `vastai_api_key`
+
+  VastAI API key. Get it from https://vast.ai/console/cli/
+
+- `vastai_image`
+
+  Docker image to use for instances.
+
+  _Default_: `pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel`
+
+- `vastai_disk_gb`
+
+  Disk space in GB.
+
+  _Default_: `80`
+
+- `vastai_min_vram_mb`
+
+  Minimum VRAM in MB.
+
+  _Default_: `81920` (80 GB)
+
+- `vastai_num_gpus`
+
+  Number of GPUs.
+
+  _Default_: `1`
+
+- `vastai_max_price_per_hr`
+
+  Maximum price per hour in USD.
+
+  _Default_: `1.50`
+
+- `vastai_onstart_script`
+
+  Script to run on instance startup.
+
+  _Default_: empty
+
+- `vastai_docker_options`
+
+  Additional Docker options (e.g., port mappings).
+
+  _Default_: empty
+
+  _Example_: `-p 8384:8384`
+
+- `vastai_env`
+
+  Environment variables for the container.
+
+  _Default_: empty
 
 ### Engines `[engine.*]`
 
