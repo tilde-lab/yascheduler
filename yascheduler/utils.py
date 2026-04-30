@@ -10,6 +10,7 @@ import signal
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional, Union
+import base64
 
 from pg8000 import ProgrammingError
 
@@ -58,14 +59,13 @@ async def submit():
         raise ValueError("Engine {} is not supported".format(script_params["ENGINE"]))
 
     for input_file in engine.input_files:
+        path = Path(metadata["local_folder"], input_file)
+
         try:
-            metadata[input_file] = Path(
-                metadata["local_folder"], input_file
-            ).read_text()
-        except Exception as err:
-            raise ValueError(
-                "Script was not supplied with the required input file"
-            ) from err
+            metadata[input_file] = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            with open(path, "rb") as f:
+                metadata[input_file] = base64.b64encode(f.read()).decode("ascii")
 
     webhook_onsubmit = False
     if "PARENT" in script_params and yac.config.local.webhook_url:
