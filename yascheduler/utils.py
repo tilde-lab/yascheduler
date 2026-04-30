@@ -57,7 +57,7 @@ async def submit():
     engine = yac.config.engines.get(script_params["ENGINE"])
     if not engine:
         raise ValueError("Engine %s is not supported" % script_params["ENGINE"])
-    
+
     for input_file in engine.input_files:
         path = Path(metadata["local_folder"], input_file)
 
