@@ -100,5 +100,5 @@ def get_vastai_adapter(name: str):
         supported_platform_checks=(can_debian_bullseye,),
         create_node=vastai_create_node,
         delete_node=vastai_delete_node,
-        op_limit=5,
+        op_limit=1,
     )

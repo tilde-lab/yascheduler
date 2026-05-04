@@ -1,27 +1,25 @@
 """Test script for VastAI integration with yascheduler"""
 
-import asyncio
 import logging
+from yascheduler.config import ConfigCloudVastAI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("test_vastai")
 
-# Test imports
-from yascheduler.clouds.vastai import (
-    vastai_create_node,
-    vastai_delete_node,
-    search_offers,
-    create_instance,
-    get_instance_info,
-    find_instance_by_ip,
-    delete_instance,
-)
-from yascheduler.config import ConfigCloudVastAI
+try:
+    from yascheduler.clouds.vastai import (  # noqa: F401
+        vastai_create_node,
+        vastai_delete_node,
+    )
 
-# Example configuration (you need to set your actual API key)
+    print("✓ VastAI cloud functions imported successfully")
+except ImportError as e:
+    print(f"✗ Failed to import VastAI functions: {e}")
+    exit(1)
+
 config = ConfigCloudVastAI(
-    api_key="YOUR_VAST_API_KEY_HERE",  # Replace with actual key
+    api_key="YOUR_VAST_API_KEY_HERE",
     image="pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel",
     disk_gb=80,
     min_vram_mb=80 * 1024,  # 80 GB
@@ -44,7 +42,6 @@ print(f"  Image: {config.image}")
 print(f"  Max nodes: {config.max_nodes}")
 print(f"  Max price: ${config.max_price_per_hr}/hr")
 
-# Note: Actual testing requires a valid API key
 print("\n⚠️  To test actual VastAI functionality, set a valid API key in the config")
 print("   and run the create/delete functions with proper async handling.")
 
