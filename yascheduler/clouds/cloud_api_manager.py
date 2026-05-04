@@ -12,7 +12,12 @@ from attrs import define, field
 from ..compat import Self
 from ..config import ConfigCloud, ConfigLocal, ConfigRemote, EngineRepository
 from ..db import DB
-from .adapters import get_azure_adapter, get_hetzner_adapter, get_upcloud_adapter
+from .adapters import (
+    get_azure_adapter,
+    get_hetzner_adapter,
+    get_upcloud_adapter,
+    get_vastai_adapter,
+)
 from .cloud_api import CloudAPI
 from .protocols import CloudCapacity
 
@@ -20,6 +25,7 @@ CLOUD_ADAPTER_GETTERS = {
     "az": get_azure_adapter,
     "hetzner": get_hetzner_adapter,
     "upcloud": get_upcloud_adapter,
+    "vastai": get_vastai_adapter,
 }
 
 

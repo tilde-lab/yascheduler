@@ -51,6 +51,7 @@ azure = [
 ]
 hetzner = ["hcloud~=2.0"]
 upcloud = ["upcloud_api~=2.0"]
+vastai = ["vastai-sdk"]
 dev = ["build", "commitizen", "pyright", "ruff~=0.15.9", "twine"]
 
 [project.urls]
