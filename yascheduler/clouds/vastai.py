@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import aiohttp
 from asyncssh.public_key import SSHKey
@@ -153,12 +153,14 @@ async def vastai_create_node(
 
         offer = offers[0]
         offer_id = offer.get("id")
+        if not isinstance(offer_id, int):
+            raise RuntimeError("Offer missing required 'id' field")
         log.info(f"Creating instance from offer {offer_id}")
 
         result = await _create_instance(
             session,
             cfg.api_key,
-            offer_id,
+            cast(int, offer_id),
             cfg.image,
             cfg.disk_gb,
             cfg.onstart_script,
@@ -166,8 +168,9 @@ async def vastai_create_node(
             cfg.env,
         )
         instance_id = result.get("new_contract")
-        if not instance_id:
+        if not isinstance(instance_id, int):
             raise RuntimeError("Failed to create instance - no contract ID returned")
+        instance_id = cast(int, instance_id)
 
         max_wait = 600  # 10 minutes
         poll_interval = 8
@@ -199,8 +202,10 @@ async def vastai_delete_node(
     async with aiohttp.ClientSession() as session:
         inst = await _find_instance_by_ip(session, cfg.api_key, host)
         if inst:
-            instance_id = inst["id"]
-            await _delete_instance(session, cfg.api_key, instance_id)
+            instance_id = inst.get("id")
+            if not isinstance(instance_id, int):
+                raise RuntimeError(f"Instance for {host} has invalid ID")
+            await _delete_instance(session, cfg.api_key, cast(int, instance_id))
             log.info(f"Deleted VastAI instance {instance_id}")
         else:
             log.warning(f"No VastAI instance found with IP {host}")
