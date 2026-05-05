@@ -149,7 +149,13 @@ async def check_status():  # noqa: C901
                 username=ssh_user,
                 client_keys=config.local.get_private_keys(),
             )
-            r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
+            engine_name = task.metadata.get("engine")
+            engine = config.engines.get(engine_name) if engine_name else None
+            if engine and engine.output_files:
+                output_file = engine.output_files[0]
+            else:
+                output_file = "OUTPUT"
+            r_output = machine.path(task.metadata["remote_folder"]) / output_file
             result = await machine.run(f"tail -n15 {machine.quote(str(r_output))}")
             if result.returncode:
                 print("OUTDATED TASK, SKIPPING")
@@ -161,7 +167,9 @@ async def check_status():  # noqa: C901
                     config.local.data_dir, "local_calc_snippet.tmp"
                 )
                 try:
-                    r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
+                    r_output = (
+                        machine.path(task.metadata["remote_folder"]) / output_file
+                    )
                     async with machine.sftp() as sftp:
                         await sftp.get([str(r_output)], local_calc_snippet)
                 except OSError:
