@@ -149,19 +149,36 @@ async def check_status():  # noqa: C901
                 username=ssh_user,
                 client_keys=config.local.get_private_keys(),
             )
-            r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
-            result = await machine.run(f"tail -n15 {machine.quote(str(r_output))}")
-            if result.returncode:
-                print("OUTDATED TASK, SKIPPING")
-            else:
-                print(result.stdout)
+
+            # Determine output files from engine config, falling back to "OUTPUT"
+            engine_name = task.metadata.get("engine", "")
+            engine = config.engines.get(engine_name) if engine_name else None
+            output_filenames = list(engine.output_files) if engine else ["OUTPUT"]
+
+            for output_filename in output_filenames:
+                r_output = (
+                    machine.path(task.metadata["remote_folder"]) / output_filename
+                )
+                result = await machine.run(
+                    f"tail -n15 {machine.quote(str(r_output))}"
+                )
+                if result.returncode:
+                    print(f"OUTPUT FILE NOT FOUND: {output_filename}")
+                else:
+                    if len(output_filenames) > 1:
+                        print(f"--- {output_filename} ---")
+                    print(result.stdout)
 
             if local_parsing_ready:
                 local_calc_snippet = Path(
                     config.local.data_dir, "local_calc_snippet.tmp"
                 )
+                # Use the first output file for convergence parsing (backward compat)
+                first_output = output_filenames[0]
                 try:
-                    r_output = machine.path(task.metadata["remote_folder"]) / "OUTPUT"
+                    r_output = (
+                        machine.path(task.metadata["remote_folder"]) / first_output
+                    )
                     async with machine.sftp() as sftp:
                         await sftp.get([str(r_output)], local_calc_snippet)
                 except OSError:
