@@ -10,8 +10,10 @@ description = """Yet another computing scheduler and cloud orchestration engine"
 authors = [
   { name = "Sergei Korolev", email = "knopki@duck.com" },
   { name = "Andrey Sobolev", email = "as@tilde.pro" },
-  { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
   { name = "Anton Domnin", email = "a.v.daomnin@gmail.com" },
+  { name = "Aljaz Lee", email = "uyscuti0513@gmail.com" },
+  { name = "Alina Zhidkovskaya", email = "alina@mpds.io" }
+  { name = "Evgeny Blokhin", email = "eb@tilde.pro" },
 ]
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
@@ -29,6 +31,8 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Framework :: AiiDA",
 ]
 requires-python = ">=3.9"
