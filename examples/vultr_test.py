@@ -28,7 +28,7 @@ API_BASE = "https://api.vultr.com/v2"
 
 DEFAULT_LOCATION = "ams"
 DEFAULT_SERVER_TYPE = "vbm-24c-256gb-amd"
-DEFAULT_IMAGE_NAME = 2284
+DEFAULT_IMAGE_NAME = 2136
 DEFAULT_SSH_KEY_PATH = os.path.expanduser("~/.ssh/id_rsa.pub")
 POLL_INTERVAL = 20
 POLL_TIMEOUT = 1200
