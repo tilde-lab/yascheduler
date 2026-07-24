@@ -167,7 +167,9 @@ def build_baremetal_user_data(
         "printf '* soft nofile 65536\\n* hard nofile 65536\\n"
         "root soft nofile 65536\\nroot hard nofile 65536\\n' "
         ">> /etc/security/limits.conf",
-        "ln -sf /usr/lib/x86_64-linux-gnu/libscalapack-openmpi.so.2.1 "
+        "ln -sf /usr/lib/x86_64-linux-gnu/libscalapack-openmpi.so.2.2.1 "
+        "/usr/lib/x86_64-linux-gnu/libscalapack-openmpi.so.2.1",
+        "ln -sf /usr/lib/x86_64-linux-gnu/libscalapack-openmpi.so.2.2.1 "
         "/usr/lib/x86_64-linux-gnu/libscalapack-openmpi.so.2.2",
     ]
 

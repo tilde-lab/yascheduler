@@ -24,6 +24,11 @@ def can_debian_bullseye(platform: str) -> bool:
     return platform in ["debian-11", "debian", "debian-like", "linux"]
 
 
+def can_debian_bookworm(platform: str) -> bool:
+    "Platform is compatible with Debian Bookworm (Debian 12)"
+    return platform in ["debian-12", "debian", "debian-like", "linux"]
+
+
 def can_win10(platform: str) -> bool:
     "Platform is compatible with Windows 10"
     return platform in ["windows-10", "windows"]
@@ -102,7 +107,7 @@ def get_vultr_adapter(name: str):
 
     return CloudAdapter(
         name=name,
-        supported_platform_checks=(can_debian_bullseye,),
+        supported_platform_checks=(can_debian_bookworm,),
         create_node=vultr_create_node,
         delete_node=vultr_delete_node,
         op_limit=2,
