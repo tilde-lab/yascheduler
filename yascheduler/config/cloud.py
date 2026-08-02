@@ -182,7 +182,7 @@ class ConfigCloudVultr:
       api_key       — Vultr API key (required)
       location      — datacenter region, e.g. 'ams'
       server_type   — bare-metal plan id, e.g. 'vbm-24c-256gb-amd'
-      image_name    — Vultr OS id (int, 2284 = Ubuntu 24.04)
+      image_name    — Vultr OS id (int, 2136 = Debian 12 bookworm)
       need_raid     — whether to set up RAID0 NVMe + /dev/shm during
                       cloud-init (True for vbm-24c-256gb-amd, False for
                       plans where NVMe is already the main disk)
@@ -193,7 +193,7 @@ class ConfigCloudVultr:
     api_key: str = field(validator=validators.instance_of(str))
     location: str = make_default_field("ams")
     server_type: str = make_default_field("vbm-24c-256gb-amd")
-    image_name: int = make_default_field(2284, extra_validators=[validators.ge(1)])
+    image_name: int = make_default_field(2136, extra_validators=[validators.ge(1)])
     need_raid: bool = make_default_field(True)
     max_nodes: int = make_default_field(10, extra_validators=[validators.ge(0)])
     username: str = make_default_field("root")

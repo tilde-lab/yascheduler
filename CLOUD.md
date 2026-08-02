@@ -116,14 +116,14 @@ Create an API key in the [Vultr customer portal][vultr_api_key] and set
 `vultr_api_key` in the `[clouds]` section of the config.
 
 The default plan is `vbm-24c-256gb-amd` (AMD EPYC 7443P, 24C/48T, 256 GB RAM,
-2x 480 GB SSD + 2x 1.92 TB NVMe) in the `ams` location on Ubuntu 24.04 LTS
-(`vultr_image_name=2284`, the Vultr OS id). Bare-metal provisioning is slow
+2x 480 GB SSD + 2x 1.92 TB NVMe) in the `ams` location on Debian 12 (bookworm)
+(`vultr_image_name=2136`, the Vultr OS id). Bare-metal provisioning is slow
 (up to ~20 minutes), so `create_node_timeout` is set to 1200 s and `op_limit`
 to 2.
 
-> **Note:** `vultr_image_name=2284` is Ubuntu 24.04 LTS x64, not Debian 12.
-> Debian 12 (bookworm) is `2136`. The cloud-init setup works on both, but
-> Ubuntu 24.04 is recommended (newer packages).
+> **Note:** `vultr_image_name=2136` is Debian 12 (bookworm) x64, better suited
+> for headless bare-metal instances. Ubuntu 24.04 LTS x64 is `2284`. The
+> cloud-init setup works on both, but Debian 12 is recommended for servers.
 
 ### RAID0 and disk setup (`vultr_need_raid`)
 
@@ -181,7 +181,7 @@ workload pattern.
 vultr_api_key = YOUR_VULTR_API_KEY
 vultr_location = ams
 vultr_server_type = vbm-24c-256gb-amd
-vultr_image_name = 2284
+vultr_image_name = 2136
 vultr_need_raid = True
 vultr_max_nodes = 2
 vultr_idle_tolerance = 1800

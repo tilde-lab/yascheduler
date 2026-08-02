@@ -419,10 +419,10 @@ Settings prefix is `vultr`.
 
 - `vultr_image_name`
 
-  Vultr OS id (integer, sent as `os_id` in the API). For example, `2284` =
-  Ubuntu 24.04 LTS x64, `2136` = Debian 12.
+  Vultr OS id (integer, sent as `os_id` in the API). For example, `2136` =
+  Debian 12 (bookworm), `2284` = Ubuntu 24.04 LTS x64.
 
-  _Default_: `2284`
+  _Default_: `2136`
 
 - `vultr_need_raid`
 

@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from functools import cache
-from typing import Generic, Union
+from typing import Generic, Optional, Union
 
 import backoff
 from asyncssh.process import ProcessError
@@ -174,9 +174,30 @@ class CloudAPI(Generic[TConfigCloud_inv]):
                         err.stderr,
                     )
                 self.log.warning("Setup node %s failed - deallocate", ip_addr)
-                await self.delete_node(ip_addr)
+                try:
+                    await self.delete_node(ip_addr)
+                except Exception as del_err:
+                    self.log.error(
+                        "Failed to deallocate broken node %s: %s", ip_addr, del_err
+                    )
                 raise CloudSetupNodeError(f"Setup node error: {err}") from err
             return ip_addr
+
+    async def recover_node(self, log: logging.Logger) -> Optional[str]:
+        """Try to find an orphaned instance on the cloud and return its IP.
+
+        Called when ``create_node`` raises but the instance may already have
+        been provisioned on the cloud side. Returns the IP address of the
+        orphan instance, or ``None`` if no orphan is found.
+        """
+        if not hasattr(self.adapter, "recover_node"):
+            return None
+        async with self.adapter.get_op_semaphore():
+            try:
+                return await self.adapter.recover_node(log=log, cfg=self.config)
+            except Exception as err:
+                log.error(f"recover_node adapter error: {err}")
+                return None
 
     async def delete_node(self, host: str):
         "Delete node"
