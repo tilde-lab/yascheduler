@@ -355,3 +355,27 @@ async def vultr_delete_node(
         log.info("DELETED %s", host)
     else:
         log.info("NODE %s NOT DELETED AS UNKNOWN", host)
+
+
+async def vultr_recover_node(
+    log: logging.Logger,
+    cfg: ConfigCloudVultr,
+) -> Optional[str]:
+    """Find an orphaned bare-metal instance and return its IP address.
+
+    Lists all bare-metal instances on Vultr and returns the IP of the first
+    one that is ``active`` (or ``pending``) with a valid IP. This is used
+    when ``create_node`` raised after the instance was already provisioned
+    on the cloud side, so the node is alive but missing from the scheduler
+    DB. Returns ``None`` when no orphan is found.
+    """
+    client = get_client(cfg)
+    data = await client.request("GET", "/bare-metals?per_page=500")
+    for bm in data.get("bare_metals", []):
+        status = bm.get("status", "")
+        ip = bm.get("main_ip", "")
+        if status in ("active", "pending") and ip and ip != "0.0.0.0":
+            log.info("RECOVERED orphan bare-metal %s (id=%s) ip=%s",
+                     bm.get("label"), bm.get("id"), ip)
+            return cast(str, ip)
+    return None

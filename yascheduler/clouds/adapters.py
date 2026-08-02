@@ -1,8 +1,9 @@
 """Cloud adapters"""
 
 import asyncio
+import logging
 from functools import cache
-from typing import Generic
+from typing import Callable, Generic, Optional
 
 from attrs import define, field
 
@@ -12,6 +13,9 @@ from .protocols import (
     SupportedPlatformChecker,
     TConfigCloud_co,
 )
+
+
+RecoverNodeCallable = Optional[Callable[..., "object"]]
 
 
 def can_debian_buster(platform: str) -> bool:
@@ -50,6 +54,7 @@ class CloudAdapter(Generic[TConfigCloud_co]):
     op_limit: int = field(default=1)
     create_node_conn_timeout: int = field(default=10)
     create_node_timeout: int = field(default=300)
+    recover_node: RecoverNodeCallable = field(default=None)
 
     @cache
     def get_op_semaphore(self):
@@ -101,9 +106,11 @@ def get_vultr_adapter(name: str):
     """Build a CloudAdapter for Vultr bare metal.
 
     op_limit is 2 (bare metal provisions slowly), create_node_timeout is
-    1200 s (~20 min) to accommodate long boot times.
+    1200 s (~20 min) to accommodate long boot times. ``recover_node`` finds
+    orphaned bare-metal instances left behind when ``create_node`` raises
+    after provisioning.
     """
-    from .vultr import vultr_create_node, vultr_delete_node
+    from .vultr import vultr_create_node, vultr_delete_node, vultr_recover_node
 
     return CloudAdapter(
         name=name,
@@ -112,4 +119,5 @@ def get_vultr_adapter(name: str):
         delete_node=vultr_delete_node,
         op_limit=2,
         create_node_timeout=1200,
+        recover_node=vultr_recover_node,
     )

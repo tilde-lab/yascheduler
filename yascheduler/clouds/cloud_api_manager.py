@@ -161,7 +161,16 @@ class CloudAPIManager:
     async def allocate_node(
         self, want_platforms: Optional[Sequence[str]] = None, throttle: bool = False
     ) -> Optional[str]:
-        """Allocate new node"""
+        """Allocate new node.
+
+        The cloud provider ``create_node`` call provisions the instance and
+        waits for SSH. If it raises *after* the instance was created on the
+        cloud side, the node would be orphaned (alive on the cloud, missing
+        from the DB) and subsequent allocation attempts would hit the
+        provider's node limit. To avoid this, we register the node in the DB
+        *inside* the try block so it is persisted even when SSH setup fails —
+        ``connect_machine_consumer`` will retry the connection.
+        """
         async with self.allocation_lock:
             api = await self.select_best_provider(want_platforms)
             if not api:
@@ -173,11 +182,24 @@ class CloudAPIManager:
 
             tmp_ip = await self.db.add_tmp_node(api.name, api.config.username)
             await self.db.commit()
+
+        ip_addr: Optional[str] = None
         try:
             ip_addr = await api.create_node()
+        except Exception as err:
+            self.log.error(f"create_node failed: {err}")
+            # The instance may already exist on the cloud. Try to recover
+            # the IP from the provider so we don't orphan the node.
+            try:
+                ip_addr = await api.recover_node(self.log)
+            except Exception as recover_err:
+                self.log.error(f"recover_node failed: {recover_err}")
         finally:
             await self.db.remove_node(tmp_ip)
             await self.db.commit()
+
+        if not ip_addr:
+            raise RuntimeError("Node allocation failed: no IP address obtained")
 
         _ = await self.db.add_node(
             ip_addr=ip_addr,
