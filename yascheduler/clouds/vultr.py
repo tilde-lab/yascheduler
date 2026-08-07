@@ -94,6 +94,11 @@ async def get_ssh_key_id(client: VultrClient, key: ASSHKey) -> str:
 
     data = await client.request("GET", "/ssh-keys?per_page=500")
     for existing in data.get("ssh_keys", []):
+        # Match by public key — Vultr API always returns this field
+        existing_pub = existing.get("ssh_key", "")
+        if existing_pub and existing_pub.strip() == pub_key.strip():
+            return cast(str, existing["id"])
+        # Fallback by fingerprint (in case Vultr returns it in the future)
         existing_fp = existing.get("fingerprint", "")
         if existing_fp and existing_fp.lower() == fingerprint.lower():
             return cast(str, existing["id"])
