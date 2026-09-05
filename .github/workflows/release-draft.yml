@@ -35,7 +35,7 @@ jobs:
       - name: Create bump and changelog
         id: cz
         if: github.repository == 'tilde-lab/yascheduler'
-        uses: commitizen-tools/commitizen-action@e41bf7f2029bc8175af362badd6fd0860a329b0f
+        uses: commitizen-tools/commitizen-action@338bbd841b75aaee6bf5340e1fa12f6ab58ff9ff
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changelog_increment_filename: .CHANGELOG-CURRENT.md
