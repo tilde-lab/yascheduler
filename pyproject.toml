@@ -96,7 +96,9 @@ build-backend = "setuptools.build_meta"
 name = "cz_conventional_commits"
 tag_format = "v$version"
 version_files = ["pyproject.toml:^version"]
-version_provider = "pep621"
+version_provider = "uv"
+# The provider updates uv.lock; stage it in the same commit before tagging.
+pre_bump_hooks = ["git add uv.lock"]
 update_changelog_on_bump = true
 changelog_incremental = true
 
