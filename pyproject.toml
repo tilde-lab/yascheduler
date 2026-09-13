@@ -1,7 +1,7 @@
 [project]
 name = "yascheduler"
 # version should be changed by automation, not by hand - DON'T TOUCH
-version = "1.8.0"
+version = "2.0.0"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
