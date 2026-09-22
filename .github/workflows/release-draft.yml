@@ -16,15 +16,21 @@ env:
 jobs:
   release:
     name: Bump version and create draft release
+    if: github.repository == 'tilde-lab/yascheduler'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     concurrency:
-      group: release
+      group: release-draft
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          # Resolve the latest master after acquiring the concurrency slot.
+          ref: master
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
@@ -34,30 +40,44 @@ jobs:
 
       - name: Create bump and changelog
         id: cz
-        if: github.repository == 'tilde-lab/yascheduler'
-        uses: commitizen-tools/commitizen-action@e41bf7f2029bc8175af362badd6fd0860a329b0f
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          changelog_increment_filename: .CHANGELOG-CURRENT.md
-          push: true
-          commit: true
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          previous_version=$(uv run --no-sync cz version --project)
+          # 3: no commits; 21: commits exist but none requires a bump.
+          # Render notes separately so pre-bump hook logs stay out of the draft.
+          uv run --no-sync cz --no-raise 3,21 bump --yes --dry-run \
+            --changelog-to-stdout > .CHANGELOG-CURRENT.md
+          uv run --no-sync cz --no-raise 3,21 bump --yes --check-consistency
+          version=$(uv run --no-sync cz version --project)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == "$previous_version" ]]; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Print new version
-        if: github.repository == 'tilde-lab/yascheduler'
-        run: echo "Bumped to version ${{ steps.cz.outputs.version }}"
+      - name: Verify lockfile
+        if: steps.cz.outputs.bumped == 'true'
+        run: uv sync --locked --all-extras --dev
 
       - name: Build
-        run: uv build
+        if: steps.cz.outputs.bumped == 'true'
+        run: |
+          uv build
+          uv run --no-sync twine check dist/*
 
-      - name: Stop if no bump
-        id: no-bump
-        continue-on-error: true
-        # will fail if not on exact tag
-        run: git describe --tags --exact-match
+      - name: Push bump commit and tag
+        if: steps.cz.outputs.bumped == 'true'
+        env:
+          VERSION: ${{ steps.cz.outputs.version }}
+        # Publish both refs together, only after validation and build succeed.
+        run: git push --atomic origin HEAD:master "refs/tags/v$VERSION"
 
       - name: Create Release Draft
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844
-        if: steps.no-bump.outcome == 'success'
+        if: steps.cz.outputs.bumped == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

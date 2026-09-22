@@ -16,14 +16,17 @@ env:
 
 jobs:
   pypi-publish:
+    if: github.repository == 'tilde-lab/yascheduler'
     runs-on: ubuntu-latest
     # Specifying a GitHub environment is optional, but strongly encouraged
     environment: pypi
     permissions:
+      contents: read
       # IMPORTANT: this permission is mandatory for Trusted Publishing
       id-token: write
     concurrency:
-      group: release
+      group: pypi-publish-${{ github.event.release.tag_name || github.ref_name }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
@@ -31,14 +34,40 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo '::error::Select a published release tag, not a branch.'
+            exit 1
+          fi
+          is_draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft')
+          if [[ "$is_draft" != false ]]; then
+            echo '::error::The release must be published before uploading to PyPI.'
+            exit 1
+          fi
+
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
 
       - name: Install the project
         run: uv sync --locked --all-extras --dev
 
+      - name: Verify package version
+        shell: bash
+        run: |
+          version=$(uv run --no-sync cz version --project)
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo '::error::Release tag does not match the package version.'
+            exit 1
+          fi
+
       - name: Build
-        run: uv build
+        run: |
+          uv build
+          uv run --no-sync twine check dist/*
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

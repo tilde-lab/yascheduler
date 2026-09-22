@@ -156,6 +156,30 @@ Bind loggers via `logging.getLogger(__name__)` (yields
 Follow [Conventional Commits](https://www.conventionalcommits.org/). The
 project uses `commitizen` for automated versioning and changelog generation.
 
+### Release automation
+
+A push to `master` in `tilde-lab/yascheduler` runs the draft workflow with full
+Git history and the Commitizen version from `uv.lock`. The `uv` version provider
+updates `pyproject.toml` and the project's entry in `uv.lock`; the pre-bump hook
+stages the lockfile in the same commit as the version and changelog.
+Dependencies are not upgraded by the bump. No new commits or no eligible changes
+means no bump and no draft.
+
+The workflow validates the lockfile and builds/checks distributions before
+atomically pushing the bump commit and tag, then creates a draft release.
+Publishing that draft triggers `.github/workflows/release.yml`. A manual retry
+must select an already-published release tag matching the package version;
+branches and drafts are rejected. PyPI Trusted Publishing must authorize owner
+`tilde-lab`, repository `yascheduler`, workflow `release.yml`, environment
+`pypi`.
+
+Commitizen detects breaking changes from `!` in a Conventional Commit header or
+from a `BREAKING CHANGE:` footer, including in an empty commit. Preserve that
+marker in the final commit message when squash-merging. Preview the next bump
+without changing files using `uv run --locked cz bump --dry-run`. Local
+regression tests run real bumps in temporary repositories without pushing or
+publishing: `uv run pytest -m unit tests/unit/test_release_automation.py`.
+
 ## OpenSpec
 
 Behavior-changing work (code, config, CLI, DB schema, operational behavior)
