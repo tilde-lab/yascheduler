@@ -176,9 +176,7 @@ branches and drafts are rejected. PyPI Trusted Publishing must authorize owner
 Commitizen detects breaking changes from `!` in a Conventional Commit header or
 from a `BREAKING CHANGE:` footer, including in an empty commit. Preserve that
 marker in the final commit message when squash-merging. Preview the next bump
-without changing files using `uv run --locked cz bump --dry-run`. Local
-regression tests run real bumps in temporary repositories without pushing or
-publishing: `uv run pytest -m unit tests/unit/test_release_automation.py`.
+without changing files using `uv run --locked cz bump --dry-run`.
 
 ## OpenSpec
 

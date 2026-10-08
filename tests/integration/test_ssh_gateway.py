@@ -73,11 +73,14 @@ async def ssh_container_2(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Start a second Docker SSH container for multi-machine regression tests.
 
-    Yields the bridge-network IP of the container (reachable from the host on
-    the Docker/Podman bridge) plus the internal SSH port 2222, so the gateway
-    sees a genuinely distinct IP from the first container. ``get_container_host_ip``
-    returns ``localhost`` for both testcontainers, which would collide with
-    ``ssh_container`` because SSHMachineRepository keys machines by IP only.
+    Yields ``127.0.0.2`` plus the container's published SSH port, so the
+    gateway sees a genuinely distinct endpoint from the first container.
+    ``get_container_host_ip`` returns ``localhost`` for both testcontainers,
+    which would collide with ``ssh_container`` because SSHMachineRepository
+    keys machines by IP only. Published ports listen on the whole
+    127.0.0.0/8 range on Docker and rootless podman; container bridge IPs
+    are avoided because on rootless podman the bridge lives in a dedicated
+    network namespace unreachable from the host.
     """
     key_dir = tmp_path_factory.mktemp("ssh_keys_2")
     key_path = key_dir / "id_rsa"
@@ -97,25 +100,9 @@ async def ssh_container_2(
     try:
         await asyncio.sleep(1)
 
-        wrapped = container.get_wrapped_container()
-        wrapped.reload()
-        bridge_ip = wrapped.attrs["NetworkSettings"]["IPAddress"]
-        if not bridge_ip:
-            # Fallback: first network's IPAddress (e.g. podman net)
-            nets = wrapped.attrs["NetworkSettings"].get("Networks", {})
-            bridge_ip = next(
-                (cfg.get("IPAddress") for cfg in nets.values() if cfg.get("IPAddress")),
-                "",
-            )
-        if not bridge_ip:
-            pytest.skip(
-                "Could not resolve container bridge IP for ssh_container_2; "
-                "multi-machine disconnect regression needs a distinct IP from ssh_container.",
-            )
-
         yield {
-            "host": bridge_ip,
-            "port": 2222,
+            "host": "127.0.0.2",
+            "port": int(container.get_exposed_port(2222)),
             "username": "testuser",
             "key_path": PurePosixPath(str(key_path)),
         }
@@ -928,9 +915,9 @@ class TestOccupancySpawnScenario:
 #
 # Real-asyncssh counterpart to the unit test
 # ``test_disconnect_does_not_cancel_other_machines_monitors``. Uses two SSH
-# testcontainers reached via genuinely distinct IPs: machine A via
+# testcontainers reached via genuinely distinct endpoints: machine A via
 # ``ssh_container`` (host IP, mapped port) and machine B via ``ssh_container_2``
-# (container bridge IP, internal port 2222). The bridge IP is required because
+# (127.0.0.2, mapped port). A distinct loopback address is required because
 # ``get_container_host_ip`` returns ``localhost`` for both testcontainers, which
 # would collide since SSHMachineRepository keys ``_sessions`` by IP
 # only — that collision is exactly what made the original YASCHED_MULTI_CONTAINER

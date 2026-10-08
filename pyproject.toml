@@ -1,7 +1,6 @@
 [project]
 name = "yascheduler"
-# version should be changed by automation, not by hand - DON'T TOUCH
-version = "3.0.0"
+version = "2.0.2"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
@@ -70,7 +69,6 @@ upcloud = ["upcloud_api~=2.0"]
 [dependency-groups]
 dev = [
   "build",
-  "commitizen",
   "import-linter>=2.5.2",
   "mdlint>=0.1",
   "prek>=0.4.10",
@@ -91,16 +89,6 @@ dev = [
 [build-system]
 requires = ["cython", "setuptools"]
 build-backend = "setuptools.build_meta"
-
-[tool.commitizen]
-name = "cz_conventional_commits"
-tag_format = "v$version"
-version_files = ["pyproject.toml:^version"]
-version_provider = "uv"
-# The provider updates uv.lock; stage it in the same commit before tagging.
-pre_bump_hooks = ["git add uv.lock"]
-update_changelog_on_bump = true
-changelog_incremental = true
 
 [tool.importlinter]
 root_package = "yascheduler"

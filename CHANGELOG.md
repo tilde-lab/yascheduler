@@ -1,4 +1,16 @@
-## v3.0.0 (2026-10-08)
+## v2.0.2 (2026-10-08)
+
+### Fix
+
+- **vultr**: duplicate ssh keys
+
+## v2.0.1 (2026-10-08)
+
+### Fix
+
+- **tests**: adapt to rootless podman
+
+## v2.0.0 (2026-10-08)
 
 ### BREAKING CHANGE
 
