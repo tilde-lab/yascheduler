@@ -1,6 +1,6 @@
 [project]
 name = "yascheduler"
-version = "2.0.1"
+version = "2.0.2"
 description = """Yet another computing scheduler and cloud orchestration engine"""
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"

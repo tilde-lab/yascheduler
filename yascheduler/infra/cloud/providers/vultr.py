@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import weakref
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, TypedDict
 
@@ -260,6 +261,10 @@ class VultrClient:
             raise APIError(msg)
         return resp["ssh_key"]["id"]
 
+    async def delete_ssh_key(self, key_id: str) -> None:
+        """Delete an account SSH key by id (cleanup/testing path)."""
+        await self._request("DELETE", f"ssh-keys/{key_id}")
+
     async def create_bare_metal(
         self, **params: Unpack[VultrBareMetalsCreate]
     ) -> VultrBareMetal:
@@ -301,17 +306,39 @@ class VultrClient:
 
 # region FUNC_get_ssh_key_id
 # PURPOSE: Upload (or reuse) an SSH key on Vultr and return its id so bare-metal instances can be launched with authorized_keys preinstalled.
-# ENSURES: Returns the Vultr ssh-key id; public-key match against existing keys avoids duplicate uploads.
+# ENSURES: Returns the Vultr ssh-key id; whitespace-normalized public-key match against existing keys avoids duplicate uploads (asyncssh export appends a trailing newline Vultr may strip on storage). The list+create section is serialized per event loop, so concurrent allocations (Vultr adapter op_limit=2) cannot both miss and both upload a duplicate.
+# RATIONALE:
+# - Q: Why a per-loop lock map and not one module-level asyncio.Lock?
+#   A: A Lock binds to the loop that first acquires it; a process that runs
+#      several event loops over its lifetime (daemon restarts in-process,
+#      per-test loops in pytest) would break on the second loop. The map
+#      creates the lock lazily inside the running loop, like the adapter's
+#      @cache'd op semaphore.
+_ssh_key_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _ssh_key_lock() -> asyncio.Lock:
+    """Return this loop's lock, creating it on first use inside the loop."""
+    loop = asyncio.get_running_loop()
+    lock = _ssh_key_locks.get(loop)
+    if lock is None:
+        lock = _ssh_key_locks.setdefault(loop, asyncio.Lock())
+    return lock
+
+
 async def get_ssh_key_id(client: VultrClient, key: ASSHKey) -> str:
     """Upload or reuse SSH key on Vultr, return its id."""
     key_name = get_key_name(key)
-    pub_key = key.export_public_key("openssh").decode("utf-8")
+    pub_key = key.export_public_key("openssh").decode("utf-8").strip()
 
-    async for existing in client.get_ssh_keys():
-        if existing["ssh_key"] == pub_key:
-            return existing["id"]
+    async with _ssh_key_lock():
+        async for existing in client.get_ssh_keys():
+            if existing["ssh_key"].strip() == pub_key:
+                return existing["id"]
 
-    return await client.create_ssh_key(key_name, pub_key)
+        return await client.create_ssh_key(key_name, pub_key)
 
 
 # endregion FUNC_get_ssh_key_id
