@@ -39,28 +39,19 @@ _SSH_USERNAME = "testuser"
 _YASCHEDULER_LOGGER = "yascheduler"
 
 
-def _container_bridge_ip(container: DockerContainer) -> str:
-    """Return the container's bridge-network IP address.
+def _container_loopback_ip(index: int) -> str:
+    """Return a distinct loopback address for pool container ``index``.
 
     `get_container_host_ip()` returns the docker host (e.g. ``localhost``)
     for every container in the default docker_host connection mode, which
     collapses the two-container pool into a single indistinguishable host.
-    The bridge IP is distinct per container and reachable from the host on
-    rootful podman/netavark (verified) and on Docker bridge networks.
+    Published ports listen on the whole 127.0.0.0/8 range on Docker and on
+    rootless podman, so distinct loopback addresses (127.0.0.1, 127.0.0.2, ...)
+    give per-container reachable endpoints. Container bridge IPs are NOT used:
+    on rootless podman the bridge lives in a dedicated network namespace and
+    is unreachable from the host.
     """
-    wrapped = container.get_wrapped_container()
-    wrapped.reload()
-    networks: dict[str, dict[str, Any]] = (
-        wrapped.attrs.get("NetworkSettings", {}).get("Networks", {}) or {}
-    )
-    for net in networks.values():
-        ip = net.get("IPAddress")
-        if ip:
-            return str(ip)
-    top = wrapped.attrs.get("NetworkSettings", {}).get("IPAddress")
-    if top:
-        return str(top)
-    raise RuntimeError("could not determine container bridge IP")
+    return f"127.0.0.{index + 1}"
 
 
 class LogCaptureHandler(logging.Handler):
@@ -125,18 +116,18 @@ async def ssh_pool(
         await asyncio.sleep(1)
 
         entries: list[dict[str, Any]] = []
-        for c in containers:
-            host = _container_bridge_ip(c)
+        for i, c in enumerate(containers):
+            host = _container_loopback_ip(i)
             entries.append(
                 {
                     "host": host,
-                    "port": 2222,
+                    "port": int(c.get_exposed_port(2222)),
                     "username": _SSH_USERNAME,
                     "key_path": PurePosixPath(str(key_path)),
                 },
             )
         assert entries[0]["host"] != entries[1]["host"], (
-            "ssh_pool containers must have distinct bridge IPs; "
+            "ssh_pool containers must have distinct host addresses; "
             f"got {entries[0]['host']} twice"
         )
         yield entries

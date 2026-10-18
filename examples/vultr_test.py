@@ -10,19 +10,22 @@ Usage:
     python examples/vultr_test.py create --server-type vbm-24c-256gb-amd
     python examples/vultr_test.py list
     python examples/vultr_test.py delete --id <instance_id>
+    python examples/vultr_test.py list-ssh-keys
+    python examples/vultr_test.py delete-ssh-key --id <ssh_key_id>
+    python examples/vultr_test.py delete-ssh-key --non-unique [--dry-run]
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 API_BASE = "https://api.vultr.com/v2"
@@ -33,6 +36,7 @@ DEFAULT_IMAGE_NAME = 2136
 DEFAULT_SSH_KEY_PATH = os.path.expanduser("~/.ssh/id_rsa.pub")
 POLL_INTERVAL = 20
 POLL_TIMEOUT = 1200
+LABEL_MAX = 40  # truncation width for ssh-key bodies in listings
 
 
 def get_api_key() -> str:
@@ -92,24 +96,16 @@ def read_ssh_pubkey(path: str) -> str:
         return f.read().strip()
 
 
-def ssh_key_fingerprint_md5(pubkey: str) -> str:
-    # NOTE: MD5 is required here to match the Vultr API fingerprint format,
-    # not for cryptographic security.
-    parts = pubkey.split()
-    if len(parts) <= 1:
-        return ""
-    key_bytes = base64.b64decode(parts[1])
-    md5_hex = hashlib.md5(key_bytes).hexdigest()
-    return ":".join(md5_hex[i : i + 2] for i in range(0, len(md5_hex), 2))
-
-
 def get_or_create_ssh_key(pubkey: str, name: str) -> str:
-    fingerprint = ssh_key_fingerprint_md5(pubkey)
+    """Reuse an existing Vultr SSH key with the same public-key body.
 
+    Match by whitespace-trimmed `ssh_key` body: Vultr's list response has no
+    fingerprint field, and it may strip the trailing newline from the stored
+    body.
+    """
     data = vultr_request("GET", "/ssh-keys?per_page=500")
     for key in data.get("ssh_keys", []):
-        existing_fp = key.get("fingerprint", "")
-        if existing_fp and existing_fp.lower() == fingerprint.lower():
+        if key.get("ssh_key", "").strip() == pubkey.strip():
             print(f"Reusing existing SSH key: id={key['id']}, name={key.get('name')}")
             return key["id"]
 
@@ -210,6 +206,131 @@ def delete_baremetal(instance_id: str) -> None:
     print(f"Deleted bare-metal instance: {instance_id}")
 
 
+def fetch_ssh_keys() -> list[dict]:
+    """Fetch all account SSH keys, following cursor pagination."""
+    keys: list[dict] = []
+    cursor = ""
+    while True:
+        path = "/ssh-keys?per_page=500"
+        if cursor:
+            path += "&cursor=" + urllib.parse.quote(cursor)
+        data = vultr_request("GET", path)
+        keys.extend(data.get("ssh_keys", []))
+        cursor = (data.get("meta") or {}).get("links", {}).get("next", "")
+        if not cursor:
+            return keys
+
+
+def list_ssh_keys() -> None:
+    """List account SSH keys; groups with identical key bodies are flagged.
+
+    The duplicate report is the diagnostic tool for the Vultr duplicate-key
+    bug: keys whose ``ssh_key`` bodies match are printed together so extra
+    copies can be deleted by id.
+    """
+    keys = fetch_ssh_keys()
+    print(f"SSH keys: {len(keys)}")
+    if not keys:
+        return
+
+    rows = [["ID", "NAME", "DATE", "KEY"]]
+    rows.extend(
+        [
+            key.get("id", ""),
+            key.get("name", ""),
+            key.get("date_created", ""),
+            key.get("ssh_key", "")[:LABEL_MAX] + "...",
+        ]
+        for key in keys
+    )
+    print_table(rows)
+
+    by_body: dict[str, list[dict]] = {}
+    for key in keys:
+        by_body.setdefault(key.get("ssh_key", ""), []).append(key)
+    duplicates = {body: ks for body, ks in by_body.items() if len(ks) > 1}
+    if duplicates:
+        print(f"\nDuplicate key bodies: {len(duplicates)}")
+        for body, group in sorted(duplicates.items()):
+            entries = ", ".join(f"{k.get('id')} ({k.get('name')})" for k in group)
+            label = body[:LABEL_MAX] + "..." if len(body) > LABEL_MAX else body
+            print(f"  {label} -> {entries}")
+        print(
+            "Delete extras with: python examples/vultr_test.py delete-ssh-key --id <id>"
+        )
+
+
+def delete_ssh_key(key_id: str) -> None:
+    vultr_request("DELETE", f"/ssh-keys/{key_id}")
+    print(f"Deleted SSH key: {key_id}")
+
+
+def delete_non_unique_ssh_keys(dry_run: bool) -> None:
+    """Delete duplicate SSH keys, keeping the oldest key of each group.
+
+    Groups keys by ``ssh_key`` body; every member beyond the oldest (by
+    ``date_created``) of its group is a duplicate and gets deleted. Safe to
+    re-run: unique keys and the kept oldest ones are never touched.
+    """
+    keys = fetch_ssh_keys()
+    by_body: dict[str, list[dict]] = {}
+    for key in keys:
+        by_body.setdefault(key.get("ssh_key", ""), []).append(key)
+
+    victims: list[dict] = []
+    for group in by_body.values():
+        if len(group) == 1:
+            continue
+        ordered = sorted(group, key=lambda k: k.get("date_created", ""))
+        victims.extend(ordered[1:])
+
+    if not victims:
+        print("No duplicate SSH keys found")
+        return
+
+    action = "Would delete" if dry_run else "Deleting"
+    print(
+        f"{action} {len(victims)} of {len(keys)} keys (keeping oldest of each duplicate group)"
+    )
+    for key in victims:
+        line = f"  {key.get('id')} ({key.get('name')}, {key.get('date_created')})"
+        if dry_run:
+            print(line)
+        else:
+            delete_ssh_key(key["id"])
+    if dry_run:
+        print("DRY RUN: no keys deleted")
+    else:
+        print(f"Deleted {len(victims)} duplicate keys")
+
+
+def describe_body(body: str, head: int = 48, tail: int = 24) -> str:
+    """One-line repr of a key body: head and tail, whitespace made visible."""
+    if len(body) <= head + tail + 3:
+        return repr(body)
+    return repr(body[:head]) + "..." + repr(body[-tail:])
+
+
+def export_scheduler_pubkey(path: str) -> str:
+    """Export the public-key body exactly as the scheduler daemon does.
+
+    The daemon loads the private key (yakey*), sets its comment to the file
+    name, and exports via asyncssh ``export_public_key("openssh")`` — which
+    appends a trailing newline. For a .pub file the raw file body is used.
+    """
+    with open(path, "rb") as f:
+        head = f.read(64)
+    if head.startswith(b"-----"):
+        # lazy: keeps the script stdlib-only for non-diagnose commands
+        import asyncssh  # noqa: PLC0415
+
+        key = asyncssh.read_private_key(path)
+        key.set_comment(os.path.basename(path))
+        return key.export_public_key("openssh").decode("utf-8")
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def poll_baremetal(instance_id: str, timeout: int = POLL_TIMEOUT) -> str | None:
     print(f"Waiting for instance {instance_id} to become active...")
     deadline = time.time() + timeout
@@ -280,6 +401,17 @@ def cmd_delete(args: argparse.Namespace) -> None:
     delete_baremetal(args.id)
 
 
+def cmd_list_ssh_keys(_: object) -> None:
+    list_ssh_keys()
+
+
+def cmd_delete_ssh_key(args: argparse.Namespace) -> None:
+    if args.non_unique:
+        delete_non_unique_ssh_keys(args.dry_run)
+    else:
+        delete_ssh_key(args.id)
+
+
 def cmd_test(args: argparse.Namespace) -> None:
     pubkey_path = args.ssh_key
     if not os.path.exists(pubkey_path):
@@ -342,6 +474,25 @@ def main() -> None:
     p = sub.add_parser("delete", help="Delete a bare-metal instance")
     p.add_argument("--id", required=True)
     p.set_defaults(func=cmd_delete)
+
+    sub.add_parser(
+        "list-ssh-keys", help="List account SSH keys (marks duplicates)"
+    ).set_defaults(func=cmd_list_ssh_keys)
+
+    p = sub.add_parser(
+        "delete-ssh-key", help="Delete an SSH key by id or clean up duplicates"
+    )
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--id", help="Delete the SSH key with this id")
+    g.add_argument(
+        "--non-unique",
+        action="store_true",
+        help="Delete only duplicate keys (keep the oldest of each group)",
+    )
+    p.add_argument(
+        "--dry-run", action="store_true", help="Only print what would be deleted"
+    )
+    p.set_defaults(func=cmd_delete_ssh_key)
 
     p = sub.add_parser("test", help="Create, wait, check SSH, then delete")
     p.add_argument("--location", default=DEFAULT_LOCATION)

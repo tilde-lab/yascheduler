@@ -134,22 +134,34 @@ caller's cancellation/drain semantics are preserved.
 
 Before provisioning a Vultr bare-metal instance, the provider SHALL list the
 account SSH keys and reuse the identifier of an entry whose `ssh_key` public
-key equals the scheduler public key. The provider SHALL create an SSH key only
-when no listed public key matches. A listed SSH-key entry without a string `id`
-or `ssh_key` SHALL be rejected as an invalid API response.
+key equals the scheduler public key under whitespace-trimmed comparison
+(the exported scheduler key carries a trailing newline the provider may strip
+on storage). The provider SHALL create an SSH key only when no listed public
+key matches. Concurrent key lookups within one process SHALL be serialized
+so at most one SSH key is created per unique public key. A listed SSH-key
+entry without a string `id` or `ssh_key` SHALL be rejected as an invalid API
+response.
 
 #### Scenario: listed key has the scheduler public key but no fingerprint
 
 - **WHEN** the Vultr SSH-key list contains an `id` and an `ssh_key` equal to
-the scheduler public key, and does not contain a fingerprint
+the scheduler public key modulo surrounding whitespace, and does not contain
+a fingerprint
 - **THEN** the provider uses that entry's identifier for provisioning
 - **AND** the provider does not create another SSH key
 
 #### Scenario: no listed public key matches
 
 - **WHEN** no Vultr SSH-key list entry has an `ssh_key` equal to the scheduler
-public key
+public key under whitespace-trimmed comparison
 - **THEN** the provider creates one SSH key with the scheduler public key
+
+#### Scenario: two allocations request the key concurrently
+
+- **WHEN** two Vultr node allocations run the key lookup concurrently in one
+process with no matching key on the account
+- **THEN** the provider creates at most one SSH key
+- **AND** both allocations use the same SSH-key identifier
 
 #### Scenario: listed entry omits the public key
 

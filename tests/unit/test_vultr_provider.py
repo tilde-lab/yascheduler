@@ -501,6 +501,29 @@ class TestVultrClientCreateSshKey:
 
 
 # =============================================================================
+# VultrClient.delete_ssh_key
+# =============================================================================
+
+
+class TestVultrClientDeleteSshKey:
+    """VultrClient.delete_ssh_key: DELETE /ssh-keys/{id} passthrough."""
+
+    @pytest.mark.asyncio
+    async def test_deletes_by_id(self) -> None:
+        from yascheduler.infra.cloud.providers.vultr import VultrClient
+
+        client = VultrClient.__new__(VultrClient)
+        with patch.object(
+            client,
+            "_request",
+            AsyncMock(return_value=None),  # DELETE 204 -> empty body
+        ) as mock_request:
+            await client.delete_ssh_key("key-id")
+
+        mock_request.assert_awaited_once_with("DELETE", "ssh-keys/key-id")
+
+
+# =============================================================================
 # VultrClient.create_bare_metal
 # =============================================================================
 
@@ -817,6 +840,131 @@ class TestGetSshKeyId:
         assert result == "existing-id"
         mock_client.get_ssh_keys.assert_called_once()
         mock_client.create_ssh_key.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_public_key_match_ignores_trailing_newline(self) -> None:
+        """Regression: asyncssh export ends with a newline; Vultr may strip it.
+
+        Pre-fix, the exact-equality comparison missed the stored body and
+        uploaded a duplicate key on every allocation.
+        """
+        from yascheduler.infra.cloud.providers.vultr import get_ssh_key_id
+
+        stored = "ssh-rsa AAAAB3NzaC1yc2E= test"  # as Vultr returns it
+        mock_key = MagicMock()
+        # asyncssh export_public_key("openssh") appends a trailing newline.
+        mock_key.export_public_key.return_value = (stored + "\n").encode()
+
+        mock_client = MagicMock()
+        mock_client.get_ssh_keys = MagicMock(
+            return_value=_ssh_key_stream(
+                [{"id": "existing-id", "ssh_key": stored}],
+            ),
+        )
+        mock_client.create_ssh_key = AsyncMock()
+
+        result = await get_ssh_key_id(mock_client, mock_key)
+
+        assert result == "existing-id"
+        mock_client.create_ssh_key.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stored_key_with_trailing_newline_matches(self) -> None:
+        """The match must ignore surrounding whitespace on the stored side too."""
+        from yascheduler.infra.cloud.providers.vultr import get_ssh_key_id
+
+        exported = "ssh-rsa AAAAB3NzaC1yc2E= test"
+        mock_key = MagicMock()
+        mock_key.export_public_key.return_value = exported.encode()
+
+        mock_client = MagicMock()
+        mock_client.get_ssh_keys = MagicMock(
+            return_value=_ssh_key_stream(
+                [{"id": "existing-id", "ssh_key": exported + "\n"}],
+            ),
+        )
+        mock_client.create_ssh_key = AsyncMock()
+
+        result = await get_ssh_key_id(mock_client, mock_key)
+
+        assert result == "existing-id"
+        mock_client.create_ssh_key.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_upload_stores_stripped_body(self) -> None:
+        """Upload must store the same form the match compares.
+
+        The exported key carries a trailing newline; if it were uploaded
+        as-is, the stored form would differ from the compared form forever.
+        """
+        from yascheduler.infra.cloud.providers.vultr import get_ssh_key_id
+
+        mock_key = MagicMock()
+        mock_key.export_public_key.return_value = b"ssh-rsa AAAAB3NzaC1yc2E= test\n"
+
+        mock_client = MagicMock()
+        mock_client.get_ssh_keys = MagicMock(
+            return_value=_ssh_key_stream([]),  # no existing keys
+        )
+        mock_client.create_ssh_key = AsyncMock(return_value="new-id")
+
+        result = await get_ssh_key_id(mock_client, mock_key)
+
+        assert result == "new-id"
+        mock_client.create_ssh_key.assert_awaited_once()
+        call = mock_client.create_ssh_key.await_args
+        assert call is not None
+        name, uploaded = call.args
+        assert name  # any non-empty key name
+        assert uploaded == "ssh-rsa AAAAB3NzaC1yc2E= test"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_allocations_create_one_key(self) -> None:
+        """Two concurrent get_ssh_key_id calls must not race a duplicate.
+
+        The Vultr adapter runs with op_limit=2: two allocations can be in
+        flight at once. Without serialization, both list before either
+        uploads, both miss, and both upload their own copy.
+        """
+        from yascheduler.infra.cloud.providers.vultr import get_ssh_key_id
+
+        exported = "ssh-rsa AAAAB3NzaC1yc2E= test"
+        shared: list = []
+        state = {"creates": 0}
+
+        def make_client() -> MagicMock:
+            client = MagicMock()
+
+            def get_keys():
+                async def gen():
+                    snapshot = list(shared)  # listing result fixed at request time
+                    await asyncio.sleep(0)  # HTTP in flight — both racers get here
+                    for key in snapshot:
+                        yield key
+
+                return gen()
+
+            client.get_ssh_keys = get_keys
+
+            async def create_key(name, pub_key):
+                state["creates"] += 1
+                new_id = f"id-{state['creates']}"
+                shared.append({"id": new_id, "ssh_key": pub_key})
+                return new_id
+
+            client.create_ssh_key = create_key
+            return client
+
+        mock_key = MagicMock()
+        mock_key.export_public_key.return_value = exported.encode()
+
+        results = await asyncio.gather(
+            get_ssh_key_id(make_client(), mock_key),
+            get_ssh_key_id(make_client(), mock_key),
+        )
+
+        assert state["creates"] == 1
+        assert results == ["id-1", "id-1"]
 
     @pytest.mark.asyncio
     async def test_no_match_uploads_and_returns_new_id(self) -> None:
