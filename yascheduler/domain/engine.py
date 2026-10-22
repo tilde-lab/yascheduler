@@ -79,6 +79,10 @@ class Engine:
     platform_packages: tuple[str, ...] = ()
     check_cmd_code: int = 0
     sleep_interval: int = 10
+    # Hostnames never considered for this engine's tasks, even when free and
+    # platform-compatible. Lets heterogeneous fleets keep small-RAM or
+    # special-purpose nodes out of engine classes they cannot serve.
+    exclude_nodes: frozenset[str] = frozenset()
 
     # region METHOD_validate_inputs
     # PURPOSE: Verify every required engine input file is present in the task payload, failing fast before deployment.
