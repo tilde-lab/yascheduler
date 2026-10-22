@@ -204,6 +204,7 @@ def parse_engine_section(sec: SectionProxy, engines_dir: PurePath) -> Engine:
         ),
         platforms=_normalize_platforms(gettuple("platforms"), name),
         platform_packages=gettuple("platform_packages"),
+        exclude_nodes=frozenset(gettuple("exclude_nodes")),
     )
 
     # region BLOCK_validate_engine

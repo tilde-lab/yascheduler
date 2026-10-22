@@ -151,7 +151,9 @@ async def _find_free_machines(
     return [
         (s, nodes_by_id[s.machine.node_id])
         for s in repository.list_free(platforms=list(engine.platforms))
-        if s.machine.node_id in nodes_by_id and s.machine.node_id not in busy_node_ids
+        if s.machine.node_id in nodes_by_id
+        and s.machine.node_id not in busy_node_ids
+        and s.hostname not in engine.exclude_nodes
     ]
     # endregion BLOCK_find_free_machines
 
