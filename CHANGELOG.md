@@ -1,3 +1,9 @@
+## Unreleased
+
+### Feat
+
+- **scheduler**: configurable `allocate_wave_min` in `[local]` (default 10) — lower bound of the allocator task wave (`tlim = max(cloud_capacity, free_machines, allocate_wave_min)`). Operators of heterogeneous fleets can raise the floor past the longest run of unallocatable tasks that can accumulate at the TO_DO head (unsupported engine, engine platform with no matching machine, per-engine `exclude_nodes`); such tasks never leave TO_DO, so an all-unallocatable wave permanently starves every allocatable task behind it while compute idles. Default behavior is unchanged.
+
 ## v2.0.2 (2026-10-08)
 
 ### Fix

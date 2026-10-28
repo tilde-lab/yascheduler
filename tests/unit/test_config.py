@@ -142,9 +142,24 @@ def test_config_local_defaults() -> None:
     assert local.webhook_reqs_limit == 5
     assert local.conn_machine_limit == 10
     assert local.allocate_limit == 20
+    assert local.allocate_wave_min == 10
     assert local.consume_limit == 20
     assert local.deallocate_limit == 5
     assert local.webhook_url is None
+
+
+def test_config_local_allocate_wave_min_override() -> None:
+    """An explicit allocate_wave_min overrides the 10 default.
+
+    Guards the escape hatch for the allocator wave starvation mode: when more
+    tasks than the floor sit unallocatable at the TO_DO head (unsupported
+    engine, platform flip, per-engine exclude_nodes), the id-ordered wave
+    never slides past them and the queue starves while compute idles.
+    """
+    cfg = ConfigParser()
+    cfg.read_string("[local]\nallocate_wave_min=50\n")
+    local = _parse_local_section(cfg["local"])
+    assert local.allocate_wave_min == 50
 
 
 def test_remote_defaults_jump_port_default() -> None:
