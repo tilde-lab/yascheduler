@@ -34,6 +34,7 @@ __all__ = [
     "TaskInputFile",
     "TaskInputKind",
     "TaskInputSnapshot",
+    "is_glob_pattern",
     "normalize_input_snapshot",
     "selection_matches",
     "validate_selection",
@@ -160,6 +161,20 @@ def validate_selection(selection: str) -> str:
 
 
 # endregion FUNC_validate_selection
+
+
+# region FUNC_is_glob_pattern
+# PURPOSE: Distinguish glob selections and engine input declarations (metacharacter present) from explicit paths, so every consumer — capture diagnostics, legacy payload classification, migration — applies one fnmatch metacharacter definition.
+# REQUIRES: selection is any raw component string; validation is not required.
+# ENSURES: True iff any component contains `*`, `?`, or `[` — exactly the characters the component matcher treats as wildcards; character classes expressing literal metacharacters therefore still count as patterns.
+def is_glob_pattern(selection: str) -> bool:
+    """Return True when the selection or declaration contains glob metacharacters."""
+    return any(
+        character in part for part in selection.split("/") for character in "*?["
+    )
+
+
+# endregion FUNC_is_glob_pattern
 
 
 # region FUNC_selection_matches

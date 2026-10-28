@@ -9,6 +9,7 @@
 # endregion MODULE_CONTRACT
 
 __all__ = [
+    "TYPED_METADATA_KEYS",
     "AnyTask",
     "CloudAllocateError",
     "CloudCapacityExhaustedError",
@@ -81,6 +82,7 @@ __all__ = [
     "allocated_node_id_of",
     "error_of",
     "is_done",
+    "is_glob_pattern",
     "is_running",
     "is_todo",
     "materialize_task",
@@ -130,6 +132,7 @@ from .exceptions import (
     ValidationError,
 )
 from .model import (
+    TYPED_METADATA_KEYS,
     AnyTask,
     ConnectedMachine,
     Done,
@@ -172,6 +175,7 @@ from .task_inputs import (
     TaskInputFile,
     TaskInputKind,
     TaskInputSnapshot,
+    is_glob_pattern,
     normalize_input_snapshot,
     selection_matches,
     validate_selection,

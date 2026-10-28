@@ -18,6 +18,7 @@ from yascheduler.domain import (
     Node,
     NodeId,
     TaskId,
+    TaskInputEntry,
     TaskStatus,
     allocated_node_id_of,
     error_of,
@@ -34,7 +35,6 @@ if TYPE_CHECKING:
     from pathlib import PurePath
 
     from yascheduler.entrypoints.config import Config
-
 __all__ = ["Yascheduler"]
 
 ReturnT_co = TypeVar("ReturnT_co", covariant=True)
@@ -155,11 +155,16 @@ class Yascheduler:
         engine_name: str,
         *,
         _webhook_onsubmit: bool = False,
+        input_entries: Sequence[TaskInputEntry] | None = None,
     ) -> int:
-        """Submit new task."""
+        """Submit new task, optionally with explicit typed input entries."""
         deps = self._deps_factory(self.config)
         # deps.submit (-> TaskId) → extract .value so the public contract stays int.
-        return (await deps.submit(label, dict(metadata), engine_name)).value
+        return (
+            await deps.submit(
+                label, dict(metadata), engine_name, input_entries=input_entries
+            )
+        ).value
 
     # endregion METHOD_queue_submit_task_async
 
@@ -172,10 +177,17 @@ class Yascheduler:
         engine_name: str,
         *,
         webhook_onsubmit: bool = False,
+        input_entries: Sequence[TaskInputEntry] | None = None,
     ) -> int:
-        """Submit new task."""
+        """Submit new task, optionally with explicit typed input entries."""
         fn = to_sync(self.queue_submit_task_async)
-        return fn(label, metadata, engine_name, _webhook_onsubmit=webhook_onsubmit)
+        return fn(
+            label,
+            metadata,
+            engine_name,
+            _webhook_onsubmit=webhook_onsubmit,
+            input_entries=input_entries,
+        )
 
     # endregion METHOD_queue_submit_task
 

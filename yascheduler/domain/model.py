@@ -151,6 +151,23 @@ class TaskId:
 # endregion CLASS_TaskId
 
 
+# region CONST_TYPED_METADATA_KEYS
+# PURPOSE: Name the metadata keys that map onto typed task fields rather than arbitrary user payload, so every layer separating "unrelated extra" from task fields applies one classification (ADR-0019 keeps input files out of extra entirely).
+# INVARIANTS: Exact key strings shared by the submission boundary normalization and the submit use case; engine input declarations never consume these keys as legacy input values.
+TYPED_METADATA_KEYS: frozenset[str] = frozenset(
+    {
+        "engine",
+        "remote_folder",
+        "local_folder",
+        "webhook_url",
+        "webhook_custom_params",
+        "error",
+    }
+)
+
+# endregion CONST_TYPED_METADATA_KEYS
+
+
 # region CLASS_NewTask
 # PURPOSE: Carry the fields needed to insert a task before it has a database id, with no lifecycle methods — a pure data carrier.
 # INVARIANTS: No identity (task_id absent); no events, status, allocated_node_id, remote_folder, error, created_at/updated_at — these are all supplied post-insert by the DB or by Task transition methods; input_entries is the task's immutable input snapshot (ADR-0019), empty until the task-input-snapshots change wires capture through submission.

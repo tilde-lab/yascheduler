@@ -36,6 +36,7 @@ from yascheduler.domain import (
     TaskInputFile,
     TaskInputKind,
     TaskInputSnapshot,
+    is_glob_pattern,
     normalize_input_snapshot,
     validate_selection,
 )
@@ -53,7 +54,6 @@ _OPEN_FLAGS: int = (
     os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
 )
 _READ_CHUNK_BYTES: int = 1 << 20
-_GLOB_METACHARACTERS: str = "*?["
 # Diagnostic path for the implicit task root itself (it has no stored entry).
 _IMPLICIT_ROOT_PATH: str = "."
 # File identity: (st_dev, st_ino) captured at scan time and rechecked at read time.
@@ -99,7 +99,7 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
         ):
             reason = (
                 "glob selection matched no entries"
-                if _is_glob_pattern(selection)
+                if is_glob_pattern(selection)
                 else "required selection not found"
             )
             raise TaskInputCaptureError(raw, reason)
@@ -400,18 +400,3 @@ def _record_match(
 
 
 # endregion FUNC__record_match
-
-
-# region FUNC__is_glob_pattern
-# PURPOSE: Distinguish glob selections (metacharacter present) from explicit paths so a no-match failure names its cause.
-# INVARIANTS: Mirrors fnmatch's metacharacter set (`*`, `?`, `[`); an explicit-looking selection therefore reports "not found", a pattern reports "matched nothing".
-def _is_glob_pattern(selection: str) -> bool:
-    """Return True when the selection contains glob metacharacters."""
-    return any(
-        character in part
-        for part in selection.split("/")
-        for character in _GLOB_METACHARACTERS
-    )
-
-
-# endregion FUNC__is_glob_pattern

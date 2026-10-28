@@ -13,7 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from yascheduler.application.allocation_tracker import AllocationTracker
-from yascheduler.domain import EngineRepository, LocalSettings, RemoteDefaults
+from yascheduler.domain import (
+    Engine,
+    EngineRepository,
+    InvalidTaskSnapshotError,
+    LocalSettings,
+    RemoteDefaults,
+    TaskInputDirectory,
+    TaskInputFile,
+    UnsupportedEngineError,
+)
 from yascheduler.domain.events import (
     TaskAbandoned,
     TaskAllocated,
@@ -95,6 +104,120 @@ class TestCLIDeps:
             engines,
             uow_factory,
         )
+
+    @pytest.mark.asyncio
+    async def test_submit_legacy_path_forwards_snapshot_and_cleaned_metadata(
+        self,
+    ) -> None:
+        """Known-engine legacy payload is normalized once before submit_task."""
+        engine = Engine(name="g09", spawn="run", input_files=("INPUT",))
+        engines = EngineRepository(data={"g09": engine})
+        uow_factory = MagicMock()
+        deps = CLIDeps(engines=engines, uow_factory=uow_factory)
+        metadata: dict[str, object] = {
+            "INPUT": "legacy-body",
+            "unrelated": 42,
+            "local_folder": "local",
+        }
+
+        with patch(
+            "yascheduler.entrypoints.di.submit_task",
+            new=AsyncMock(return_value=TaskId(42)),
+        ) as mock_submit:
+            result = await deps.submit("my-label", metadata, "g09")
+
+        assert result == TaskId(42)
+        mock_submit.assert_awaited_once_with(
+            "my-label",
+            {"unrelated": 42, "local_folder": "local"},
+            "g09",
+            engines,
+            uow_factory,
+            input_snapshot=(TaskInputFile(path="INPUT", content=b"legacy-body"),),
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_explicit_path_forwards_normalized_entries(self) -> None:
+        """Explicit entries are forwarded as a normalized snapshot."""
+        engine = Engine(name="g09", spawn="run", input_files=("INPUT",))
+        engines = EngineRepository(data={"g09": engine})
+        uow_factory = MagicMock()
+        deps = CLIDeps(engines=engines, uow_factory=uow_factory)
+        entries = (TaskInputFile(path="basis/x", content=b"x"),)
+
+        with patch(
+            "yascheduler.entrypoints.di.submit_task",
+            new=AsyncMock(return_value=TaskId(42)),
+        ) as mock_submit:
+            result = await deps.submit(
+                "my-label", {"unrelated": 42}, "g09", input_entries=entries
+            )
+
+        assert result == TaskId(42)
+        mock_submit.assert_awaited_once_with(
+            "my-label",
+            {"unrelated": 42},
+            "g09",
+            engines,
+            uow_factory,
+            input_snapshot=(
+                TaskInputDirectory(path="basis"),
+                TaskInputFile(path="basis/x", content=b"x"),
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_unknown_engine_forwards_without_snapshot_kwarg(
+        self,
+    ) -> None:
+        """Unknown engines pass through unchanged so the use case can reject them."""
+        engines = EngineRepository(data={})
+        uow_factory = MagicMock()
+        deps = CLIDeps(engines=engines, uow_factory=uow_factory)
+        metadata: dict[str, object] = {"INPUT": "legacy-body"}
+
+        with (
+            patch(
+                "yascheduler.entrypoints.di.submit_task",
+                new=AsyncMock(side_effect=UnsupportedEngineError("missing-engine")),
+            ) as mock_submit,
+            pytest.raises(UnsupportedEngineError),
+        ):
+            await deps.submit("my-label", metadata, "missing-engine")
+
+        mock_submit.assert_awaited_once_with(
+            "my-label", metadata, "missing-engine", engines, uow_factory
+        )
+        await_args = mock_submit.await_args
+        assert await_args is not None
+        assert "input_snapshot" not in await_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_submit_ambiguous_explicit_payload_fails_before_use_case(
+        self,
+    ) -> None:
+        """Explicit entries plus a declared metadata key are rejected before submit_task."""
+        engine = Engine(name="g09", spawn="run", input_files=("INPUT",))
+        engines = EngineRepository(data={"g09": engine})
+        uow_factory = MagicMock()
+        deps = CLIDeps(engines=engines, uow_factory=uow_factory)
+
+        with (
+            patch(
+                "yascheduler.entrypoints.di.submit_task",
+                new=AsyncMock(return_value=TaskId(42)),
+            ) as mock_submit,
+            pytest.raises(InvalidTaskSnapshotError) as info,
+        ):
+            await deps.submit(
+                "my-label",
+                {"INPUT": "legacy-body"},
+                "g09",
+                input_entries=(TaskInputFile(path="explicit", content=b"x"),),
+            )
+
+        assert info.value.path == "INPUT"
+        mock_submit.assert_not_awaited()
 
 
 class TestMakeCliDeps:

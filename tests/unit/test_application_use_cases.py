@@ -32,7 +32,12 @@ from yascheduler.application.allocation_tracker import AllocationTracker
 from yascheduler.application.deallocate_nodes import deallocate_node, deallocate_nodes
 from yascheduler.application.submit_task import submit_task
 from yascheduler.application.uow import AbstractUnitOfWork
-from yascheduler.domain import Engine, EngineRepository
+from yascheduler.domain import (
+    Engine,
+    EngineRepository,
+    TaskInputDirectory,
+    TaskInputFile,
+)
 from yascheduler.domain.events import TaskCreated
 from yascheduler.domain.exceptions import (
     CloudAllocateError,
@@ -156,6 +161,142 @@ class TestSubmitTask:
         assert isinstance(saved_arg.events[0], TaskCreated)
 
         uow.commit.assert_called_once()
+
+    async def test_submit_task_explicit_empty_snapshot_skips_input_key_check(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """An explicit empty snapshot is accepted without legacy metadata input keys."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        task_id = await submit_task(
+            label="explicit-empty",
+            metadata={"unrelated": "kept"},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(),
+        )
+
+        assert task_id == TaskId(42)
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.input_entries == ()
+        assert inserted_arg.extra == {"unrelated": "kept"}
+
+    async def test_submit_task_non_empty_snapshot_carries_into_new_task(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """A caller-supplied snapshot is carried through to NewTask unchanged."""
+        snapshot = (
+            TaskInputDirectory(path="basis"),
+            TaskInputFile(path="basis/Si.orb", content=b"orb"),
+        )
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="explicit-snapshot",
+            metadata={"unrelated": "kept"},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=snapshot,
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.input_entries is snapshot
+
+    async def test_submit_task_explicit_snapshot_strips_typed_metadata_from_extra(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Typed metadata fields never leak into extra in explicit-snapshot mode."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+        metadata = {
+            "engine": "wrong-engine",
+            "remote_folder": "remote",
+            "local_folder": "local",
+            "webhook_url": "https://example.invalid/hook",
+            "webhook_custom_params": {"token": "redacted"},
+            "error": "previous-error",
+            "unrelated": 42,
+        }
+
+        await submit_task(
+            label="typed-explicit",
+            metadata=metadata,
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.extra == {"unrelated": 42}
+        assert inserted_arg.local_folder == "local"
+        assert inserted_arg.webhook_url == "https://example.invalid/hook"
+        assert inserted_arg.webhook_custom_params == {"token": "redacted"}
+
+    async def test_submit_task_legacy_mode_strips_typed_metadata_from_extra(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Typed metadata fields are stripped from extra in legacy mode too."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+        metadata = {
+            "inp": "legacy-body",
+            "engine": "wrong-engine",
+            "remote_folder": "remote",
+            "local_folder": "local",
+            "webhook_url": "https://example.invalid/hook",
+            "webhook_custom_params": {"token": "redacted"},
+            "error": "previous-error",
+            "unrelated": 42,
+        }
+
+        await submit_task(
+            label="typed-legacy",
+            metadata=metadata,
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=None,
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.extra == {"inp": "legacy-body", "unrelated": 42}
 
 
 # =============================================================================
