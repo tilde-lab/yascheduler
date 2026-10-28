@@ -35,6 +35,7 @@ class LocalSettings:
     conn_machine_pending: int = 10
     allocate_limit: int = 20
     allocate_pending: int = 1
+    allocate_wave_min: int = 10
     consume_limit: int = 20
     consume_pending: int = 1
     deallocate_limit: int = 5
@@ -45,6 +46,7 @@ class LocalSettings:
         validate_interval("conn_machine_pending", self.conn_machine_pending, 1)
         validate_interval("allocate_limit", self.allocate_limit, 1)
         validate_interval("allocate_pending", self.allocate_pending, 1)
+        validate_interval("allocate_wave_min", self.allocate_wave_min, 1)
         validate_interval("consume_limit", self.consume_limit, 1)
         validate_interval("consume_pending", self.consume_pending, 1)
         validate_interval("deallocate_limit", self.deallocate_limit, 1)
