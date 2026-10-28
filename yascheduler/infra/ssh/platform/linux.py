@@ -87,7 +87,15 @@ async def linux_list_processes(
     # ~15 s). Plain keywords plus -ww are portable across procps and BSD
     # ps, and the parser no longer relies on padded column gaps.
     if query:
-        ps_cmd = " ".join([query, "| xargs --no-run-if-empty ps -o", ",".join(columns), "-ww"])
+        # POSIX guard instead of GNU-only `xargs --no-run-if-empty`: stock
+        # BSD/macOS xargs rejects that flag BEFORE ps runs -> empty stdout ->
+        # node reported idle -> premature consume (the same failure mode the
+        # NOTE above fixed for the :255 suffix). Even with Homebrew findutils
+        # installed, a non-interactive SSH exec resolves /usr/bin/xargs (BSD),
+        # not Homebrew's gxargs. The `[ -n "$pids" ]` test skips ps when pgrep
+        # matched nothing; the command exits 1 then, which is harmless — the
+        # consumer reads stdout only, never the exit status.
+        ps_cmd = f'pids=$({query}); [ -n "$pids" ] && ps -o {",".join(columns)} -ww $pids'
     else:
         ps_cmd = " ".join(["ps -axo", ",".join(columns), "-ww"])
     logger.debug("LIST_PROCESSES", extra={"cmd": ps_cmd})
