@@ -90,7 +90,7 @@ def _input_entry_to_public(entry: TaskInputEntry) -> dict[str, Any]:
 
 
 # region FUNC__legacy_input_metadata_value
-# PURPOSE: Reproduce the legacy CLI metadata encoding of one snapshot file — UTF-8 text as a plain string, anything else as canonical padded base64 — so existing metadata consumers keep reading files from queries unchanged after the ADR-0019 storage move (input_entries stays the canonical projection).
+# PURPOSE: Reproduce the legacy CLI metadata encoding of one snapshot file — UTF-8 text as a plain string, anything else as canonical padded base64 — so existing metadata consumers keep reading files from queries unchanged after the storage move (input_entries stays the canonical projection).
 # INVARIANTS: Pure function of the entry's bytes; no newline insertion (single-line base64); directories have no legacy representation and are skipped by the caller.
 def _legacy_input_metadata_value(content: bytes) -> str:
     """Return the legacy metadata representation of one file's bytes."""
@@ -129,7 +129,7 @@ def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, A
     # region BLOCK_derive_legacy_input_metadata
     # The snapshot's files are the task's inputs by contract; their legacy
     # metadata view is derived from the immutable entries, so queries keep the
-    # pre-ADR-0019 shape without a second stored copy. Keys already present
+    # legacy shape without a second stored copy. Keys already present
     # (typed fields or a transitional extra copy) keep their value.
     for entry in t.input_entries:
         if not isinstance(entry, TaskInputFile):

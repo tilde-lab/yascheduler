@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS yascheduler_tasks (
     )
 );
 
--- Task-owned input snapshot entries (ADR-0019): one row per captured file or
+-- Task-owned input snapshot entries: one row per captured file or
 -- directory of a task's input snapshot. `path` is the canonical task-relative
 -- path; `content` holds exact file bytes (an empty byte string is an empty
 -- file, never a directory) and is NULL for directories. Rows are immutable

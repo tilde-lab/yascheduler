@@ -73,7 +73,7 @@ def _init_sysv(
 
 # region FUNC__init_schema
 # PURPOSE: Ensure the database has the required schema and up-to-date migrations so the daemon and CLI can operate against a valid database.
-# INVARIANTS: Engine input declarations are derived from the parsed engines config as plain values and passed to migrations — infra never imports the entrypoints config parser (ADR-0019 input conversion context).
+# INVARIANTS: Engine input declarations are derived from the parsed engines config as plain values and passed to migrations — infra never imports the entrypoints config parser.
 def _init_schema(config_path: str | Path = CONFIG_FILE) -> None:
     config = parse_config(config_path)
     try:

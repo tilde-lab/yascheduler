@@ -1,7 +1,7 @@
 # region MODULE_CONTRACT
 # PURPOSE: Pin submission-boundary input normalization — legacy literal/glob claims and encodings, exact fort.9 base64 compatibility, required declarations, claimed-key stripping with typed/unrelated metadata preservation, explicit-entry ambiguity, purity, immutable snapshot shape, and content-free trace logs — so public submit payloads become one typed domain snapshot exactly once.
 # SCOPE: normalize_task_inputs legacy and explicit modes, UTF-8 and lenient base64 conversion, glob parent materialization, missing/ambiguous declaration errors, claimed-key stripping, unrelated/typed metadata preservation, no filesystem access, and content-free NORMALIZE_INPUTS_START/success/FAILED trajectory logs.
-# KEYWORDS: task inputs, submission boundary, normalization, legacy metadata, base64, fort.9, snapshot, ADR-0019
+# KEYWORDS: task inputs, submission boundary, normalization, legacy metadata, base64, fort.9, snapshot
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations

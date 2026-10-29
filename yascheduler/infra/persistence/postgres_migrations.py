@@ -341,7 +341,7 @@ def _apply_py_migration(
 # REQUIRES: config is a validated PostgresDbConfig with a reachable database; the database already has the yascheduler_migrations tracker table — apply_schema runs first in yainit and in test fixtures.
 # INVARIANTS: Synchronous — opens ONE pg8000 Connection for the whole run and closes it in finally; pending list is computed once from _last_applied + _scan_migrations + _pending — the directory is NOT re-scanned per migration; dispatches on path.suffix — .sql files route to _apply_sql_migration, everything else routes to _apply_py_migration; the runner does NOT validate prefix_id uniqueness at runtime — that is a unit-test responsibility; the runner does NOT delete tracker rows nor reverse applied migrations — the system is forward-only.
 # ENSURES: On success, every file in the pending list has a tracker row; on failure, the failing migration's tracker row is NOT inserted and the error propagates out of apply_migrations — the connection is closed in finally regardless.
-# INVARIANTS: engine_inputs is an optional engine-name-to-input-declarations mapping (ADR-0019); None (default) preserves the pre-context behavior for callers without engine configuration; only .py migrations receive it — SQL migrations never depend on engine context; upto optionally caps the pending set inclusively at its prefix_id (``upto="012"`` with a tracker at '011' applies exactly migration 012) — None (default) applies through the head of the chain; upto does not override the tracker — steps at or below the last applied migration are never re-applied.
+# INVARIANTS: engine_inputs is an optional engine-name-to-input-declarations mapping; None (default) preserves the pre-context behavior for callers without engine configuration; only .py migrations receive it — SQL migrations never depend on engine context; upto optionally caps the pending set inclusively at its prefix_id (``upto="012"`` with a tracker at '011' applies exactly migration 012) — None (default) applies through the head of the chain; upto does not override the tracker — steps at or below the last applied migration are never re-applied.
 def apply_migrations(
     config: PostgresDbConfig,
     engine_inputs: EngineInputsContext | None = None,
@@ -350,7 +350,7 @@ def apply_migrations(
     """Apply pending migrations from sql/migrations/ to the DB described by config, each in its own transaction.
 
     ``engine_inputs`` optionally supplies each engine's declared input file
-    selections to Python migrations (the ADR-0019 input conversion needs them);
+    selections to Python migrations (the input conversion needs them);
     ``None`` keeps the historical behavior. ``upto`` optionally caps the run
     inclusively at that migration prefix so callers (tests) can apply exactly
     one step of the chain; ``None`` applies everything pending.

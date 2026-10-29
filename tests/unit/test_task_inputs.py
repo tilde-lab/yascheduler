@@ -1,7 +1,7 @@
 # region MODULE_CONTRACT
-# PURPOSE: Verify the task-input contracts of task-input-snapshots tasks 1.1–1.2 — entry value objects, kind discrimination, record-field defaults and transition preservation, facade exports, path/selection validation, component-aware glob matching, and snapshot normalization — so the shared ADR-0019 selection language stays pinned while later tasks build capture on top.
+# PURPOSE: Verify the task-input contracts of task-input-snapshots tasks 1.1–1.2 — entry value objects, kind discrimination, record-field defaults and transition preservation, facade exports, path/selection validation, component-aware glob matching, and snapshot normalization — so the shared selection language stays pinned while later tasks build capture on top.
 # SCOPE: TaskInputFile/TaskInputDirectory value semantics; NewTask/Task input_entries defaults and survival through transitions; canonical path validation rejections; selection matching for literal/`*`/`?`/class/`**` patterns, hidden names, and kind rules; normalize_input_snapshot materialization, deduplication, ordering, and conflict rejection.
-# KEYWORDS: task inputs, snapshot, entry kinds, selection, glob, path validation, ADR-0019
+# KEYWORDS: task inputs, snapshot, entry kinds, selection, glob, path validation
 # endregion MODULE_CONTRACT
 
 import pytest

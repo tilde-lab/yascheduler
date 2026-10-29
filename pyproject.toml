@@ -225,7 +225,7 @@ param_style = "colon"
 [tool.sqlfluff.rules.references.keywords]
 # `path` and `content` are non-reserved in PostgreSQL (path is not a keyword
 # at all since PG 10's keyword table cleanup) and are the documented column
-# names of yascheduler_task_inputs (ADR-0019). RF04 flags any keyword-shaped
+# names of yascheduler_task_inputs. RF04 flags any keyword-shaped
 # identifier; these two are deliberately kept unquoted.
 ignore_words = "path,content"
 

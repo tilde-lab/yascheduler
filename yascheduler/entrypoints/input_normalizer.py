@@ -1,6 +1,6 @@
 """Submission-boundary normalization of legacy and explicit task inputs."""
 # region MODULE_CONTRACT
-# PURPOSE: Convert a submission's input sources — legacy metadata file values or explicit typed entries — into the one domain snapshot exactly once, at the public API boundary, so persistence and deployment never see legacy encodings (ADR-0019 part 1, task 2.1).
+# PURPOSE: Convert a submission's input sources — legacy metadata file values or explicit typed entries — into the one domain snapshot exactly once, at the public API boundary, so persistence and deployment never see legacy encodings.
 # SCOPE:
 # - normalize_task_inputs(metadata, engine, input_entries): classify metadata keys against typed fields and engine input declarations, encode claimed legacy values, normalize explicit entries, and separate unrelated payload.
 # - The exact `fort.9` lenient base64 compatibility decode (the one legacy convention that stored binary as base64 text); deployment's copy stays until task 4.1 removes it.
@@ -15,14 +15,14 @@
 # - TRANSITION: legacy mode strips the claimed keys from the returned metadata — they live in the typed snapshot, and keeping them in `extra` would store a second input representation (design: single storage source). Deployment reads only the snapshot (task 4.1 flipped it), and queries derive the legacy filename/value metadata view from the snapshot, so legacy consumers are unaffected. Pre-migration rows may still carry legacy extra copies; the query projection keeps their precedence until the forward migration (task 3.3) converts and strips them. Explicit mode never writes input keys into metadata.
 # RATIONALE:
 # - Q: Why does normalization live in entrypoints instead of the application use case?
-#   A: Legacy payload interpretation is a public-boundary encoding concern (ADR-0019 section 2: "normalize legacy submit payloads at the public API boundary"); the use case receives typed entries only, so one boundary seam converts and every downstream layer stays legacy-free.
+#   A: Legacy payload interpretation is a public-boundary encoding concern; the use case receives typed entries only, so one boundary seam converts and every downstream layer stays legacy-free.
 # - Q: Why classify glob declarations against metadata keys with the shared selection language?
-#   A: Engine input declarations use the same task-relative selection contract as capture (ADR-0019 section 1); matching payload keys with selection_matches keeps legacy directory/glob declarations and filesystem capture one language, and deriving parent entries through normalize_input_snapshot lets legacy submitters express trees without new syntax.
+#   A: Engine input declarations use the same task-relative selection contract as capture; matching payload keys with selection_matches keeps legacy directory/glob declarations and filesystem capture one language, and deriving parent entries through normalize_input_snapshot lets legacy submitters express trees without new syntax.
 # - Q: Why does the ambiguity check reject instead of merging?
 #   A: A key claimed by declarations while explicit entries are supplied has two competing owners; rejecting with the offending key named is the only non-lossy answer, and the empty explicit sequence keeps a deliberate meaning (empty snapshot).
 # - Q: Why are claimed legacy keys stripped from the metadata instead of kept as a transitional copy?
 #   A: Deployment already reads only the typed snapshot (task 4.1), and the query projection derives the legacy filename/value view from the snapshot, so stored copies serve no consumer — they would only be a second input representation that can drift. The forward migration strips converted keys from stored rows the same way.
-# KEYWORDS: task inputs, submission, normalization, legacy metadata, base64, fort.9, boundary, ADR-0019
+# KEYWORDS: task inputs, submission, normalization, legacy metadata, base64, fort.9, boundary
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations

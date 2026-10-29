@@ -131,7 +131,7 @@ async def _submit_async(argv: list[str] | None) -> None:
 
         # Capture the engine's input tree from the working directory (never
         # the script's directory) as typed entries; the snapshot replaces the
-        # legacy text/base64 metadata values (ADR-0019, task 2.3).
+        # legacy text/base64 metadata values.
         input_entries = capture_input_snapshot(Path.cwd(), engine.input_files)
 
         metadata = _build_metadata(script_params, config, Path.cwd())

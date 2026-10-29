@@ -3,7 +3,7 @@
 # Dynamic migration modules live outside a package; the runner loads them by path.
 # ruff: noqa: INP001
 # region MODULE_CONTRACT
-# PURPOSE: Preserve the deployment meaning of every stored task's legacy inputs while moving them out of arbitrary metadata into owned binary entries (ADR-0019).
+# PURPOSE: Preserve the deployment meaning of every stored task's legacy inputs while moving them out of arbitrary metadata into owned binary entries.
 # SCOPE: Forward migration 014; configured engine declarations select stored payload paths, never local files. No submission, deployment, or output behavior.
 # INVARIANTS: DDL, conversion, metadata removal, and tracker recording share the runner's transaction; no intermediate commits. All task columns except converted extra keys remain unchanged, including timestamps. Content-free DEBUG boundary traces carry task/engine/path counts and failure classes, never file bodies, payloads, SQL params, or exception text.
 # DEPENDENCIES: Domain snapshot/path/selection rules; Migration engine context; SQL frozen in this module, not mutable runtime task queries.

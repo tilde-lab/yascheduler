@@ -24,7 +24,7 @@ __all__ = ["EngineInputsContext", "Migration"]
 
 
 # Engine name -> its declared input file selections, as plain domain values
-# (ADR-0019). Plain tuples keep infra independent of the entrypoints config
+# Plain tuples keep infra independent of the entrypoints config
 # parser: initialization derives the mapping from the parsed engines config
 # before invoking migrations.
 EngineInputsContext: TypeAlias = Mapping[str, tuple[str, ...]]

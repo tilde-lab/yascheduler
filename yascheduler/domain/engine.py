@@ -78,7 +78,7 @@ class Engine:
     check_cmd_code: int = 0
     sleep_interval: int = 10
 
-    # Input ownership note (ADR-0019): required-input validation against raw
+    # Input ownership note: required-input validation against raw
     # metadata was replaced by the one snapshot rule,
     # domain.task_inputs.validate_snapshot_selections; the engine carries only
     # the declarations now.

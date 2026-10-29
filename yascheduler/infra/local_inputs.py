@@ -1,6 +1,6 @@
 """Local capture of a task input snapshot from a submission directory."""
 # region MODULE_CONTRACT
-# PURPOSE: Turn engine input selections plus a local submission root into the one immutable task-owned snapshot (exact bytes, explicit directories) so submission accepts work independent of the source filesystem (ADR-0019 part 1, task 1.3).
+# PURPOSE: Turn engine input selections plus a local submission root into the one immutable task-owned snapshot (exact bytes, explicit directories) so submission accepts work independent of the source filesystem.
 # SCOPE:
 # - capture_input_snapshot(root, selections): validate selections, scan only the branches they need, expand matched directories to complete subtrees, read file bytes, and return the normalized snapshot.
 # - Non-following directory scans, symlink/unsupported-type rejection, required-selection enforcement, and read-time source rechecks.
@@ -20,7 +20,7 @@
 #   A: Capture is not a filesystem transaction; callers keep sources stable (documented contract). These checks abort capture on the changes that are detectable without one: disappearance, replacement, and type swaps.
 # - Q: Why recheck ancestor components before every scan and read?
 #   A: O_NOFOLLOW and DirEntry classification guard only the final component; a directory recorded as real can be swapped to a symbolic link before its subtree is scanned or its files are read, redirecting traversal outside the root. Rechecking each ancestor with lstat (whose final component is never followed) rejects that swap; the documented caller stability contract covers the residual check-to-use race.
-# KEYWORDS: task inputs, capture, snapshot, local filesystem, submission root, glob, symbolic links, ADR-0019
+# KEYWORDS: task inputs, capture, snapshot, local filesystem, submission root, glob, symbolic links
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
@@ -251,7 +251,7 @@ def _select_matches(
 
 
 # region FUNC__expand_matched_directories
-# PURPOSE: Expand every matched directory to its complete subtree — hidden entries and empty directories included — so selecting a directory transfers everything below it (ADR-0019 section 1).
+# PURPOSE: Expand every matched directory to its complete subtree — hidden entries and empty directories included — so selecting a directory transfers everything below it.
 # INVARIANTS: Any symlink or unsupported entry inside a matched subtree fails explicitly; an `expanded` guard keeps overlapping selections and nested matches single-visit.
 def _expand_matched_directories(
     root: Path,

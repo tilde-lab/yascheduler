@@ -1,7 +1,7 @@
 # region MODULE_CONTRACT
 # PURPOSE: Pin the local input-capture contract — exact bytes, explicit complete trees, component-aware glob selection, required selections, non-followed symlink and unsupported-entry rejection, root and selection validation ordering, read-time source rechecks, immutable normalized results, facade exports, and content-free structured logs.
 # SCOPE: capture_input_snapshot behavior over temporary filesystem fixtures, including binary and large files, hidden and empty entries, overlapping selections, symlinks, FIFOs, TOCTOU-style mutations, root failures, result shape/kind/frozen semantics, and content-free CAPTURE/CAPTURE_DONE/CAPTURE_FAILED trajectory logs.
-# KEYWORDS: task inputs, capture, snapshot, local filesystem, glob, symlink, TOCTOU, ADR-0019
+# KEYWORDS: task inputs, capture, snapshot, local filesystem, glob, symlink, TOCTOU
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations

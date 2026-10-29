@@ -109,7 +109,7 @@ async def _lstat_type(sftp: SFTPClient, path: PurePath) -> int | None:
 
 
 # region FUNC__check_destination
-# PURPOSE: Reject one destination path before writing when it is a symbolic link or conflicts with the required entry kind, per the ADR-0019 destination-traversal contract.
+# PURPOSE: Reject one destination path before writing when it is a symbolic link or conflicts with the required entry kind, per the destination-traversal contract.
 # INVARIANTS: The check never follows links (lstat); a missing path is allowed and handled by the subsequent mkdir/write; a needed-directory path must be absent or a directory, a file path must be absent or an ordinary file (replaceable); every rejection raises UnsafeTaskPathError identifying the offending path and reason, and logs a structured boundary record without file contents.
 async def _check_destination(
     sftp: SFTPClient,
@@ -164,7 +164,7 @@ class TaskDeployer:
 
     # region METHOD__upload_task_data
     # PURPOSE: Reconstruct the task's stored input tree under the remote task root — directories parent-first, then exact file bytes — from the immutable snapshot, without consulting live engine input declarations or task metadata.
-    # INVARIANTS: Stored entries are re-validated at this trust boundary (normalize_input_snapshot rejects unsafe/duplicate/conflicting paths and orders parents before descendants); each entry's destination is joined component-wise in the remote platform's path flavor and lstat-checked without following links — symbolic links and file/directory conflicts fail with the offending path, while an existing ordinary file at a file path is replaced; the whole tree is uploaded before this returns. The ancestor checks are leaf-per-entry by design: normalize_input_snapshot materializes every parent directory entry, so each in-tree ancestor is itself lstat-checked — symlinked ancestors are caught through their own materialized entries. Ancestors above the task root are scheduler-controlled (resolved through realpath at session level) and are deliberately not re-inspected per deploy, per the ADR-0019 accepted-risk clause on non-atomic SFTP type checks.
+    # INVARIANTS: Stored entries are re-validated at this trust boundary (normalize_input_snapshot rejects unsafe/duplicate/conflicting paths and orders parents before descendants); each entry's destination is joined component-wise in the remote platform's path flavor and lstat-checked without following links — symbolic links and file/directory conflicts fail with the offending path, while an existing ordinary file at a file path is replaced; the whole tree is uploaded before this returns. The ancestor checks are leaf-per-entry by design: normalize_input_snapshot materializes every parent directory entry, so each in-tree ancestor is itself lstat-checked — symlinked ancestors are caught through their own materialized entries. Ancestors above the task root are scheduler-controlled (resolved through realpath at session level) and are deliberately not re-inspected per deploy, per the accepted-risk clause on non-atomic SFTP type checks.
     async def _upload_task_data(
         self,
         session: MachineSession,

@@ -1,6 +1,6 @@
 """Task input snapshot value objects and pure selection rules."""
 # region MODULE_CONTRACT
-# PURPOSE: Give task-owned inputs one typed, engine-independent model — validated task-relative paths, component-aware glob selection, and immutable snapshot entries — so submission capture, normalization, persistence, and deployment share a single contract (ADR-0019 part 1).
+# PURPOSE: Give task-owned inputs one typed, engine-independent model — validated task-relative paths, component-aware glob selection, and immutable snapshot entries — so submission capture, normalization, persistence, and deployment share a single contract.
 # SCOPE:
 # - Value objects TaskInputFile/TaskInputDirectory, the TaskInputEntry union, the TaskInputSnapshot alias, and the TaskInputKind discriminator.
 # - Pure selection rules: explicit path validation, selection validation, and per-component matching over relative paths and entry kinds.
@@ -9,10 +9,10 @@
 # INVARIANTS: No filesystem, SQL, SSH, or config imports — pure data and rules only; every exported rule is total over validated input and raises a domain ValidationError subclass otherwise; entry contents are bytes and are never decoded here.
 # RATIONALE:
 # - Q: Why in the domain layer instead of the entrypoints normalizer or infra capture?
-#   A: The selection language and snapshot invariants are scheduler business rules consumed by several layers (capture, boundary normalization, submit validation, deployment). Keeping them pure in the domain prevents each consumer from re-implementing the ADR-0019 semantics.
+#   A: The selection language and snapshot invariants are scheduler business rules consumed by several layers (capture, boundary normalization, submit validation, deployment). Keeping them pure in the domain prevents each consumer from re-implementing these semantics.
 # - Q: Why does a kind property exist when the entry type already encodes it?
 #   A: Selection matching and later persistence need a uniform discriminator without isinstance dispatch at every consumer.
-# KEYWORDS: task inputs, snapshot, selection, glob, path validation, ADR-0019, entry kinds
+# KEYWORDS: task inputs, snapshot, selection, glob, path validation, entry kinds
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ __all__ = [
 
 # region CLASS_TaskInputKind
 # PURPOSE: Discriminate snapshot entries as files or directories for selection matching and persistence without isinstance dispatch.
-# INVARIANTS: Members mirror the storage `kind` values (`file`, `directory`) and the public query projection (ADR-0019).
+# INVARIANTS: Members mirror the storage `kind` values (`file`, `directory`) and the public query projection.
 class TaskInputKind(StrEnum):
     """Kind of one task input snapshot entry."""
 
@@ -62,7 +62,7 @@ class TaskInputKind(StrEnum):
 
 # region CLASS_TaskInputFile
 # PURPOSE: Carry one captured input file's task-relative path and exact bytes so deployment reproduces submission-time content without the source filesystem.
-# INVARIANTS: Frozen; ``path`` is a str and ``content`` is bytes — no text decoding, newline normalization, or encoding guess happens here; path safety and runtime type enforcement live at the snapshot normalization boundary (ADR-0019), not per entry, so the value object stays a pure carrier.
+# INVARIANTS: Frozen; ``path`` is a str and ``content`` is bytes — no text decoding, newline normalization, or encoding guess happens here; path safety and runtime type enforcement live at the snapshot normalization boundary, not per entry, so the value object stays a pure carrier.
 @dataclass(frozen=True)
 class TaskInputFile:
     """One input file entry of a task's input snapshot."""
@@ -191,7 +191,7 @@ def is_glob_pattern(selection: str) -> bool:
 
 
 # region FUNC_validate_snapshot_selections
-# PURPOSE: Enforce the one input-validation rule — every engine input declaration is satisfied by at least one snapshot entry — so submission rejects incomplete snapshots before any task write, replacing both the engine's key-presence check and the use case's metadata loop (ADR-0019, task-input-snapshots task 2.2).
+# PURPOSE: Enforce the one input-validation rule — every engine input declaration is satisfied by at least one snapshot entry — so submission rejects incomplete snapshots before any task write, replacing both the engine's key-presence check and the use case's metadata loop.
 # REQUIRES: declarations are the engine's raw input selections; snapshot is a normalized snapshot.
 # ENSURES: Each declaration is validated and matched against the snapshot with the shared selection language; the first unsatisfied declaration raises MissingInputFileError naming the engine and the declaration; an empty declaration set is trivially satisfied, and an empty snapshot satisfies only an empty declaration set.
 def validate_snapshot_selections(
@@ -213,7 +213,7 @@ def validate_snapshot_selections(
 
 
 # region FUNC_selection_matches
-# PURPOSE: Answer whether one validated selection selects one validated entry, using the shared component-aware glob language so input capture and coverage checks agree (ADR-0019 section 1).
+# PURPOSE: Answer whether one validated selection selects one validated entry, using the shared component-aware glob language so input capture and coverage checks agree.
 # REQUIRES: selection passed validate_selection; path is canonical (validate_task_path) and kind is the entry's true kind.
 # ENSURES: Matching is case-sensitive and component-aware — ``*``, ``?``, and character classes match within one ``/``-separated component including hidden names; a ``**`` component matches zero or more directory levels, with a zero-level match applying to directories only; a literal selection matches exactly that path; no path outside the task root can match.
 def selection_matches(selection: str, path: str, kind: TaskInputKind) -> bool:
@@ -265,7 +265,7 @@ def _components_match(
 
 
 # region FUNC_normalize_input_snapshot
-# PURPOSE: Turn a caller- or capture-supplied entry sequence into the one immutable snapshot a task owns, enforcing the ADR-0019 owned-entry invariants once for every consumer.
+# PURPOSE: Turn a caller- or capture-supplied entry sequence into the one immutable snapshot a task owns, enforcing the owned-entry invariants once for every consumer.
 # REQUIRES: entries is a sequence of TaskInputFile/TaskInputDirectory values; the caller keeps sources stable — this function fetches no filesystem data.
 # ENSURES: The returned snapshot is a tuple ordered by canonical path containing every valid entry plus materialized parent directory entries, each path once; duplicates, file/directory ancestor conflicts, non-entry objects, and unsafe paths raise InvalidTaskSnapshotError/UnsafeTaskPathError with the offending path; the empty sequence is a valid empty snapshot.
 def normalize_input_snapshot(entries: Sequence[TaskInputEntry]) -> TaskInputSnapshot:

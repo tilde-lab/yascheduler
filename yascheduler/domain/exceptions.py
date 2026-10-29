@@ -59,7 +59,7 @@ class UnsupportedEngineError(ValidationError):
 
 # region CLASS_UnsafeTaskPathError
 # PURPOSE: Reject task-relative paths and selections that could escape the task root before any traversal reads or writes through them.
-# INVARIANTS: Carries the offending path/selection and a concrete reason so callers report actionable path context (ADR-0019 selection contract).
+# INVARIANTS: Carries the offending path/selection and a concrete reason so callers report actionable path context.
 class UnsafeTaskPathError(ValidationError):
     """A task-relative path or selection violates the task-root contract.
 
@@ -79,7 +79,7 @@ class UnsafeTaskPathError(ValidationError):
 
 # region CLASS_InvalidTaskSnapshotError
 # PURPOSE: Reject snapshot entry sets that violate the task-owned input invariants (duplicates, kind conflicts, non-entry objects) so only a consistent tree is ever accepted or deployed.
-# INVARIANTS: Carries the offending entry path and a concrete reason; raised before any task write (ADR-0019 snapshot ownership).
+# INVARIANTS: Carries the offending entry path and a concrete reason; raised before any task write.
 class InvalidTaskSnapshotError(ValidationError):
     """A task input snapshot violates the owned-entry invariants.
 
@@ -97,7 +97,7 @@ class InvalidTaskSnapshotError(ValidationError):
 
 
 # region CLASS_TaskInputCaptureError
-# PURPOSE: Reject a submission whose input selections cannot be captured from the source filesystem, naming the offending selection or path (ADR-0019 capture contract).
+# PURPOSE: Reject a submission whose input selections cannot be captured from the source filesystem, naming the offending selection or path.
 # INVARIANTS: Carries the offending task-relative path or selection and a concrete reason; raised before any task write; never carries file contents or credentials.
 class TaskInputCaptureError(ValidationError):
     """A task input snapshot could not be captured from the submission root.
