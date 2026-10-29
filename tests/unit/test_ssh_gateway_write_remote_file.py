@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
 # PURPOSE: Unit tests for _write_remote_file exception contract (fix-write-remote-file-swallow) and _exec_spawn_command SPAWN log contract.
-# SCOPE: Non-SFTP exception propagates (not swallowed); asyncssh.misc.Error logged with structured code/reason and re-raised; start_task_on_machine aborts spawn on upload failure; successful write returns normally and the per-file loop continues; _exec_spawn_command emits SPAWN debug log with hostname/task_id/cmd/cwd.
+# SCOPE: Non-SFTP exception propagates (not swallowed); asyncssh.misc.Error logged with structured code/reason and re-raised; start_task_on_machine aborts spawn on upload failure; successful write returns normally and the stored snapshot upload loop writes every file and materializes directory entries; _exec_spawn_command emits SPAWN debug log with hostname/task_id/cmd/cwd.
 # KEYWORDS: _write_remote_file, exception contract, spawn abort, spawn log
 # endregion MODULE_CONTRACT
 
@@ -16,7 +16,12 @@ import asyncssh
 import pytest
 
 from tests.log_assertions import extra_fields
-from yascheduler.domain import Engine
+from yascheduler.domain import (
+    Engine,
+    TaskInputDirectory,
+    TaskInputFile,
+    normalize_input_snapshot,
+)
 from yascheduler.domain.model import NodeId, Running, Task, TaskId
 from yascheduler.infra.ssh.operations import TaskDeployer
 from yascheduler.infra.ssh.operations.deployment import _write_remote_file
@@ -101,7 +106,9 @@ def _make_engine(input_files: tuple[str, ...] = ("input.txt",)) -> Engine:
     )
 
 
-def _make_task(extra: dict[str, object] | None = None) -> Task:
+def _make_task(
+    input_entries: tuple[TaskInputFile | TaskInputDirectory, ...] = (),
+) -> Task:
     from datetime import datetime
 
     return Task(
@@ -111,7 +118,8 @@ def _make_task(extra: dict[str, object] | None = None) -> Task:
         state=Running(allocated_node_id=NodeId(1), remote_folder="/remote/tasks/7"),
         webhook_url=None,
         webhook_custom_params={},
-        extra=extra or {"input.txt": "hello"},
+        extra={},
+        input_entries=normalize_input_snapshot(input_entries),
         created_at=datetime(2025, 1, 1),
         updated_at=datetime(2025, 1, 1),
     )
@@ -148,29 +156,12 @@ class TestWriteRemoteFilePropagation:
                 cast("SFTPClient", sftp),
                 "/r/input.txt",
                 b"data",
-                mode="wb",
             )
 
         # The structured SFTPError log line is reserved for asyncssh.misc.Error.
         assert not any("SFTPError" in r.getMessage() for r in caplog.records), (
             "asyncssh.misc.Error-branch log was emitted for a non-SFTP exception"
         )
-
-    @pytest.mark.asyncio
-    async def test_binascii_error_propagates(self) -> None:
-        """A binascii.Error (the real malformed-fort.9 failure class) propagates."""
-        import binascii
-
-        file = _FakeSFTPFile(write_side_effect=binascii.Error("Invalid base64"))
-        sftp = _FakeSFTPClient(file)
-
-        with pytest.raises(binascii.Error):
-            await _write_remote_file(
-                cast("SFTPClient", sftp),
-                "/r/fort.9",
-                b"x",
-                mode="wb",
-            )
 
     @pytest.mark.asyncio
     async def test_open_failure_propagates(self) -> None:
@@ -187,7 +178,6 @@ class TestWriteRemoteFilePropagation:
                 cast("SFTPClient", sftp),
                 "/r/input.txt",
                 b"data",
-                mode="wb",
             )
 
         # write was never reached (open failed first).
@@ -211,7 +201,6 @@ class TestWriteRemoteFilePropagation:
                 cast("SFTPClient", sftp),
                 "/r/input.txt",
                 b"data",
-                mode="wb",
             )
 
         # The same exception instance is re-raised (no swallow, no rewrap).
@@ -241,7 +230,6 @@ class TestWriteRemoteFilePropagation:
                 cast("SFTPClient", sftp),
                 "/r/fort.9",
                 b"x",
-                mode="wb",
             )
 
         assert exc_info.value is err
@@ -283,7 +271,9 @@ class TestStartTaskAbortOnUploadFailure:
             await deployer.start_task_on_machine(
                 session,
                 _make_engine(input_files=("input.txt",)),
-                _make_task(extra={"input.txt": "hello"}),
+                _make_task(
+                    input_entries=(TaskInputFile(path="input.txt", content=b"hello"),)
+                ),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -314,7 +304,9 @@ class TestStartTaskAbortOnUploadFailure:
             await deployer.start_task_on_machine(
                 session,
                 _make_engine(input_files=("input.txt",)),
-                _make_task(extra={"input.txt": "hello"}),
+                _make_task(
+                    input_entries=(TaskInputFile(path="input.txt", content=b"hello"),)
+                ),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -351,7 +343,6 @@ class TestSuccessfulWrite:
                 cast("SFTPClient", sftp),
                 "/r/input.txt",
                 b"data",
-                mode="wb",
             )
 
         file.write.assert_awaited_once_with(b"data")
@@ -369,14 +360,43 @@ class TestSuccessfulWrite:
         # count write invocations across the loop.
         ok = await deployer._upload_task_data(
             state,
-            _make_task(extra={"input.txt": "a", "fort.9": "AAAA"}),
+            _make_task(
+                input_entries=(
+                    TaskInputFile(path="input.txt", content=b"a"),
+                    TaskInputFile(path="fort.9", content=b"AAAA"),
+                )
+            ),
             PurePosixPath("/remote/tasks/7"),
-            input_files=("input.txt", "fort.9"),
         )
 
         assert ok is True
         # Both files were written (the loop did not bail after the first).
         assert sftp._file.write.await_count == 2
+        assert [call.args[0] for call in sftp.open.call_args_list] == [
+            "/remote/tasks/7/fort.9",
+            "/remote/tasks/7/input.txt",
+        ]
+        assert all(call.args[1] == "wb" for call in sftp.open.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_upload_materializes_directory_entries(self) -> None:
+        """_upload_task_data creates stored directory entries, including empty ones."""
+        deployer = TaskDeployer()
+        state, sftp = _make_sftp_state(write_side_effect=None)
+
+        ok = await deployer._upload_task_data(
+            state,
+            _make_task(input_entries=(TaskInputDirectory(path="basis/empty"),)),
+            PurePosixPath("/remote/tasks/7"),
+        )
+
+        assert ok is True
+        assert [call.args[0] for call in sftp.makedirs.await_args_list] == [
+            PurePosixPath("/remote/tasks/7"),
+            PurePosixPath("/remote/tasks/7/basis"),
+            PurePosixPath("/remote/tasks/7/basis/empty"),
+        ]
+        sftp._file.write.assert_not_awaited()
 
 
 # =============================================================================

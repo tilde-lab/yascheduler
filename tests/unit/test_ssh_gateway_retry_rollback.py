@@ -267,7 +267,6 @@ class TestStartTaskRollback:
             s: object,
             task: Task,
             task_dir: object,
-            input_files: object,
         ) -> bool:
             # Simulate a concurrent transition away from BUSY before rollback.
             session.release()
@@ -310,7 +309,6 @@ class TestStartTaskRollback:
             s: object,
             task: Task,
             task_dir: object,
-            input_files: object,
         ) -> bool:
             await session._close()
             raise OSError("boom")

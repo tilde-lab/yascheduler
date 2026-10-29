@@ -1,24 +1,22 @@
 """TaskDeployer — upload task inputs and spawn the calculation process on a remote machine via MachineSession. Stateless: takes (log) at construction, (session, ...) per call."""
 # region MODULE_CONTRACT
-# PURPOSE: Upload task inputs and spawn calculation process on a remote machine via MachineSession; rolls back BUSY on failure.
-# SCOPE: TaskDeployer class, _safe_b64decode and _write_remote_file module-private helpers.
+# PURPOSE: Reconstruct the task's stored input tree on a remote machine via MachineSession SFTP and spawn the calculation process; rolls back BUSY on failure.
+# SCOPE: TaskDeployer class, _write_remote_file and _make_remote_directory module-private helpers.
 # DEPENDENCIES: USES API: asyncssh (SFTPClient, SFTP errors)
-# KEYWORDS: deploy, task, upload, spawn, TaskDeployer, sftp
+# KEYWORDS: deploy, task, upload, spawn, TaskDeployer, sftp, input snapshot
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
-import base64
 import logging
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 import asyncssh
 
-from yascheduler.domain import MachineState
+from yascheduler.domain import MachineState, TaskId, TaskInputFile
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import PurePath
 
     from asyncssh.sftp import SFTPClient
@@ -30,33 +28,13 @@ __all__ = ["TaskDeployer"]
 logger = logging.getLogger(__name__)
 
 
-# region FUNC__safe_b64decode
-# PURPOSE: Decode base64 string with lenient padding handling.
-# INVARIANTS: Lenient on padding — auto-appends = to satisfy len % 4 == 0; normalizes whitespace and newlines before decoding; accepts str or bytes input — bytes is decoded first.
-def _safe_b64decode(b64_data: str | bytes) -> bytes:
-    if isinstance(b64_data, bytes):
-        b64_data = b64_data.decode()
-    b64_data = b64_data.strip().replace("\n", "").replace(" ", "")
-    missing_padding = len(b64_data) % 4
-    if missing_padding:
-        b64_data += "=" * (4 - missing_padding)
-    return base64.b64decode(b64_data)
-
-
-# endregion FUNC__safe_b64decode
-
-
 # region FUNC__write_remote_file
-# PURPOSE: Write data to a remote file via SFTP with error handling.
-async def _write_remote_file(
-    sftp: SFTPClient,
-    path: str,
-    data: bytes | str,
-    mode: str = "wb",
-) -> None:
+# PURPOSE: Write one stored input file's exact bytes to a remote path via SFTP.
+# INVARIANTS: Binary mode only — content is the stored snapshot bytes, never text-decoded; asyncssh.misc.Error is logged with path/reason/code and re-raised; any other exception propagates unlogged (the caller's handler reports task context).
+async def _write_remote_file(sftp: SFTPClient, path: str, data: bytes) -> None:
     # region BLOCK_write_file
     try:
-        async with sftp.open(path, mode) as f:
+        async with sftp.open(path, "wb") as f:
             await f.write(data)  # type: ignore[type-var]
     except asyncssh.misc.Error as err:
         logger.exception(
@@ -70,6 +48,32 @@ async def _write_remote_file(
 
 
 # endregion FUNC__write_remote_file
+
+
+# region FUNC__make_remote_directory
+# PURPOSE: Create one stored input directory entry (with parents) on the remote host so empty directories survive deployment.
+# INVARIANTS: Idempotent — exist_ok tolerates a directory that already exists (e.g. partial earlier attempt); asyncssh.misc.Error is logged with path/reason/code/task_id and re-raised; any other exception propagates unlogged.
+async def _make_remote_directory(
+    sftp: SFTPClient,
+    path: PurePath,
+    task_id: TaskId,
+) -> None:
+    # region BLOCK_mkdir
+    try:
+        await sftp.makedirs(PurePosixPath(path), exist_ok=True)
+    except asyncssh.misc.Error as err:
+        logger.exception(
+            "Mkdir %s - SFTPError: %s (%s) (task_id=%s)",
+            path,
+            err.reason,
+            err.code,
+            task_id,
+        )
+        raise
+    # endregion BLOCK_mkdir
+
+
+# endregion FUNC__make_remote_directory
 
 
 # region CLASS_TaskDeployer
@@ -86,13 +90,13 @@ class TaskDeployer:
         """Stateless deployer — no initialisation needed."""
 
     # region METHOD__upload_task_data
-    # PURPOSE: Upload task input files to remote machine via SFTP.
+    # PURPOSE: Reconstruct the task's stored input tree under the remote task root — directories parent-first, then exact file bytes — from the immutable snapshot, without consulting live engine input declarations or task metadata.
+    # INVARIANTS: Entries iterate parent-first (sorted by canonical path, so every ancestor precedes its descendants); files are written in binary mode from stored bytes; an empty directory stays an explicit directory and a zero-length file stays a file; the whole tree is uploaded before this returns.
     async def _upload_task_data(
         self,
         session: MachineSession,
         task: RunningTask,
         remote_dir: PurePath,
-        input_files: Sequence[str],
     ) -> bool:
 
         # region BLOCK_upload
@@ -109,22 +113,12 @@ class TaskDeployer:
                 )
                 raise
 
-            for input_file in input_files:
-                r_input_file = remote_dir / input_file
-                file_data = task.extra[input_file]
-                if input_file == "fort.9":
-                    await _write_remote_file(
-                        sftp,
-                        r_input_file.as_posix(),
-                        _safe_b64decode(str(file_data)),
-                    )
+            for entry in sorted(task.input_entries, key=lambda item: item.path):
+                target = remote_dir / entry.path
+                if isinstance(entry, TaskInputFile):
+                    await _write_remote_file(sftp, target.as_posix(), entry.content)
                 else:
-                    await _write_remote_file(
-                        sftp,
-                        r_input_file.as_posix(),
-                        str(file_data),
-                        mode="w",
-                    )
+                    await _make_remote_directory(sftp, target, task.task_id)
         return True
         # endregion BLOCK_upload
 
@@ -208,7 +202,6 @@ class TaskDeployer:
                         session,
                         task,
                         task_dir,
-                        engine.input_files,
                     )
                 except Exception:
                     logger.exception(
