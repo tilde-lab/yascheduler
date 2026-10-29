@@ -95,9 +95,8 @@ class TestClientQueryIntegration:
         assert "cloud" not in mapping
         assert "node" in mapping
         assert isinstance(mapping["metadata"], dict)
-        # The legacy filename/value key remains in metadata: the projection
-        # keeps the pre-snapshot query shape (the transitional extra copy wins
-        # over the snapshot-derived value while it exists).
+        # The legacy filename/value key is derived from the typed snapshot,
+        # preserving the pre-snapshot query shape for legacy consumers.
         assert mapping["metadata"]["1.input"] == "hello"
         assert mapping["input_entries"] == [
             {

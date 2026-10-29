@@ -32,6 +32,7 @@ __all__ = [
     "NodeRowNotFoundError",
     "SchedulingError",
     "TaskError",
+    "TaskInputCaptureError",
     "TaskNotRunningError",
     "TaskNotTodoError",
     "UnsafeTaskPathError",

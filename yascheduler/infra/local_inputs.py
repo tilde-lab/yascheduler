@@ -9,7 +9,7 @@
 # - Never follows or preserves symbolic links: a selected, matched, or in-subtree link fails with TaskInputCaptureError; unsupported entry types fail the same way when selected.
 # - Files are read as raw bytes with no decoding or newline normalization; file contents never enter logs or exceptions.
 # - Capture start/completion/failure records carry counts and selection/path context, never source bytes or arbitrary exception text.
-# - Traversal only joins validated components onto the root, so enumeration cannot escape the task root.
+# - Traversal only joins validated components onto the root, and every traversed ancestor is rechecked as a real non-link directory before each scan and read, so enumeration cannot escape the task root.
 # - Every selection is required: a missing explicit path or a glob with no matches fails the whole capture, naming the selection.
 # RATIONALE:
 # - Q: Why does traversal mirror the pure selection language instead of reusing a generic walker?
@@ -18,6 +18,8 @@
 #   A: `**` consumes directory levels only; a link is not a directory, so it is not consumable and not selected — rejecting every unrelated link would invalidate otherwise valid selections. A link matched by a name pattern, or living inside a matched directory's subtree, is selected and therefore rejected explicitly.
 # - Q: Why lstat-then-O_NOFOLLOW-open-then-fstat identity checks?
 #   A: Capture is not a filesystem transaction; callers keep sources stable (documented contract). These checks abort capture on the changes that are detectable without one: disappearance, replacement, and type swaps.
+# - Q: Why recheck ancestor components before every scan and read?
+#   A: O_NOFOLLOW and DirEntry classification guard only the final component; a directory recorded as real can be swapped to a symbolic link before its subtree is scanned or its files are read, redirecting traversal outside the root. Rechecking each ancestor with lstat (whose final component is never followed) rejects that swap; the documented caller stability contract covers the residual check-to-use race.
 # KEYWORDS: task inputs, capture, snapshot, local filesystem, submission root, glob, symbolic links, ADR-0019
 # endregion MODULE_CONTRACT
 
@@ -314,6 +316,7 @@ def _read_files(root: Path, identities: dict[str, _Identity]) -> dict[str, bytes
 
 def _read_file(root: Path, rel: tuple[str, ...], expected: _Identity) -> bytes:
     """Read one captured file as bytes, rejecting detectable source changes."""
+    _recheck_traversed_ancestors(root, rel[:-1])
     target = root.joinpath(*rel)
     path = "/".join(rel)
     try:
@@ -356,6 +359,34 @@ def _read_all_bytes(fd: int, path: str) -> bytes:
 # endregion FUNC__read_files
 
 
+# region FUNC__recheck_traversed_ancestors
+# PURPOSE: Recheck every traversed ancestor as a real non-link directory before a scan or read, so a component swapped to a symbolic link after its own scan cannot redirect traversal outside the submission root.
+# INVARIANTS: Component-by-component lstat — each check's final component is unfollowed and every earlier component was just verified as a real directory, so no symbolic link is ever followed; failures raise TaskInputCaptureError naming the offending ancestor.
+def _recheck_traversed_ancestors(root: Path, rel: tuple[str, ...]) -> None:
+    """Reject traversal whose ancestor chain is no longer real directories."""
+    current = root
+    for index, name in enumerate(rel):
+        current = current / name
+        prefix = "/".join(rel[: index + 1])
+        try:
+            info = os.lstat(current)
+        except OSError as err:
+            raise TaskInputCaptureError(
+                prefix, f"cannot inspect ancestor directory: {err}"
+            ) from err
+        if stat.S_ISLNK(info.st_mode):
+            raise TaskInputCaptureError(
+                prefix, "ancestor directory became a symbolic link during capture"
+            )
+        if not stat.S_ISDIR(info.st_mode):
+            raise TaskInputCaptureError(
+                prefix, "ancestor is no longer a directory during capture"
+            )
+
+
+# endregion FUNC__recheck_traversed_ancestors
+
+
 # region FUNC__scan_directory
 # PURPOSE: Enumerate one real directory non-following and deterministically (sorted by name), classifying each entry for selection and expansion.
 # INVARIANTS: Classification uses DirEntry symlink/`follow_symlinks=False` checks, so links are never followed and hidden entries are yielded like any other; files carry their scan-time identity for the read-time recheck.
@@ -368,6 +399,7 @@ def _scan_directory(
     what they are ("symbolic link" or "unsupported filesystem entry type").
     File identity is ``(0, 0)`` for non-file entries.
     """
+    _recheck_traversed_ancestors(root, rel)
     directory = root.joinpath(*rel)
     try:
         with os.scandir(directory) as iterator:

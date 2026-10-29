@@ -262,6 +262,14 @@ class TestGlobLanguageAtCapture:
             TaskInputFile(path="a?b", content=b"question"),
         )
 
+    def test_shell_syntax_filename_is_selected_literally(self, tmp_path: Path) -> None:
+        (tmp_path / "~{a,b}").write_bytes(b"literal")
+        (tmp_path / "a").write_bytes(b"expanded-lookalike")
+
+        assert _capture(tmp_path, "~{a,b}") == (
+            TaskInputFile(path="~{a,b}", content=b"literal"),
+        )
+
     def test_double_star_matches_zero_and_more_levels(self, tmp_path: Path) -> None:
         basis = tmp_path / "basis"
         (basis / "deep").mkdir(parents=True)
@@ -553,6 +561,73 @@ class TestSourceStability:
 
         assert info.value.path == "INPUT"
         assert "replaced" in info.value.reason
+
+    def test_ancestor_swapped_to_symlink_between_scan_and_subtree_scan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Without the ancestor recheck, scandir(root/data) would follow the
+        # swapped link and select entries from outside the submission root.
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "INPUT").write_bytes(b"foreign")
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / "INPUT").write_bytes(b"body")
+        real_scandir = os.scandir
+        mutated = False
+
+        def mutating_scandir(path: os.PathLike[str]) -> _ScandirResult:
+            nonlocal mutated
+            with real_scandir(path) as iterator:
+                items = list(iterator)
+            if not mutated and Path(path) == tmp_path:
+                mutated = True
+                (data / "INPUT").unlink()
+                data.rmdir()
+                data.symlink_to(outside)
+            return _ScandirResult(items)
+
+        monkeypatch.setattr(local_inputs.os, "scandir", mutating_scandir)
+
+        with pytest.raises(TaskInputCaptureError) as info:
+            _capture(tmp_path, "data/INPUT")
+
+        assert info.value.path == "data"
+        assert "symbolic link" in info.value.reason
+
+    def test_ancestor_swapped_to_symlink_between_scan_and_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The foreign file is a hard link to the captured inode, so the
+        # identity recheck alone cannot detect the redirection; only the
+        # ancestor recheck can reject it. The swap fires on the first lstat
+        # of the ancestor, i.e. exactly when capture re-checks traversal.
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        data = tmp_path / "data"
+        data.mkdir()
+        target = data / "INPUT"
+        target.write_bytes(b"body")
+        os.link(target, outside / "INPUT")
+        real_lstat = os.lstat
+        mutated = False
+
+        def swapping_lstat(path: os.PathLike[str]) -> os.stat_result:
+            nonlocal mutated
+            if not mutated and Path(path) == data:
+                mutated = True
+                target.unlink()
+                data.rmdir()
+                data.symlink_to(outside)
+            return real_lstat(path)
+
+        monkeypatch.setattr(local_inputs.os, "lstat", swapping_lstat)
+
+        with pytest.raises(TaskInputCaptureError) as info:
+            _capture(tmp_path, "data/INPUT")
+
+        assert info.value.path == "data"
+        assert "symbolic link" in info.value.reason
 
     @pytest.mark.skipif(
         hasattr(os, "geteuid") and os.geteuid() == 0,

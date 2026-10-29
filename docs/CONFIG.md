@@ -423,7 +423,9 @@ Once set, it cannot be changed later.
   `yasubmit` captures exact file bytes from its current working directory (not
   the script's directory) at submission time. Sources must remain stable
   until submission returns; changes to them afterward do not affect the
-  stored input snapshot.
+  stored input snapshot. Queries expose the stored snapshot as the canonical
+  typed `input_entries` projection; legacy filename/value keys in `metadata`
+  are a derived compatibility view of that same snapshot, not a stored copy.
 
   ```ini
   [engine.abacus]

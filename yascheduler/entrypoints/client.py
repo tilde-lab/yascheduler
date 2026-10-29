@@ -105,7 +105,7 @@ def _legacy_input_metadata_value(content: bytes) -> str:
 
 # region FUNC__task_to_dict
 # PURPOSE: Project a Task plus its optional allocated Node into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId; inputs project top-level as `input_entries` while metadata keeps legacy filename/value file keys for consumer compatibility.
-# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; entries ordered by task-relative path; file entries stay visible in metadata under their legacy encoding (old CLI: UTF-8 text, else base64), derived from the immutable snapshot — never a second stored copy; during the transition the task's own `extra` copies (live until the deployer flip, task 4.1) win over derived values; directories never appear in metadata; typed fields are never overwritten by input paths.
+# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; entries ordered by task-relative path; file entries stay visible in metadata under their legacy encoding (old CLI: UTF-8 text, else base64), derived from the immutable snapshot — never a second stored copy; pre-migration `extra` copies of input keys (the normalizer and the forward migration strip them) keep precedence over derived values while they exist; directories never appear in metadata; typed fields are never overwritten by input paths.
 def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, Any]:
     allocated_node_id = allocated_node_id_of(t)
     node = nodes_by_id.get(allocated_node_id) if allocated_node_id else None

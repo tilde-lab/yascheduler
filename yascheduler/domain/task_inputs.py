@@ -103,7 +103,7 @@ TaskInputSnapshot: TypeAlias = "tuple[TaskInputEntry, ...]"
 
 # region FUNC__validated_components
 # PURPOSE: Apply the shared task-root safety rules to one raw path or selection and return its canonical components, so validate_task_path and validate_selection cannot diverge.
-# INVARIANTS: Pure string rules; rejects Windows drive roots, backslashes, leading separators, `..` components, and the task root itself (UnsafeTaskPathError); drops empty and `.` components without touching glob metacharacters.
+# INVARIANTS: Pure string rules; rejects Windows drive roots and drive-shaped components, backslashes, leading separators, `..` components, and the task root itself (UnsafeTaskPathError); drops empty and `.` components without touching glob metacharacters.
 _DRIVE_ROOT = re.compile(r"[A-Za-z]:")
 
 
@@ -125,6 +125,10 @@ def _validated_components(raw: object, what: str) -> tuple[str, ...]:
             continue
         if part == "..":
             raise UnsafeTaskPathError(raw, "'..' component escapes the task root")
+        if _DRIVE_ROOT.match(part):
+            # A drive-shaped component (`C:`, `C:file`) collapses or redirects
+            # the joined path on Windows remotes, aliasing distinct entries.
+            raise UnsafeTaskPathError(raw, "Windows drive component")
         components.append(part)
     if not components:
         raise UnsafeTaskPathError(raw, "names the task root itself")
@@ -141,10 +145,12 @@ def _validated_components(raw: object, what: str) -> tuple[str, ...]:
 def validate_task_path(raw: str) -> str:
     """Validate and canonicalize one explicit task-relative path.
 
-    Rejects absolute POSIX paths, Windows drive and UNC roots, ``..``
-    components, backslashes, and the task root itself (the root is implicit
-    and has no stored entry). Redundant separators and ``.`` components are
-    normalized away. Returns the canonical ``/``-separated relative path.
+    Rejects absolute POSIX paths, Windows drive and UNC roots, drive-shaped
+    components anywhere in the path (they alias or redirect joined paths on
+    Windows remotes), ``..`` components, backslashes, and the task root itself
+    (the root is implicit and has no stored entry). Redundant separators and
+    ``.`` components are normalized away. Returns the canonical ``/``-separated
+    relative path.
     """
     return "/".join(_validated_components(raw, "task path"))
 

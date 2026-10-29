@@ -110,8 +110,11 @@ print(task_id)
 
 Entries must satisfy the engine's declared `input_files`; unrelated metadata
 keys are preserved. The legacy positional form still works: engine-declared
-file keys in metadata become the typed snapshot, ordinary strings encode as
-UTF-8, and only the historical `fort.9` key accepts base64. Supplying
+file keys in metadata become the typed snapshot and are not retained as
+unrelated metadata, ordinary strings encode as UTF-8, and only the historical
+`fort.9` key accepts base64. Recursive input selections are supported; recursive
+`output_files` selection (directories and globs) is a later change and is not
+supported yet. Supplying
 `input_entries=` together with legacy engine-declared input keys is rejected as
 ambiguous. An explicit empty `input_entries=[]` is a valid empty snapshot, not
 a fallback to metadata.
@@ -119,10 +122,14 @@ a fallback to metadata.
 ### Query results
 
 `queue_get_tasks`, `queue_get_task`, and their async variants return one mapping
-per task. Queries are additive: `metadata` still carries one filename/value key
-per input file under the legacy encoding (UTF-8 text as a plain string,
-anything else as padded base64), so existing metadata consumers keep working.
-Before the typed snapshot existed, that metadata was the only input view:
+per task. Queries expose a top-level `input_entries` list, sorted by
+task-relative path, as the canonical input projection. It carries exact bytes
+and also directory entries, which have no legacy metadata representation. For
+compatibility, `metadata` still carries one filename/value key per input file
+under the legacy encoding (UTF-8 text as a plain string, anything else as
+padded base64). Those keys are a derived compatibility view generated from
+that same immutable snapshot; they are not a second stored copy. Before the
+typed snapshot existed, that metadata was the only input view:
 
 ```python
 from yascheduler.domain import TaskStatus
@@ -143,11 +150,7 @@ from yascheduler.domain import TaskStatus
 }
 ```
 
-Queries now add a top-level `input_entries` list, sorted by task-relative path,
-which is the canonical projection of the snapshot: it carries exact bytes and
-also directory entries, which have no legacy metadata representation. The
-metadata keys are unchanged — derived from that same immutable snapshot rather
-than from a second stored copy:
+The same task through the canonical typed projection:
 
 ```python
 import base64

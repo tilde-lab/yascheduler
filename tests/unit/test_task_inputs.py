@@ -140,6 +140,8 @@ class TestValidateTaskPath:
             "c:\\basis",
             "\\\\server\\share",
             "basis\\INPUT",
+            "sub/C:",
+            "sub/C:INPUT",
             "..",
             "basis/..",
             "basis/../INPUT",
@@ -179,6 +181,11 @@ class TestValidateSelection:
         assert validate_selection("./basis//*.orb") == "basis/*.orb"
         assert validate_selection("a/./b/?") == "a/b/?"
 
+    def test_preserves_shell_syntax_components(self) -> None:
+        assert validate_selection("$HOME/INPUT") == "$HOME/INPUT"
+        assert validate_selection("~/INPUT") == "~/INPUT"
+        assert validate_selection("basis/{a,b}.orb") == "basis/{a,b}.orb"
+
     @pytest.mark.parametrize(
         "selection",
         [
@@ -186,6 +193,8 @@ class TestValidateSelection:
             "..",
             "basis/..",
             "C:/x",
+            "sub/C:",
+            "sub/C:*.orb",
             "basis\\INPUT",
             ".",
             "",
@@ -266,6 +275,21 @@ class TestSelectionMatchesWildcards:
         ]
         for path, kind in entries:
             assert not selection_matches("missing/*.dat", path, kind)
+
+
+class TestSelectionMatchesShellSyntax:
+    def test_shell_variable_is_literal(self) -> None:
+        assert selection_matches("$HOME/INPUT", "$HOME/INPUT", TaskInputKind.FILE)
+        assert not selection_matches("$HOME/INPUT", "home/INPUT", TaskInputKind.FILE)
+
+    def test_home_directory_syntax_is_literal(self) -> None:
+        assert selection_matches("~/INPUT", "~/INPUT", TaskInputKind.FILE)
+        assert not selection_matches("~/INPUT", "home/user/INPUT", TaskInputKind.FILE)
+
+    def test_brace_syntax_is_literal(self) -> None:
+        assert selection_matches("{a,b}.orb", "{a,b}.orb", TaskInputKind.FILE)
+        assert not selection_matches("{a,b}.orb", "a.orb", TaskInputKind.FILE)
+        assert not selection_matches("{a,b}.orb", "b.orb", TaskInputKind.FILE)
 
 
 class TestSelectionMatchesDoubleStar:

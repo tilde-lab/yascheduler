@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
-# PURPOSE: Pin submission-boundary input normalization — legacy literal/glob claims and encodings, exact fort.9 base64 compatibility, required declarations, typed/unsafe metadata separation, explicit-entry ambiguity, purity, immutable snapshot shape, and content-free trace logs — so public submit payloads become one typed domain snapshot exactly once.
-# SCOPE: normalize_task_inputs legacy and explicit modes, UTF-8 and lenient base64 conversion, glob parent materialization, missing/ambiguous declaration errors, metadata preservation, no filesystem access, and content-free NORMALIZE_INPUTS_START/success/FAILED trajectory logs.
+# PURPOSE: Pin submission-boundary input normalization — legacy literal/glob claims and encodings, exact fort.9 base64 compatibility, required declarations, claimed-key stripping with typed/unrelated metadata preservation, explicit-entry ambiguity, purity, immutable snapshot shape, and content-free trace logs — so public submit payloads become one typed domain snapshot exactly once.
+# SCOPE: normalize_task_inputs legacy and explicit modes, UTF-8 and lenient base64 conversion, glob parent materialization, missing/ambiguous declaration errors, claimed-key stripping, unrelated/typed metadata preservation, no filesystem access, and content-free NORMALIZE_INPUTS_START/success/FAILED trajectory logs.
 # KEYWORDS: task inputs, submission boundary, normalization, legacy metadata, base64, fort.9, snapshot, ADR-0019
 # endregion MODULE_CONTRACT
 
@@ -53,7 +53,7 @@ class TestLegacyLiteralDeclarations:
         )
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"line1\nline2"),)
-        assert remaining == {"INPUT": "line1\nline2"}
+        assert remaining == {}
 
     def test_non_ascii_literal_value_is_utf8_encoded(self) -> None:
         snapshot, _ = normalize_task_inputs({"INPUT": "текст"}, _engine("INPUT"), None)
@@ -114,22 +114,26 @@ class TestLegacyLiteralDeclarations:
         snapshot, remaining = normalize_task_inputs(metadata, _engine("*"), None)
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        assert remaining == metadata
+        assert remaining == typed_metadata
 
-    def test_claimed_keys_stay_in_metadata_and_unrelated_metadata_preserved(
+    def test_claimed_keys_are_stripped_and_unrelated_and_typed_metadata_preserved(
         self,
     ) -> None:
         metadata = {
             "INPUT": "body",
             "count": 42,
             "nested": {"items": [1, 2]},
+            "local_folder": "local",
         }
 
         snapshot, remaining = normalize_task_inputs(metadata, _engine("INPUT"), None)
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        # Transition: claimed keys stay in metadata until the deployer flip (4.1).
-        assert remaining == metadata
+        assert remaining == {
+            "count": 42,
+            "nested": {"items": [1, 2]},
+            "local_folder": "local",
+        }
 
     def test_empty_input_declarations_yield_empty_snapshot_and_metadata(self) -> None:
         metadata = {"engine": "x", "count": 42, "nested": {"a": 1}}
@@ -153,7 +157,7 @@ class TestLegacyLiteralDeclarations:
         )
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        assert remaining == {"INPUT": "body"}
+        assert remaining == {}
 
 
 class TestLegacyGlobDeclarations:
@@ -174,7 +178,7 @@ class TestLegacyGlobDeclarations:
             TaskInputDirectory(path="basis/deep"),
             TaskInputFile(path="basis/deep/x.orb", content=b"deep-orb"),
         )
-        assert remaining == metadata
+        assert remaining == {"unrelated": 42}
 
     def test_glob_with_no_claimable_keys_is_rejected(self) -> None:
         with pytest.raises(MissingInputFileError) as info:
@@ -199,7 +203,11 @@ class TestLegacyGlobDeclarations:
 
         assert snapshot == (TaskInputFile(path="safe", content=b"body"),)
         # Unsafe keys are never claimed and stay in the metadata untouched.
-        assert remaining == metadata
+        assert remaining == {
+            "../evil": "parent",
+            "/abs": "absolute",
+            "a\\b": "backslash",
+        }
 
     def test_unsafe_glob_declaration_is_rejected(self) -> None:
         with pytest.raises(UnsafeTaskPathError) as info:

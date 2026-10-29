@@ -73,6 +73,12 @@ def test_legacy_bytes_preserves_recorded_encoding_meaning(
     assert _MIGRATION._legacy_bytes(path, value) == expected
 
 
+def test_legacy_fort9_decoder_keeps_historical_lenient_base64() -> None:
+    """Pin deployment compatibility; invalid characters are deliberately discarded."""
+    assert _MIGRATION._legacy_bytes("fort.9", "QUJD$") == b"ABC"
+    assert _MIGRATION._legacy_bytes("fort.9", "!!!!") == b""
+
+
 def test_convert_payload_selects_tree_glob_overlap_and_preserves_metadata() -> None:
     payload: dict[str, object] = {
         "INPUT": "body",
@@ -114,6 +120,24 @@ def test_convert_payload_selects_tree_glob_overlap_and_preserves_metadata() -> N
         "remote_folder": "/keep/typed-metadata",
         "priority": 7,
         "nested_metadata": {"keep": True},
+    }
+
+
+def test_convert_payload_glob_leaves_unsafe_key_in_extra() -> None:
+    payload: dict[str, object] = {
+        "good.orb": "good",
+        "../evil.orb": "unrelated-payload",
+    }
+
+    snapshot, remaining = _MIGRATION._convert_payload(
+        "test-engine", ("*.orb",), payload
+    )
+
+    assert snapshot == (TaskInputFile(path="good.orb", content=b"good"),)
+    assert remaining == {"../evil.orb": "unrelated-payload"}
+    assert payload == {
+        "good.orb": "good",
+        "../evil.orb": "unrelated-payload",
     }
 
 

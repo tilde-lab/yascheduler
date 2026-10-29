@@ -418,6 +418,7 @@ class TestSubmitSnapshotFailures:
         monkeypatch: pytest.MonkeyPatch,
         stub_config_deps: tuple[MagicMock, MagicMock],
     ) -> None:
+        _config, deps = stub_config_deps
         script = tmp_path / "test.in"
         script.write_text("ENGINE = g09\n")
         cwd = tmp_path / "cwd"
@@ -432,6 +433,7 @@ class TestSubmitSnapshotFailures:
         assert out == ""
         assert err.startswith("Error:")
         assert "input" in err
+        deps.submit.assert_not_awaited()
 
     def test_selected_symlink_exits_one_with_path(
         self,
@@ -440,6 +442,7 @@ class TestSubmitSnapshotFailures:
         monkeypatch: pytest.MonkeyPatch,
         stub_config_deps: tuple[MagicMock, MagicMock],
     ) -> None:
+        _config, deps = stub_config_deps
         script = tmp_path / "test.in"
         script.write_text("ENGINE = g09\n")
         cwd = tmp_path / "cwd"
@@ -458,6 +461,7 @@ class TestSubmitSnapshotFailures:
         assert err.startswith("Error:")
         assert "input" in err
         assert "symbolic link" in err.lower()
+        deps.submit.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

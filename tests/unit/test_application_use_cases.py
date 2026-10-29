@@ -170,7 +170,7 @@ class TestSubmitTask:
 
         task_id = await submit_task(
             label="my_job",
-            metadata={"inp": "content"},
+            metadata={"unrelated": "content"},
             engine_name="test_engine",
             engines=mock_engine_repo,
             uow_factory=mock_uow_factory,
@@ -183,7 +183,7 @@ class TestSubmitTask:
         uow.tasks.insert.assert_called_once()
         inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
         assert inserted_arg.label == "my_job"
-        assert inserted_arg.extra == {"inp": "content"}
+        assert inserted_arg.extra == {"unrelated": "content"}
         assert inserted_arg.engine == "test_engine"
         assert inserted_arg.input_entries == snapshot
 
