@@ -1,8 +1,8 @@
 # region MODULE_CONTRACT
-# PURPOSE: Verify via a real Docker SSH server that TaskDeployer reconstructs a task's stored input tree under the remote task root and only then runs spawn.
-# SCOPE: Docker SSH fixture, repository/session setup, nested binary/hidden/empty file and empty-directory snapshot deployment, exact remote byte/path checks, and cleanup.
+# PURPOSE: Verify via a real Docker SSH server that TaskDeployer reconstructs a task's stored input tree under the remote task root and only then runs spawn, and that an unsafe destination prevents spawn and returns the session to FREE.
+# SCOPE: Docker SSH fixture, repository/session setup, nested binary/hidden/empty file and empty-directory snapshot deployment, exact remote byte/path checks, symbolic-link and file/directory-conflict rejection with rollback, replacement of a stale ordinary file, and cleanup.
 # DEPENDENCIES: USES API: testcontainers (Docker SSH server), asyncssh SFTP
-# KEYWORDS: TaskDeployer, input snapshot, SFTP, binary bytes, empty directory, spawn ordering
+# KEYWORDS: TaskDeployer, input snapshot, SFTP, binary bytes, empty directory, spawn ordering, symbolic link, destination conflict, rollback
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import asyncssh
 import pytest
+from asyncssh.sftp import FILEXFER_TYPE_SYMLINK
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
@@ -21,9 +22,12 @@ from yascheduler.domain import (
     Engine,
     TaskInputDirectory,
     TaskInputFile,
+    TaskInputSnapshot,
+    UnsafeTaskPathError,
     normalize_input_snapshot,
 )
 from yascheduler.domain.model import (
+    MachineState,
     Node,
     NodeId,
     Running,
@@ -46,6 +50,10 @@ pytestmark = pytest.mark.integration
 BINARY_BYTES = b"\x00\x01\x02binary\x80\xff\x00end\xf0\x28\x8c\x28"
 HIDDEN_BYTES = b"hidden\x00bytes"
 CACHE_KEY_BYTES = b".cache-key\xff"
+LINKED_BYTES = b"through-link\x00bytes"
+CONFLICT_BYTES = b"conflicting-entry"
+STALE_INPUT_BYTES = b"stale"
+FRESH_INPUT_BYTES = b"\x00fresh\xffinput\x00"
 
 
 class SSHContainerInfo(TypedDict):
@@ -155,6 +163,45 @@ async def _read_remote_file(sftp: SFTPClient, path: PurePosixPath) -> bytes:
         return await remote_file.read()
 
 
+async def _run_remote_checked(session: MachineSession, command: str) -> str:
+    """Run a remote shell command, require exit code zero, and return stdout."""
+    result = await session.run(command)
+    assert result.exit_code == 0, result.stderr
+    return result.stdout
+
+
+async def _remote_is_file(session: MachineSession, path: PurePosixPath) -> bool:
+    """Return whether a remote path is an existing regular file."""
+    result = await session.run(f"test -f {session.quote(str(path))}")
+    return result.exit_code == 0
+
+
+async def _remove_remote_paths(
+    session: MachineSession,
+    *paths: PurePosixPath,
+) -> None:
+    """Remove remote paths recursively as test cleanup."""
+    quoted = " ".join(session.quote(str(path)) for path in paths)
+    await _run_remote_checked(session, f"rm -rf -- {quoted}")
+
+
+def _build_deployment(
+    remote_root: PurePosixPath,
+    snapshot: TaskInputSnapshot,
+    spawn: str,
+) -> tuple[Engine, RunningTask]:
+    """Build the engine and RUNNING task that deploys one snapshot."""
+    engine = Engine(name="snapshot_engine", spawn=spawn)
+    task: RunningTask = Task(
+        task_id=TaskId(1),
+        engine=engine.name,
+        label="snapshot-unsafe-destination",
+        state=Running(allocated_node_id=NodeId(1), remote_folder=str(remote_root)),
+        input_entries=snapshot,
+    )
+    return engine, task
+
+
 async def test_deploy_reconstructs_stored_input_tree(
     repository: SSHMachineRepository,
 ) -> None:
@@ -249,3 +296,164 @@ async def test_deploy_reconstructs_stored_input_tree(
             f"rm -rf -- {session.quote(str(remote_root))}",
         )
         assert result.exit_code == 0
+
+
+async def test_deploy_rejects_symlinked_destination_directory(
+    repository: SSHMachineRepository,
+) -> None:
+    """A symlink where the snapshot needs a parent directory is rejected before spawn."""
+    session = _get_session(repository)
+    remote_root = PurePosixPath("/tmp") / f"yascheduler-symlink-{uuid4().hex}"
+    link_target = PurePosixPath("/tmp") / f"yascheduler-link-target-{uuid4().hex}"
+    linked_directory = remote_root / "linked"
+    snapshot = normalize_input_snapshot(
+        [TaskInputFile(path="linked/data.bin", content=LINKED_BYTES)]
+    )
+    engine, task = _build_deployment(
+        remote_root,
+        snapshot,
+        "touch {task_path}/__spawned__",
+    )
+
+    try:
+        # The link target is a sibling directory the deployer must never write into.
+        await _run_remote_checked(
+            session,
+            f"mkdir -p {session.quote(str(remote_root))}"
+            f" {session.quote(str(link_target))}",
+        )
+        await _run_remote_checked(
+            session,
+            f"ln -s {session.quote(str(link_target))}"
+            f" {session.quote(str(linked_directory))}",
+        )
+
+        with pytest.raises(UnsafeTaskPathError) as excinfo:
+            await TaskDeployer().start_task_on_machine(
+                session,
+                engine,
+                task,
+                ncpus=4,
+                engines_dir=PurePosixPath("/tmp/engines"),
+            )
+
+        assert excinfo.value.path == str(linked_directory)
+        assert "symbolic link" in excinfo.value.reason
+        # The same session object was rolled back from BUSY to FREE.
+        assert session.machine.state == MachineState.FREE
+
+        async with session.open_sftp() as sftp:
+            linked_attrs = await sftp.lstat(str(linked_directory))
+            assert linked_attrs.type == FILEXFER_TYPE_SYMLINK
+
+        # Nothing was written through the link: the target directory stays empty
+        # and the spawn marker never appeared.
+        assert (
+            await _run_remote_checked(
+                session,
+                f"ls -A {session.quote(str(link_target))}",
+            )
+            == ""
+        )
+        assert not await _remote_is_file(session, link_target / "data.bin")
+        assert not await _remote_is_file(session, remote_root / "__spawned__")
+    finally:
+        await _remove_remote_paths(session, remote_root, link_target)
+
+
+async def test_deploy_rejects_file_where_snapshot_needs_directory(
+    repository: SSHMachineRepository,
+) -> None:
+    """A regular file at a snapshot directory path is rejected before spawn."""
+    session = _get_session(repository)
+    remote_root = PurePosixPath("/tmp") / f"yascheduler-conflict-{uuid4().hex}"
+    conflicting_entry = remote_root / "sub"
+    snapshot = normalize_input_snapshot(
+        [TaskInputFile(path="sub/data.bin", content=CONFLICT_BYTES)]
+    )
+    engine, task = _build_deployment(
+        remote_root,
+        snapshot,
+        "touch {task_path}/__spawned__",
+    )
+
+    try:
+        await _run_remote_checked(
+            session, f"mkdir -p {session.quote(str(remote_root))}"
+        )
+        await _run_remote_checked(
+            session,
+            f"printf %s {session.quote(CONFLICT_BYTES.decode())}"
+            f" > {session.quote(str(conflicting_entry))}",
+        )
+
+        with pytest.raises(UnsafeTaskPathError) as excinfo:
+            await TaskDeployer().start_task_on_machine(
+                session,
+                engine,
+                task,
+                ncpus=4,
+                engines_dir=PurePosixPath("/tmp/engines"),
+            )
+
+        # Normalization materializes the parent directory entry for
+        # "sub/data.bin", so the conflict is reported against "sub".
+        assert excinfo.value.path == str(conflicting_entry)
+        assert "non-directory" in excinfo.value.reason
+        assert session.machine.state == MachineState.FREE
+
+        # The conflicting file was neither replaced nor removed, and no spawn
+        # marker appeared.
+        async with session.open_sftp() as sftp:
+            assert await _read_remote_file(sftp, conflicting_entry) == CONFLICT_BYTES
+        assert not await _remote_is_file(session, remote_root / "__spawned__")
+    finally:
+        await _remove_remote_paths(session, remote_root)
+
+
+async def test_deploy_replaces_existing_ordinary_file(
+    repository: SSHMachineRepository,
+) -> None:
+    """An existing ordinary file at a snapshot file path is replaced with new bytes."""
+    session = _get_session(repository)
+    remote_root = PurePosixPath("/tmp") / f"yascheduler-replace-{uuid4().hex}"
+    stale_input = remote_root / "INPUT"
+    snapshot = normalize_input_snapshot(
+        [TaskInputFile(path="INPUT", content=FRESH_INPUT_BYTES)]
+    )
+    engine, task = _build_deployment(
+        remote_root,
+        snapshot,
+        "test -f {task_path}/INPUT && touch {task_path}/__spawned__",
+    )
+
+    try:
+        await _run_remote_checked(
+            session, f"mkdir -p {session.quote(str(remote_root))}"
+        )
+        await _run_remote_checked(
+            session,
+            f"printf %s {session.quote(STALE_INPUT_BYTES.decode())}"
+            f" > {session.quote(str(stale_input))}",
+        )
+        async with session.open_sftp() as sftp:
+            assert await _read_remote_file(sftp, stale_input) == STALE_INPUT_BYTES
+
+        assert (
+            await TaskDeployer().start_task_on_machine(
+                session,
+                engine,
+                task,
+                ncpus=4,
+                engines_dir=PurePosixPath("/tmp/engines"),
+            )
+            is True
+        )
+
+        async with session.open_sftp() as sftp:
+            assert await _read_remote_file(sftp, stale_input) == FRESH_INPUT_BYTES
+        assert await _remote_is_file(session, remote_root / "__spawned__")
+        # A successful deployment keeps the session BUSY for the allocation.
+        assert session.machine.state == MachineState.BUSY
+    finally:
+        await _remove_remote_paths(session, remote_root)

@@ -1,20 +1,32 @@
 """TaskDeployer — upload task inputs and spawn the calculation process on a remote machine via MachineSession. Stateless: takes (log) at construction, (session, ...) per call."""
 # region MODULE_CONTRACT
 # PURPOSE: Reconstruct the task's stored input tree on a remote machine via MachineSession SFTP and spawn the calculation process; rolls back BUSY on failure.
-# SCOPE: TaskDeployer class, _write_remote_file and _make_remote_directory module-private helpers.
-# DEPENDENCIES: USES API: asyncssh (SFTPClient, SFTP errors)
+# SCOPE: TaskDeployer class; module-private helpers _write_remote_file, _make_remote_directory, _lstat_type, _check_destination.
+# DEPENDENCIES: USES API: asyncssh (SFTPClient, SFTP errors, SFTP file-type constants)
 # KEYWORDS: deploy, task, upload, spawn, TaskDeployer, sftp, input snapshot
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import logging
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 import asyncssh
+from asyncssh.sftp import (
+    FILEXFER_TYPE_DIRECTORY,
+    FILEXFER_TYPE_REGULAR,
+    FILEXFER_TYPE_SYMLINK,
+    FX_NO_SUCH_FILE,
+    FX_NO_SUCH_PATH,
+)
 
-from yascheduler.domain import MachineState, TaskId, TaskInputFile
+from yascheduler.domain import (
+    MachineState,
+    TaskId,
+    TaskInputFile,
+    UnsafeTaskPathError,
+    normalize_input_snapshot,
+)
 
 if TYPE_CHECKING:
     from pathlib import PurePath
@@ -26,6 +38,8 @@ if TYPE_CHECKING:
 __all__ = ["TaskDeployer"]
 
 logger = logging.getLogger(__name__)
+
+_ABSENT_SFTP_CODES = frozenset({FX_NO_SUCH_FILE, FX_NO_SUCH_PATH})
 
 
 # region FUNC__write_remote_file
@@ -52,7 +66,7 @@ async def _write_remote_file(sftp: SFTPClient, path: str, data: bytes) -> None:
 
 # region FUNC__make_remote_directory
 # PURPOSE: Create one stored input directory entry (with parents) on the remote host so empty directories survive deployment.
-# INVARIANTS: Idempotent — exist_ok tolerates a directory that already exists (e.g. partial earlier attempt); asyncssh.misc.Error is logged with path/reason/code/task_id and re-raised; any other exception propagates unlogged.
+# INVARIANTS: The path is passed to SFTP in POSIX-separated string form regardless of the remote platform flavor, so backslash-flavored Windows paths are never sent as one opaque component; idempotent — exist_ok tolerates a directory that already exists (e.g. partial earlier attempt); asyncssh.misc.Error is logged with path/reason/code/task_id and re-raised; any other exception propagates unlogged.
 async def _make_remote_directory(
     sftp: SFTPClient,
     path: PurePath,
@@ -60,7 +74,7 @@ async def _make_remote_directory(
 ) -> None:
     # region BLOCK_mkdir
     try:
-        await sftp.makedirs(PurePosixPath(path), exist_ok=True)
+        await sftp.makedirs(path.as_posix(), exist_ok=True)
     except asyncssh.misc.Error as err:
         logger.exception(
             "Mkdir %s - SFTPError: %s (%s) (task_id=%s)",
@@ -74,6 +88,62 @@ async def _make_remote_directory(
 
 
 # endregion FUNC__make_remote_directory
+
+
+# region FUNC__lstat_type
+# PURPOSE: Return the lstat (non-following) SFTP file type of one destination path, or None when it does not exist, so symlink and conflict checks never follow links.
+# INVARIANTS: Only SFTP "no such file/path" errors map to None; permission-denied and every other asyncssh.misc.Error propagate to the caller's failure path (an unverifiable destination is not written to); no exception is logged here — the caller classifies.
+async def _lstat_type(sftp: SFTPClient, path: PurePath) -> int | None:
+    try:
+        return (await sftp.lstat(path.as_posix())).type
+    except asyncssh.misc.Error as err:
+        if err.code in _ABSENT_SFTP_CODES:
+            return None
+        raise
+
+
+# endregion FUNC__lstat_type
+
+
+# region FUNC__check_destination
+# PURPOSE: Reject one destination path before writing when it is a symbolic link or conflicts with the required entry kind, per the ADR-0019 destination-traversal contract.
+# INVARIANTS: The check never follows links (lstat); a missing path is allowed and handled by the subsequent mkdir/write; a needed-directory path must be absent or a directory, a file path must be absent or an ordinary file (replaceable); every rejection raises UnsafeTaskPathError identifying the offending path and reason, and logs a structured boundary record without file contents.
+async def _check_destination(
+    sftp: SFTPClient,
+    path: PurePath,
+    *,
+    need_directory: bool,
+    task_id: TaskId,
+) -> None:
+    kind = await _lstat_type(sftp, path)
+    if kind is None:
+        return
+    posix = path.as_posix()
+    if kind == FILEXFER_TYPE_SYMLINK:
+        logger.debug(
+            "DESTINATION_REJECTED",
+            extra={"path": posix, "reason": "symbolic link", "task_id": task_id},
+        )
+        raise UnsafeTaskPathError(posix, "destination traversal met a symbolic link")
+    if need_directory and kind != FILEXFER_TYPE_DIRECTORY:
+        logger.debug(
+            "DESTINATION_REJECTED",
+            extra={"path": posix, "reason": "not a directory", "task_id": task_id},
+        )
+        raise UnsafeTaskPathError(
+            posix, "destination traversal met a non-directory entry"
+        )
+    if not need_directory and kind != FILEXFER_TYPE_REGULAR:
+        logger.debug(
+            "DESTINATION_REJECTED",
+            extra={"path": posix, "reason": "not an ordinary file", "task_id": task_id},
+        )
+        raise UnsafeTaskPathError(
+            posix, "destination traversal met a non-ordinary-file entry"
+        )
+
+
+# endregion FUNC__check_destination
 
 
 # region CLASS_TaskDeployer
@@ -91,7 +161,7 @@ class TaskDeployer:
 
     # region METHOD__upload_task_data
     # PURPOSE: Reconstruct the task's stored input tree under the remote task root — directories parent-first, then exact file bytes — from the immutable snapshot, without consulting live engine input declarations or task metadata.
-    # INVARIANTS: Entries iterate parent-first (sorted by canonical path, so every ancestor precedes its descendants); files are written in binary mode from stored bytes; an empty directory stays an explicit directory and a zero-length file stays a file; the whole tree is uploaded before this returns.
+    # INVARIANTS: Stored entries are re-validated at this trust boundary (normalize_input_snapshot rejects unsafe/duplicate/conflicting paths and orders parents before descendants); each entry's destination is joined component-wise in the remote platform's path flavor and lstat-checked without following links — symbolic links and file/directory conflicts fail with the offending path, while an existing ordinary file at a file path is replaced; the whole tree is uploaded before this returns. The ancestor checks are leaf-per-entry by design: normalize_input_snapshot materializes every parent directory entry, so each in-tree ancestor is itself lstat-checked — symlinked ancestors are caught through their own materialized entries. Ancestors above the task root are scheduler-controlled (resolved through realpath at session level) and are deliberately not re-inspected per deploy, per the ADR-0019 accepted-risk clause on non-atomic SFTP type checks.
     async def _upload_task_data(
         self,
         session: MachineSession,
@@ -100,24 +170,57 @@ class TaskDeployer:
     ) -> bool:
 
         # region BLOCK_upload
-        async with session.open_sftp() as sftp:
-            try:
-                await sftp.makedirs(PurePosixPath(remote_dir), exist_ok=True)
-            except asyncssh.misc.Error as err:
-                logger.exception(
-                    "Create %s - SFTPError: %s (%s) (task_id=%s)",
-                    remote_dir,
-                    err.reason,
-                    err.code,
-                    task.task_id,
-                )
-                raise
+        # Trust boundary: re-validate the stored snapshot before any remote
+        # write — unsafe paths, duplicates, and kind conflicts must not reach
+        # SFTP path joining even if storage or hydration were corrupted.
+        entries = normalize_input_snapshot(task.input_entries)
 
-            for entry in sorted(task.input_entries, key=lambda item: item.path):
-                target = remote_dir / entry.path
+        async with session.open_sftp() as sftp:
+            # Check the task root before creating it so a pre-existing symlink
+            # or a regular file at the root path fails with the same
+            # UnsafeTaskPathError contract as entry-level destinations.
+            await _check_destination(
+                sftp,
+                remote_dir,
+                need_directory=True,
+                task_id=task.task_id,
+            )
+            await _make_remote_directory(sftp, remote_dir, task.task_id)
+
+            for entry in entries:
+                target = remote_dir.joinpath(*entry.path.split("/"))
+                # Confinement guard: a component like ``a:b`` is drive-parsed
+                # by the Windows path flavor and would discard the task root
+                # (e.g. ``C:/tasks`` / ``sub/a:b`` -> ``a:b``). Any target
+                # that is not inside the remote task root is rejected before
+                # it can reach SFTP.
+                if not target.is_relative_to(remote_dir):
+                    logger.debug(
+                        "DESTINATION_REJECTED",
+                        extra={
+                            "path": entry.path,
+                            "reason": "escapes the task root",
+                            "task_id": task.task_id,
+                        },
+                    )
+                    raise UnsafeTaskPathError(
+                        entry.path, "destination escapes the task root"
+                    )
                 if isinstance(entry, TaskInputFile):
+                    await _check_destination(
+                        sftp,
+                        target,
+                        need_directory=False,
+                        task_id=task.task_id,
+                    )
                     await _write_remote_file(sftp, target.as_posix(), entry.content)
                 else:
+                    await _check_destination(
+                        sftp,
+                        target,
+                        need_directory=True,
+                        task_id=task.task_id,
+                    )
                     await _make_remote_directory(sftp, target, task.task_id)
         return True
         # endregion BLOCK_upload

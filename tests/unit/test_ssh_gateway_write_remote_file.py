@@ -9,11 +9,13 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import asyncssh
 import pytest
+from asyncssh.sftp import FILEXFER_TYPE_DIRECTORY, FX_NO_SUCH_FILE
 
 from tests.log_assertions import extra_fields
 from yascheduler.domain import (
@@ -54,7 +56,12 @@ class _FakeSFTPFile:
 
 
 class _FakeSFTPClient:
-    """SFTP client whose open() returns a configured _FakeSFTPFile context manager."""
+    """SFTP client whose open() returns a configured _FakeSFTPFile context manager.
+
+    ``lstat`` reports the directories created through ``makedirs`` as
+    FILEXFER_TYPE_DIRECTORY and every other path as absent, mirroring the
+    destination-confinement checks _upload_task_data performs before writing.
+    """
 
     def __init__(
         self,
@@ -62,13 +69,22 @@ class _FakeSFTPClient:
         open_side_effect: BaseException | None = None,
     ) -> None:
         self._file = file
+        self.directories: set[str] = set()
         self.open = (
             MagicMock(return_value=file)
             if open_side_effect is None
             else MagicMock(side_effect=open_side_effect)
         )
-        self.makedirs = AsyncMock(return_value=None)
+        self.makedirs = AsyncMock(side_effect=self._record_directory)
         self.realpath = AsyncMock(return_value="/root")
+
+    async def _record_directory(self, path: str, exist_ok: bool = False) -> None:
+        self.directories.add(path)
+
+    async def lstat(self, path: str) -> SimpleNamespace:
+        if path in self.directories:
+            return SimpleNamespace(type=FILEXFER_TYPE_DIRECTORY)
+        raise asyncssh.misc.Error(FX_NO_SUCH_FILE, "No such file")
 
 
 def _make_sftp_state(
@@ -392,9 +408,9 @@ class TestSuccessfulWrite:
 
         assert ok is True
         assert [call.args[0] for call in sftp.makedirs.await_args_list] == [
-            PurePosixPath("/remote/tasks/7"),
-            PurePosixPath("/remote/tasks/7/basis"),
-            PurePosixPath("/remote/tasks/7/basis/empty"),
+            "/remote/tasks/7",
+            "/remote/tasks/7/basis",
+            "/remote/tasks/7/basis/empty",
         ]
         sftp._file.write.assert_not_awaited()
 
