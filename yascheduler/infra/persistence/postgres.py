@@ -1,7 +1,7 @@
 """PostgreSQL repository implementations for tasks and nodes."""
 # region MODULE_CONTRACT
-# PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks and nodes transactionally without coupling domain logic to pg8000 or SQL details.
-# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor.
+# PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks (with their owned input snapshot entries) and nodes transactionally without coupling domain logic to pg8000 or SQL details.
+# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert and batched hydration.
 # INVARIANTS: Every repository method is async and routes synchronous pg8000 calls through asyncio.get_running_loop().run_in_executor(self._executor, _fn).
 # DEPENDENCIES: USES API: pg8000.Connection, READS: SQL files from disk via sql_loader
 # KEYWORDS: postgres, repository, task, node, crud
@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -26,6 +28,10 @@ from yascheduler.domain import (
     RunningTask,
     Task,
     TaskId,
+    TaskInputDirectory,
+    TaskInputEntry,
+    TaskInputFile,
+    TaskInputKind,
     TaskStatus,
     Todo,
     TodoTask,
@@ -45,6 +51,8 @@ if TYPE_CHECKING:
     from pg8000.native import Connection
 
 __all__ = ["PostgresNodeRepository", "PostgresTaskRepository"]
+
+logger = logging.getLogger(__name__)
 
 
 # region CLASS__PgRepository
@@ -100,7 +108,8 @@ class PostgresTaskRepository(_PgRepository):
         rows = await self._run(load_query("task/get_by_id"), task_id=task_id.value)
         if not rows:
             return None
-        return self._row_to_task(rows[0])
+        hydrated = await self._hydrate_input_entries([self._row_to_task(rows[0])])
+        return hydrated[0]
 
     # endregion METHOD_get
 
@@ -115,7 +124,8 @@ class PostgresTaskRepository(_PgRepository):
         )
         if not rows:
             return None
-        return cast("RunningTask", self._row_to_task(rows[0]))
+        hydrated = await self._hydrate_input_entries([self._row_to_task(rows[0])])
+        return cast("RunningTask", hydrated[0])
 
     # endregion METHOD_get_running
 
@@ -130,7 +140,8 @@ class PostgresTaskRepository(_PgRepository):
         )
         if not rows:
             return None
-        return cast("TodoTask", self._row_to_task(rows[0]))
+        hydrated = await self._hydrate_input_entries([self._row_to_task(rows[0])])
+        return cast("TodoTask", hydrated[0])
 
     # endregion METHOD_get_todo
 
@@ -209,9 +220,10 @@ class PostgresTaskRepository(_PgRepository):
     # endregion METHOD_list_ids_by_node_id_and_status
 
     # region METHOD_insert
-    # PURPOSE: Accept a new task submission so the orchestrator tracks it through its lifecycle — the returned Task carries a TaskCreated event for cross-layer notification.
+    # PURPOSE: Accept a new task submission with its owned input entries so the orchestrator tracks it through its lifecycle — the returned Task carries a TaskCreated event for cross-layer notification.
+    # ENSURES: Task row and input entries commit in the caller's UoW transaction; a failed entry write rolls back task creation; entries are never rewritten after insert.
     async def insert(self, new_task: NewTask) -> TodoTask:
-        """Insert a NewTask, return the persisted Task with TaskCreated in events."""
+        """Insert a NewTask and its owned input entries, return the persisted Task with TaskCreated in events."""
         rows = await self._run(
             load_query("task/insert"),
             title=new_task.label,
@@ -222,7 +234,33 @@ class PostgresTaskRepository(_PgRepository):
             webhook_custom_params=new_task.webhook_custom_params,
             extra=new_task.extra,
         )
-        return materialize_task(self._row_to_task(rows[0]))
+        task = self._row_to_task(rows[0])
+        # region BLOCK_insert_input_entries
+        # Owns nothing but the entry rows; task_id comes from RETURNING so the
+        # entries share the caller's transaction and never outlive their task.
+        if new_task.input_entries:
+            entries = tuple(new_task.input_entries)
+            await self._run(
+                load_query("task/insert_inputs"),
+                task_id=task.task_id.value,
+                paths=[e.path for e in entries],
+                kinds=[e.kind.value for e in entries],
+                contents=[
+                    e.content if isinstance(e, TaskInputFile) else None for e in entries
+                ],
+            )
+            logger.debug(
+                "persist_task_inputs",
+                extra={
+                    "task_id": task.task_id.value,
+                    "engine": new_task.engine,
+                    "entry_count": len(entries),
+                },
+            )
+        # endregion BLOCK_insert_input_entries
+        return materialize_task(
+            replace(task, input_entries=tuple(new_task.input_entries))
+        )
 
     # endregion METHOD_insert
 
@@ -239,7 +277,7 @@ class PostgresTaskRepository(_PgRepository):
             statuses=[s.name for s in statuses],
             lim=limit,
         )
-        return [self._row_to_task(r) for r in rows]
+        return await self._hydrate_input_entries([self._row_to_task(r) for r in rows])
 
     # endregion METHOD_list_by_status
 
@@ -251,7 +289,7 @@ class PostgresTaskRepository(_PgRepository):
             load_query("task/list_by_jobs"),
             task_ids=[tid.value for tid in job_ids],
         )
-        return [self._row_to_task(r) for r in rows]
+        return await self._hydrate_input_entries([self._row_to_task(r) for r in rows])
 
     # endregion METHOD_list_by_jobs
 
@@ -263,6 +301,42 @@ class PostgresTaskRepository(_PgRepository):
         return {TaskStatus[row["status"]]: row["count"] for row in rows}
 
     # endregion METHOD_count_by_status
+
+    # region METHOD__hydrate_input_entries
+    # PURPOSE: Batch-load owned input entries for already-hydrated tasks so every read recovers the complete snapshot without issuing a query per input file.
+    # INVARIANTS: One SELECT for the whole task list; entries attach by task identity and never rewrite task state fields; ordering is deterministic (task_id, path).
+    async def _hydrate_input_entries(self, tasks: list[AnyTask]) -> list[AnyTask]:
+        """Return the tasks with their owned input entries attached."""
+        if not tasks:
+            return tasks
+        # region BLOCK_load_entries
+        rows = await self._run(
+            load_query("task/list_inputs_by_task_ids"),
+            task_ids=[t.task_id.value for t in tasks],
+        )
+        by_task: dict[int, list[TaskInputEntry]] = {}
+        for row in rows:
+            by_task.setdefault(int(row["task_id"]), []).append(self._row_to_entry(row))
+        # endregion BLOCK_load_entries
+        return [
+            replace(t, input_entries=tuple(by_task[t.task_id.value]))
+            if t.task_id.value in by_task
+            else t
+            for t in tasks
+        ]
+
+    # endregion METHOD__hydrate_input_entries
+
+    # region METHOD__row_to_entry
+    # PURPOSE: Deserialize one input-entry row into the domain snapshot value so hydrated tasks carry typed entries, not raw SQL data.
+    @staticmethod
+    def _row_to_entry(row: Mapping[str, Any]) -> TaskInputEntry:
+        """Convert an input-entry row dict to a domain snapshot entry."""
+        if TaskInputKind(row["kind"]) is TaskInputKind.DIRECTORY:
+            return TaskInputDirectory(path=row["path"])
+        return TaskInputFile(path=row["path"], content=row["content"])
+
+    # endregion METHOD__row_to_entry
 
     # region METHOD__row_to_task
     # PURPOSE: Deserialize raw DB rows into domain Task entities so the application layer works with typed model objects, not raw dicts or manual JSON parsing.

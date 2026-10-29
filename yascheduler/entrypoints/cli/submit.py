@@ -1,32 +1,29 @@
 """yasubmit CLI command — parse AiiDA script and submit task via DI."""
 # region MODULE_CONTRACT
-# PURPOSE: yasubmit CLI command — parse an AiiDA submission script, read input files, and submit a task via the DI layer.
-# SCOPE: submit command — parse AiiDA script and submit task via DI.
-# KEYWORDS: submit, cli, aiida, script, task
+# PURPOSE: yasubmit CLI command — parse an AiiDA submission script, capture the engine input tree from the working directory, and submit the task with typed input entries via the DI layer.
+# SCOPE: submit command — parse AiiDA script, capture inputs, and submit task via DI.
+# KEYWORDS: submit, cli, aiida, script, task, capture
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from yascheduler.entrypoints import Config, make_cli_deps
 from yascheduler.entrypoints.config_parser import parse_config
 from yascheduler.entrypoints.logger import configure_cli_logger
+from yascheduler.infra import capture_input_snapshot
 
 from .args import (
     add_config_arg,
     add_log_level_arg,
     existing_path,
 )
-
-if TYPE_CHECKING:
-    from yascheduler.domain import Engine
 
 __all__ = ["submit"]
 
@@ -81,27 +78,9 @@ def _parse_script_metadata(script_text: str) -> dict[str, str]:
 # endregion FUNC__parse_script_metadata
 
 
-# region FUNC__read_input_files
-# PURPOSE: Read each engine-declared input file into the task metadata dict so the orchestrator has all inputs locally before upload
-# INVARIANTS: text files are stored as UTF-8 strings; binary files that fail UTF-8 decode are stored base64-encoded under the same key
-def _read_input_files(engine: Engine, local_folder: str | Path) -> dict[str, str]:
-    metadata: dict[str, str] = {}
-    for input_file in engine.input_files:
-        path = Path(local_folder, input_file)
-        try:
-            metadata[input_file] = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            with path.open("rb") as f:
-                metadata[input_file] = base64.b64encode(f.read()).decode("ascii")
-    return metadata
-
-
-# endregion FUNC__read_input_files
-
-
 # region FUNC__build_metadata
-# PURPOSE: Assemble the task metadata dict — local_folder, engine input files, and webhook fields when applicable — so the submit use case receives a single ready payload
-# INVARIANTS: local_folder is always present; engine input files present only when engine is known; webhook fields present only when PARENT in script AND config.local.webhook_url is set
+# PURPOSE: Assemble the task metadata dict — local_folder and webhook fields when applicable — so the submit use case receives a single ready payload; input files never enter metadata (the captured snapshot owns them).
+# INVARIANTS: local_folder is always present; webhook fields present only when PARENT in script AND config.local.webhook_url is set
 def _build_metadata(
     script_params: dict[str, str],
     config: Config,
@@ -109,9 +88,6 @@ def _build_metadata(
 ) -> dict[str, Any]:
     # region BLOCK_build_metadata
     metadata: dict[str, Any] = {"local_folder": str(local_folder)}
-    engine = config.engines.get(script_params.get("ENGINE", ""))
-    if engine is not None:
-        metadata.update(_read_input_files(engine, local_folder))
     if "PARENT" in script_params and config.local.webhook_url:
         metadata["webhook_url"] = config.local.webhook_url
         metadata["webhook_custom_params"] = {"parent": script_params["PARENT"]}
@@ -153,10 +129,17 @@ async def _submit_async(argv: list[str] | None) -> None:
             raise EngineNotSupportedError(engine_name)  # noqa: TRY301
         # endregion BLOCK_validate_content
 
+        # Capture the engine's input tree from the working directory (never
+        # the script's directory) as typed entries; the snapshot replaces the
+        # legacy text/base64 metadata values (ADR-0019, task 2.3).
+        input_entries = capture_input_snapshot(Path.cwd(), engine.input_files)
+
         metadata = _build_metadata(script_params, config, Path.cwd())
 
         # region BLOCK_submit
-        task_id = await deps.submit(label, dict(metadata), engine.name)
+        task_id = await deps.submit(
+            label, dict(metadata), engine.name, input_entries=input_entries
+        )
         sys.stdout.write(f"{task_id!s}\n")
         # endregion BLOCK_submit
     except Exception as e:

@@ -12,7 +12,7 @@ import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import asyncssh
@@ -45,9 +45,11 @@ def _container_loopback_ip(index: int) -> str:
     `get_container_host_ip()` returns the docker host (e.g. ``localhost``)
     for every container in the default docker_host connection mode, which
     collapses the two-container pool into a single indistinguishable host.
-    Published ports listen on the whole 127.0.0.0/8 range on Docker and on
-    rootless podman, so distinct loopback addresses (127.0.0.1, 127.0.0.2, ...)
-    give per-container reachable endpoints. Container bridge IPs are NOT used:
+    Distinct loopback addresses (127.0.0.1, 127.0.0.2, ...) give per-container
+    reachable endpoints, but the published port must be bound to that address
+    explicitly: a default ``0.0.0.0`` binding answers only on 127.0.0.1 under
+    pasta-backed rootless podman (e.g. podman nested in a container), so the
+    second container would be unreachable. Container bridge IPs are NOT used:
     on rootless podman the bridge lives in a dedicated network namespace and
     is unreachable from the host.
     """
@@ -99,12 +101,18 @@ async def ssh_pool(
 
     containers: list[DockerContainer] = []
     try:
-        for _ in range(2):
+        for index in range(2):
             c = DockerContainer(_SSH_IMAGE)
             c.with_env("SSH_USER", _SSH_USERNAME)
             c.with_env("AUTHORIZED_KEYS", public_key_str)
             c.with_env("ALLOWED_IPS", "AllowUsers testuser")
             c.with_exposed_ports(2222)
+            # Bind the published port to this container's own loopback address.
+            # testcontainers types the value as str|int, but docker-py also
+            # accepts (host_ip, host_port) with host_port None for "pick any".
+            published_ports = cast("dict[str, Any]", c.ports)
+            published_ports.clear()
+            published_ports["2222/tcp"] = (_container_loopback_ip(index), None)
             c.waiting_for(LogMessageWaitStrategy("Server listening on"))
             c.start()
             containers.append(c)

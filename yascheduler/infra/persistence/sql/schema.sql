@@ -83,6 +83,26 @@ CREATE TABLE IF NOT EXISTS yascheduler_tasks (
     )
 );
 
+-- Task-owned input snapshot entries (ADR-0019): one row per captured file or
+-- directory of a task's input snapshot. `path` is the canonical task-relative
+-- path; `content` holds exact file bytes (an empty byte string is an empty
+-- file, never a directory) and is NULL for directories. Rows are immutable
+-- after insertion and cascade only with their owning task.
+CREATE TABLE IF NOT EXISTS yascheduler_task_inputs (
+    task_id INTEGER NOT NULL REFERENCES yascheduler_tasks (
+        task_id
+    ) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    content BYTEA,
+    CONSTRAINT task_input_pk PRIMARY KEY (task_id, path),
+    CONSTRAINT task_input_kind_values CHECK (kind IN ('file', 'directory')),
+    CONSTRAINT task_input_kind_content_invariants CHECK (
+        (kind = 'file' AND content IS NOT NULL)
+        OR (kind = 'directory' AND content IS NULL)
+    )
+);
+
 -- Shared trigger function: sets NEW.updated_at = NOW() on every row update.
 -- Called by yascheduler_tasks_touch_updated_at and
 -- yascheduler_nodes_touch_updated_at.

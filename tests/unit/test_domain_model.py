@@ -1,7 +1,7 @@
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for domain entities: TaskStatus, MachineState, ProcessResult, Engine, Task, Node, ConnectedMachine.
-# SCOPE: Enum values, dataclass defaults/frozen semantics, Engine validation, Task lifecycle methods (run/reject/complete/fail/abandon), ConnectedMachine state transitions, materialize_task, Task.error column format contract, public events field.
-# KEYWORDS: TaskStatus, MachineState, ConnectedMachine, Engine, Task lifecycle
+# PURPOSE: Unit tests for domain entities: TaskStatus, MachineState, ProcessResult, Task, Node, ConnectedMachine.
+# SCOPE: Enum values, dataclass defaults/frozen semantics, Task lifecycle methods (run/reject/complete/fail/abandon), ConnectedMachine state transitions, materialize_task, Task.error column format contract, public events field.
+# KEYWORDS: TaskStatus, MachineState, ConnectedMachine, Task lifecycle
 # endregion MODULE_CONTRACT
 
 import time
@@ -19,14 +19,12 @@ from yascheduler.domain.events import (
 )
 from yascheduler.domain.exceptions import (
     MachineBusyError,
-    MissingInputFileError,
     TaskNotRunningError,
     TaskNotTodoError,
 )
 from yascheduler.domain.model import (
     ConnectedMachine,
     Done,
-    Engine,
     MachineState,
     NewNode,
     NewTask,
@@ -155,23 +153,6 @@ class TestTaskState:
             Todo().remote_folder = "/x"  # type: ignore[misc]
         with pytest.raises(FrozenInstanceError):
             Running(NodeId(1), "/r").remote_folder = "/x"  # type: ignore[misc]
-
-
-class TestEngine:
-    def test_validate_inputs_passes_when_all_present(self) -> None:
-        engine = Engine(name="cp2k", spawn="cp2k", input_files=("inp", "xyz"))
-        engine.validate_inputs({"inp": "content", "xyz": "content"})  # no exception
-
-    def test_validate_inputs_raises_when_file_missing(self) -> None:
-        engine = Engine(name="cp2k", spawn="cp2k", input_files=("inp", "xyz"))
-        with pytest.raises(MissingInputFileError) as exc_info:
-            engine.validate_inputs({"inp": "content"})
-        assert "xyz" in str(exc_info.value)
-        assert "cp2k" in str(exc_info.value)
-
-    def test_validate_inputs_no_input_files(self) -> None:
-        engine = Engine(name="cp2k", spawn="cp2k")
-        engine.validate_inputs({})  # no exception
 
 
 class TestTask:

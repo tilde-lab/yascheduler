@@ -22,8 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence, ValuesView
     from pathlib import PurePath
 
-from .exceptions import MissingInputFileError
-
 __all__ = [
     "Deploy",
     "Engine",
@@ -80,16 +78,10 @@ class Engine:
     check_cmd_code: int = 0
     sleep_interval: int = 10
 
-    # region METHOD_validate_inputs
-    # PURPOSE: Verify every required engine input file is present in the task payload, failing fast before deployment.
-    # REQUIRES: extra keys are input-file names.
-    def validate_inputs(self, extra: Mapping[str, object]) -> None:
-        """Verify all required engine input files exist in the task extra payload."""
-        for filename in self.input_files:
-            if filename not in extra:
-                raise MissingInputFileError(self.name, filename)
-
-    # endregion METHOD_validate_inputs
+    # Input ownership note (ADR-0019): required-input validation against raw
+    # metadata was replaced by the one snapshot rule,
+    # domain.task_inputs.validate_snapshot_selections; the engine carries only
+    # the declarations now.
 
 
 # endregion CLASS_Engine

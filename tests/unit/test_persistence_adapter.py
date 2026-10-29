@@ -259,13 +259,16 @@ class TestPostgresTaskRepository:
     async def test_get_returns_task(self, mocker: MockerFixture) -> None:
         """Get returns a Task hydrated from the row returned by _run."""
         repo = self._make_repo(mocker)
-        repo._run.return_value = [  # type: ignore[attr-defined]
-            _make_task_row(
-                task_id=42,
-                status="RUNNING",
-                allocated_node_id=5,
-                remote_folder="/r",
-            )
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [
+                _make_task_row(
+                    task_id=42,
+                    status="RUNNING",
+                    allocated_node_id=5,
+                    remote_folder="/r",
+                )
+            ],
+            [],
         ]
 
         task = await repo.get(TaskId(42))
@@ -292,18 +295,21 @@ class TestPostgresTaskRepository:
     ) -> None:
         """Get handles null allocated_node_id and extra metadata fields."""
         repo = self._make_repo(mocker)
-        repo._run.return_value = [  # type: ignore[attr-defined]
-            _make_task_row(
-                task_id=1,
-                title="no-ip-task",
-                engine="cp2k",
-                remote_folder="/remote/path",
-                local_folder="/local/path",
-                webhook_url="https://hook.example.com",
-                webhook_custom_params=json.dumps({"key": "val"}),
-                extra=json.dumps({"extra_field": "extra_val"}),
-            ),
-        ]  # type: ignore[attr-defined]
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [
+                _make_task_row(
+                    task_id=1,
+                    title="no-ip-task",
+                    engine="cp2k",
+                    remote_folder="/remote/path",
+                    local_folder="/local/path",
+                    webhook_url="https://hook.example.com",
+                    webhook_custom_params=json.dumps({"key": "val"}),
+                    extra=json.dumps({"extra_field": "extra_val"}),
+                )
+            ],
+            [],
+        ]
 
         task = await repo.get(TaskId(1))
 
@@ -448,16 +454,19 @@ class TestPostgresTaskRepository:
     async def test_list_by_status_returns_tasks(self, mocker: MockerFixture) -> None:
         """list_by_status returns a Task for each row."""
         repo = self._make_repo(mocker)
-        repo._run.return_value = [  # type: ignore[attr-defined]
-            _make_task_row(task_id=1, title="a"),
-            _make_task_row(
-                task_id=2,
-                title="b",
-                status="RUNNING",
-                engine="cp2k",
-                allocated_node_id=5,
-                remote_folder="/r",
-            ),
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [
+                _make_task_row(task_id=1, title="a"),
+                _make_task_row(
+                    task_id=2,
+                    title="b",
+                    status="RUNNING",
+                    engine="cp2k",
+                    allocated_node_id=5,
+                    remote_folder="/r",
+                ),
+            ],
+            [],
         ]
 
         tasks = await repo.list_by_status(
@@ -484,9 +493,12 @@ class TestPostgresTaskRepository:
     async def test_list_by_jobs_returns_tasks(self, mocker: MockerFixture) -> None:
         """list_by_jobs returns tasks matching the given job ids."""
         repo = self._make_repo(mocker)
-        repo._run.return_value = [  # type: ignore[attr-defined]
-            _make_task_row(task_id=10, title="job-x", status="DONE"),
-            _make_task_row(task_id=20, title="job-y", status="DONE", engine="cp2k"),
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [
+                _make_task_row(task_id=10, title="job-x", status="DONE"),
+                _make_task_row(task_id=20, title="job-y", status="DONE", engine="cp2k"),
+            ],
+            [],
         ]
 
         tasks = await repo.list_by_jobs([TaskId(10), TaskId(20)])

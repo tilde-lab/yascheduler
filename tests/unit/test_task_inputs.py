@@ -8,6 +8,7 @@ import pytest
 
 from yascheduler.domain import (
     InvalidTaskSnapshotError,
+    MissingInputFileError,
     NewTask,
     NodeId,
     Task,
@@ -23,6 +24,7 @@ from yascheduler.domain import (
     normalize_input_snapshot,
     selection_matches,
     validate_selection,
+    validate_snapshot_selections,
     validate_task_path,
 )
 
@@ -269,6 +271,64 @@ class TestSelectionMatchesDoubleStar:
         """`**` matches directory entries; the caller expands their subtrees."""
         assert selection_matches("**", "basis", TaskInputKind.DIRECTORY)
         assert not selection_matches("basis/**", "basis/Si.orb", TaskInputKind.FILE)
+
+
+class TestValidateSnapshotSelections:
+    def test_empty_declarations_are_trivially_satisfied(self) -> None:
+        validate_snapshot_selections("engine", (), ())
+
+    def test_literal_file_declaration_is_satisfied(self) -> None:
+        snapshot = (TaskInputFile("INPUT", b"body"),)
+
+        validate_snapshot_selections("engine", ("INPUT",), snapshot)
+
+    def test_literal_directory_declaration_is_satisfied(self) -> None:
+        snapshot = (TaskInputDirectory("basis"),)
+
+        validate_snapshot_selections("engine", ("basis",), snapshot)
+
+    def test_glob_declaration_is_satisfied(self) -> None:
+        snapshot = (TaskInputFile("basis/Si.orb", b"orb"),)
+
+        validate_snapshot_selections("engine", ("basis/*.orb",), snapshot)
+
+    def test_trailing_double_star_is_satisfied_by_directory_entries(self) -> None:
+        snapshot = (
+            TaskInputDirectory("basis"),
+            TaskInputDirectory("basis/empty"),
+        )
+
+        validate_snapshot_selections("engine", ("basis/**",), snapshot)
+
+    def test_zero_level_double_star_is_satisfied_by_direct_file(self) -> None:
+        snapshot = (TaskInputFile("basis/a.orb", b"x"),)
+
+        validate_snapshot_selections("engine", ("basis/**/*.orb",), snapshot)
+
+    def test_first_unsatisfied_declaration_is_reported(self) -> None:
+        with pytest.raises(MissingInputFileError) as info:
+            validate_snapshot_selections(
+                "engine",
+                ("missing-first", "missing-second"),
+                (),
+            )
+
+        assert info.value.engine_name == "engine"
+        assert info.value.filename == "missing-first"
+
+    def test_trailing_double_star_requires_directory_kind(self) -> None:
+        snapshot = (TaskInputFile("basis/x.orb", b"x"),)
+
+        with pytest.raises(MissingInputFileError) as info:
+            validate_snapshot_selections("engine", ("basis/**",), snapshot)
+
+        assert info.value.filename == "basis/**"
+
+    def test_is_exported_from_domain_facade(self) -> None:
+        from yascheduler import domain
+
+        assert "validate_snapshot_selections" in domain.__all__
+        assert domain.validate_snapshot_selections is validate_snapshot_selections
 
 
 class TestNormalizeInputSnapshot:

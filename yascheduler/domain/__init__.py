@@ -90,6 +90,7 @@ __all__ = [
     "remote_folder_of",
     "selection_matches",
     "validate_selection",
+    "validate_snapshot_selections",
     "validate_task_path",
 ]
 
@@ -179,5 +180,6 @@ from .task_inputs import (
     normalize_input_snapshot,
     selection_matches,
     validate_selection,
+    validate_snapshot_selections,
     validate_task_path,
 )

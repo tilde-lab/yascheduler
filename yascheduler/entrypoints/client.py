@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -19,6 +20,7 @@ from yascheduler.domain import (
     NodeId,
     TaskId,
     TaskInputEntry,
+    TaskInputFile,
     TaskStatus,
     allocated_node_id_of,
     error_of,
@@ -70,8 +72,40 @@ def to_sync(
 # endregion FUNC_to_sync
 
 
+# region FUNC__input_entry_to_public
+# PURPOSE: Project one task input entry into its documented JSON-safe public form — files as padded base64 without line breaks, directories content-free — so consumers can rebuild exact input bytes from query results.
+# INVARIANTS: Standard base64 with padding (base64.b64encode, no newlines); entry order is the caller's (path-sorted snapshot).
+def _input_entry_to_public(entry: TaskInputEntry) -> dict[str, Any]:
+    """Return the public query representation of one input entry."""
+    if isinstance(entry, TaskInputFile):
+        return {
+            "path": entry.path,
+            "kind": entry.kind.value,
+            "content_base64": base64.b64encode(entry.content).decode("ascii"),
+        }
+    return {"path": entry.path, "kind": entry.kind.value}
+
+
+# endregion FUNC__input_entry_to_public
+
+
+# region FUNC__legacy_input_metadata_value
+# PURPOSE: Reproduce the legacy CLI metadata encoding of one snapshot file — UTF-8 text as a plain string, anything else as canonical padded base64 — so existing metadata consumers keep reading files from queries unchanged after the ADR-0019 storage move (input_entries stays the canonical projection).
+# INVARIANTS: Pure function of the entry's bytes; no newline insertion (single-line base64); directories have no legacy representation and are skipped by the caller.
+def _legacy_input_metadata_value(content: bytes) -> str:
+    """Return the legacy metadata representation of one file's bytes."""
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return base64.b64encode(content).decode("ascii")
+
+
+# endregion FUNC__legacy_input_metadata_value
+
+
 # region FUNC__task_to_dict
-# PURPOSE: Project a Task plus its optional allocated Node into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId.
+# PURPOSE: Project a Task plus its optional allocated Node into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId; inputs project top-level as `input_entries` while metadata keeps legacy filename/value file keys for consumer compatibility.
+# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; entries ordered by task-relative path; file entries stay visible in metadata under their legacy encoding (old CLI: UTF-8 text, else base64), derived from the immutable snapshot — never a second stored copy; during the transition the task's own `extra` copies (live until the deployer flip, task 4.1) win over derived values; directories never appear in metadata; typed fields are never overwritten by input paths.
 def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, Any]:
     allocated_node_id = allocated_node_id_of(t)
     node = nodes_by_id.get(allocated_node_id) if allocated_node_id else None
@@ -92,11 +126,27 @@ def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, A
     for k, v in t.extra.items():
         if k not in metadata:
             metadata[k] = v
+    # region BLOCK_derive_legacy_input_metadata
+    # The snapshot's files are the task's inputs by contract; their legacy
+    # metadata view is derived from the immutable entries, so queries keep the
+    # pre-ADR-0019 shape without a second stored copy. Keys already present
+    # (typed fields or a transitional extra copy) keep their value.
+    for entry in t.input_entries:
+        if not isinstance(entry, TaskInputFile):
+            continue
+        if entry.path in metadata:
+            continue
+        metadata[entry.path] = _legacy_input_metadata_value(entry.content)
+    # endregion BLOCK_derive_legacy_input_metadata
     return {
         "task_id": t.task_id.value,
         "label": t.label,
         "status": t.status,
         "metadata": metadata,
+        "input_entries": [
+            _input_entry_to_public(entry)
+            for entry in sorted(t.input_entries, key=lambda entry: entry.path)
+        ],
         "node": (
             {
                 "hostname": node.hostname,

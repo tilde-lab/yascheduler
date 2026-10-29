@@ -19,7 +19,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pg8000 import DatabaseError
 
-from yascheduler.entrypoints.cli.init import _init_systemd, _init_sysv, init
+from yascheduler.entrypoints.cli.init import (
+    _init_schema,
+    _init_systemd,
+    _init_sysv,
+    init,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -40,18 +45,21 @@ def _stub_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _stub_apply_migrations(monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_apply_migrations(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Stub apply_migrations so _init_schema tests don't open a real DB connection.
 
     add-db-migrations made _init_schema call apply_migrations after apply_schema.
     Tests that assert on apply_schema call counts are unaffected; tests that need
     apply_schema to raise keep their own apply_schema mock (it raises first, so
-    apply_migrations is never reached).
+    apply_migrations is never reached). The stub is returned so tests can assert
+    which engine_inputs context _init_schema forwards.
     """
+    apply_migrations_mock = MagicMock()
     monkeypatch.setattr(
         "yascheduler.entrypoints.cli.init.apply_migrations",
-        MagicMock(),
+        apply_migrations_mock,
     )
+    return apply_migrations_mock
 
 
 class TestInitFlags:
@@ -470,3 +478,38 @@ class TestInitConfigLogLevel:
         _init_sysv(install_path, startup_file=startup_file)
         content = startup_file.read_text("utf-8")
         assert "daemon_sysv.py" in content
+
+
+class TestInitSchemaEngineInputs:
+    """_init_schema forwards engine input declarations to migrations (task 3.2)."""
+
+    def test_passes_engine_inputs_from_parsed_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        _stub_apply_migrations: MagicMock,
+    ) -> None:
+        """Parsed engines' input_files are passed as engine_inputs to apply_migrations."""
+        db = MagicMock()
+        engines = {
+            "dummy": MagicMock(input_files=("fort.9", "fort.10")),
+            "gaussian": MagicMock(input_files=("input.gjf",)),
+        }
+        config = MagicMock(db=db, engines=engines)
+        monkeypatch.setattr(
+            "yascheduler.entrypoints.cli.init.parse_config",
+            MagicMock(return_value=config),
+        )
+        monkeypatch.setattr(
+            "yascheduler.entrypoints.cli.init.apply_schema",
+            MagicMock(),
+        )
+
+        _init_schema()
+
+        _stub_apply_migrations.assert_called_once_with(
+            db,
+            engine_inputs={
+                "dummy": ("fort.9", "fort.10"),
+                "gaussian": ("input.gjf",),
+            },
+        )

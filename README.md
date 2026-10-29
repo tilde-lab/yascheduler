@@ -82,6 +82,109 @@ File paths can be set using the environment variables:
   PID file.
   *Default*: `/var/run/yascheduler.pid`
 
+### Typed input entries
+
+Pass typed entries with the keyword-only `input_entries=` argument (both
+`queue_submit_task` and `queue_submit_task_async` accept it) to submit exact
+bytes and directory structure:
+
+```python
+from pathlib import Path
+
+from yascheduler import Yascheduler
+from yascheduler.domain import TaskInputDirectory, TaskInputFile
+
+yac = Yascheduler()
+task_id = yac.queue_submit_task(
+    "test assignment",
+    {"local_folder": "/tmp/yascheduler-out", "project": "demo"},
+    "pcrystal",
+    input_entries=[
+        TaskInputFile("INPUT", Path("INPUT").read_bytes()),
+        TaskInputFile("fort.34", Path("fort.34").read_bytes()),  # binary-safe
+        TaskInputDirectory("basis"),
+    ],
+)
+print(task_id)
+```
+
+Entries must satisfy the engine's declared `input_files`; unrelated metadata
+keys are preserved. The legacy positional form still works: engine-declared
+file keys in metadata become the typed snapshot, ordinary strings encode as
+UTF-8, and only the historical `fort.9` key accepts base64. Supplying
+`input_entries=` together with legacy engine-declared input keys is rejected as
+ambiguous. An explicit empty `input_entries=[]` is a valid empty snapshot, not
+a fallback to metadata.
+
+### Query results
+
+`queue_get_tasks`, `queue_get_task`, and their async variants return one mapping
+per task. Queries are additive: `metadata` still carries one filename/value key
+per input file under the legacy encoding (UTF-8 text as a plain string,
+anything else as padded base64), so existing metadata consumers keep working.
+Before the typed snapshot existed, that metadata was the only input view:
+
+```python
+from yascheduler.domain import TaskStatus
+
+# Before
+{
+    "task_id": 42,
+    "label": "test assignment",
+    "status": TaskStatus.TO_DO,
+    "metadata": {
+        "engine": "pcrystal",
+        "local_folder": "/tmp/yascheduler-out",
+        "project": "demo",
+        "INPUT": "...",
+        "fort.34": "...",
+    },
+    "node": None,
+}
+```
+
+Queries now add a top-level `input_entries` list, sorted by task-relative path,
+which is the canonical projection of the snapshot: it carries exact bytes and
+also directory entries, which have no legacy metadata representation. The
+metadata keys are unchanged — derived from that same immutable snapshot rather
+than from a second stored copy:
+
+```python
+import base64
+
+from yascheduler.domain import TaskStatus
+
+task = yac.queue_get_task(42)
+# {
+#     "task_id": 42,
+#     "label": "test assignment",
+#     "status": TaskStatus.TO_DO,
+#     "metadata": {
+#         "engine": "pcrystal",
+#         "local_folder": "/tmp/yascheduler-out",
+#         "project": "demo",
+#         "INPUT": "...",
+#         "fort.34": "...",
+#     },
+#     "input_entries": [
+#         {"path": "INPUT", "kind": "file", "content_base64": "..."},
+#         {"path": "basis", "kind": "directory"},
+#         {"path": "fort.34", "kind": "file", "content_base64": "..."},
+#     ],
+#     "node": None,
+# }
+
+entry = next(e for e in task["input_entries"] if e["kind"] == "file")
+content = base64.b64decode(entry["content_base64"])  # exact file bytes
+```
+
+In `metadata`, text inputs appear as their decoded string and binary inputs as
+padded base64; typed metadata fields are never overwritten by input paths.
+`content_base64` in `input_entries` is always standard base64 with padding and
+no line breaks; directory entries carry no content field. `node` is `None`
+until allocation; allocated tasks return a mapping with `hostname`, `port`,
+`username`, `cloud`, `status`, and timestamps.
+
 ## Configuration
 
 Yascheduler reads its settings from an INI file. The file path is set by the

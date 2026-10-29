@@ -222,6 +222,13 @@ templater = "placeholder"
 [tool.sqlfluff.templater.placeholder]
 param_style = "colon"
 
+[tool.sqlfluff.rules.references.keywords]
+# `path` and `content` are non-reserved in PostgreSQL (path is not a keyword
+# at all since PG 10's keyword table cleanup) and are the documented column
+# names of yascheduler_task_inputs (ADR-0019). RF04 flags any keyword-shaped
+# identifier; these two are deliberately kept unquoted.
+ignore_words = "path,content"
+
 [tool.uv]
 exclude-newer = "7 days"
 constraint-dependencies = [

@@ -11,6 +11,7 @@
 # - Explicit entries together with metadata keys the engine declarations would claim are ambiguous and rejected (an explicit empty sequence is a valid empty snapshot, not a fallback to metadata).
 # - Typed metadata fields (TYPED_METADATA_KEYS) are never consumed as input payload by any declaration.
 # - Legacy values must be str: ordinary strings encode as UTF-8; `fort.9` uses the lenient base64 convention; base64 is never guessed for other filenames; non-string values fail with an actionable diagnostic.
+# - TRANSITION (until task 4.1 flips deployment to the snapshot): legacy mode keeps the claimed keys in the returned metadata, because the live deployer still reads task.extra[input_file]; the forward migration (task 3.3) and the deployer flip remove them. Explicit mode never writes input keys into metadata.
 # RATIONALE:
 # - Q: Why does normalization live in entrypoints instead of the application use case?
 #   A: Legacy payload interpretation is a public-boundary encoding concern (ADR-0019 section 2: "normalize legacy submit payloads at the public API boundary"); the use case receives typed entries only, so one boundary seam converts and every downstream layer stays legacy-free.
@@ -18,6 +19,8 @@
 #   A: Engine input declarations use the same task-relative selection contract as capture (ADR-0019 section 1); matching payload keys with selection_matches keeps legacy directory/glob declarations and filesystem capture one language, and deriving parent entries through normalize_input_snapshot lets legacy submitters express trees without new syntax.
 # - Q: Why does the ambiguity check reject instead of merging?
 #   A: A key claimed by declarations while explicit entries are supplied has two competing owners; rejecting with the offending key named is the only non-lossy answer, and the empty explicit sequence keeps a deliberate meaning (empty snapshot).
+# - Q: Why do claimed legacy keys stay in the metadata during the transition instead of being stripped now?
+#   A: The deployer still uploads from task.extra; stripping at the boundary would break deployment for every legacy submission until task 4.1 ships. Keeping them makes each implementation step independently deployable; the snapshot is built in parallel and the strip moves to the migration (3.3) and the deployer flip (4.1), which ship together per the plan.
 # KEYWORDS: task inputs, submission, normalization, legacy metadata, base64, fort.9, boundary, ADR-0019
 # endregion MODULE_CONTRACT
 
@@ -58,9 +61,9 @@ _LEGACY_BASE64_KEY: str = "fort.9"
 
 
 # region FUNC_normalize_task_inputs
-# PURPOSE: Turn one submission's metadata plus input source into the typed snapshot and the metadata that remains, so legacy encoding and ambiguity handling end at this boundary.
+# PURPOSE: Turn one submission's metadata plus input source into the typed snapshot and the metadata that continues downstream, so legacy encoding and ambiguity handling end at this boundary.
 # REQUIRES: engine is the resolved Engine for the submission (unknown engines are rejected by callers before normalization); input_entries is None (legacy mode) or a caller-supplied sequence of typed entries, possibly empty.
-# ENSURES: Returns (snapshot, remaining_metadata): snapshot is the normalized immutable tuple (claimed legacy values encoded per contract, or the validated explicit entries); remaining_metadata carries every non-claimed key unchanged, including typed fields and unrelated payload; explicit mode raises InvalidTaskSnapshotError on any key the engine declarations would claim; legacy mode raises MissingInputFileError for each unsatisfied declaration and InvalidTaskSnapshotError for non-string values or base64 decode failures.
+# ENSURES: Returns (snapshot, metadata_dict): snapshot is the normalized immutable tuple (claimed legacy values encoded per contract, or the validated explicit entries); the metadata dict carries every original key unchanged — claimed legacy keys stay during the transition (see module contract) — as a fresh copy of the input mapping; explicit mode raises InvalidTaskSnapshotError on any key the engine declarations would claim; legacy mode raises MissingInputFileError for each unsatisfied declaration and InvalidTaskSnapshotError for non-string values or base64 decode failures.
 def normalize_task_inputs(
     metadata: Mapping[str, object],
     engine: Engine,
@@ -69,10 +72,12 @@ def normalize_task_inputs(
     """Normalize legacy metadata or explicit entries into the task snapshot.
 
     ``input_entries=None`` selects legacy mode: engine-declared file keys are
-    claimed from the metadata payload, their string values encoded (UTF-8, or
-    the lenient base64 convention for the exact ``fort.9`` filename), and the
-    claimed keys are removed from the returned metadata. An explicit sequence —
-    including an empty one — is validated as the snapshot itself; metadata keys
+    claimed from the metadata payload and their string values encoded (UTF-8,
+    or the lenient base64 convention for the exact ``fort.9`` filename) into
+    the snapshot; the claimed keys stay in the returned metadata until the
+    deployer flip (task 4.1), because the live deployer still reads them from
+    ``task.extra``. An explicit sequence — including an empty one — is
+    validated as the snapshot itself; metadata keys
     the declarations would claim then make the submission ambiguous and are
     rejected. Normalization never reads the filesystem.
     """
@@ -97,12 +102,13 @@ def normalize_task_inputs(
         for key, value in sorted(claimed.items())
     ]
     snapshot = normalize_input_snapshot(entries)
-    remaining = {key: value for key, value in metadata.items() if key not in claimed}
     logger.debug(
         "NORMALIZE_INPUTS",
         extra={"engine": engine.name, "source": "legacy", "entries": len(snapshot)},
     )
-    return snapshot, remaining
+    # Transition: claimed keys stay in the metadata copy — the live deployer
+    # still reads task.extra[input_file]; task 4.1 removes this.
+    return snapshot, dict(metadata)
 
 
 # endregion FUNC_normalize_task_inputs

@@ -1,7 +1,7 @@
 """Register a new task in TO_DO state after validation."""
 # region MODULE_CONTRACT
 # PURPOSE: Accept validated task requests from clients and persist them so the daemon's allocator can pick them up for scheduling.
-# SCOPE: Task submission use case — engine validation, input snapshot validation, NewTask construction, persistence via UoW.
+# SCOPE: Task submission use case — engine validation, input snapshot coverage validation, NewTask construction, persistence via UoW.
 # KEYWORDS: submit, create, task, validation, engine, input files, snapshot
 # endregion MODULE_CONTRACT
 
@@ -12,10 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from yascheduler.domain import (
     TYPED_METADATA_KEYS,
-    MissingInputFileError,
     NewTask,
     TaskId,
     UnsupportedEngineError,
+    normalize_input_snapshot,
+    validate_snapshot_selections,
 )
 
 if TYPE_CHECKING:
@@ -31,9 +32,9 @@ __all__ = ["submit_task"]
 
 
 # region FUNC_submit_task
-# PURPOSE: Validate engine and input snapshot, construct a NewTask, persist via UoW, and return the generated TaskId.
-# REQUIRES: engine_name is configured in engines; the input snapshot satisfies the engine's required selections (task 2.2 moves that validation here; until then legacy callers keep the metadata key-presence check).
-# ENSURES: Returns a valid TaskId > 0; the task row is committed with status TO_DO carrying the submitted snapshot.
+# PURPOSE: Validate engine and snapshot coverage, construct a NewTask carrying the immutable input snapshot, persist via UoW, and return the generated TaskId.
+# REQUIRES: engine_name is configured in engines; input_snapshot is a task input snapshot (boundary-normalized for public submissions; the default empty snapshot suits engines without input declarations).
+# ENSURES: Returns a valid TaskId > 0; the task row is committed with status TO_DO carrying a copied immutable snapshot; unknown engines and unsatisfied engine selections raise before any task write.
 async def submit_task(
     label: str,
     metadata: Mapping[str, Any],
@@ -41,20 +42,17 @@ async def submit_task(
     engines: EngineRepository,
     uow_factory: Callable[[], AbstractUnitOfWork],
     *,
-    input_snapshot: TaskInputSnapshot | None = None,
+    input_snapshot: TaskInputSnapshot = (),
 ) -> TaskId:
-    """Create a new TO_DO task after validating engine and inputs."""
+    """Create a new TO_DO task after validating engine and input snapshot."""
     # region BLOCK_validate
     if engine_name not in engines:
         raise UnsupportedEngineError(engine_name)
     engine = engines[engine_name]
-    if input_snapshot is None:
-        # Legacy direct-call path: boundary normalization (task 2.1) supplies
-        # input_snapshot for every public submission; task 2.2 replaces this
-        # key-presence check with snapshot validation for all callers.
-        for input_file in engine.input_files:
-            if input_file not in metadata:
-                raise MissingInputFileError(engine_name, input_file)
+    # Copy to an immutable tuple and enforce the one snapshot rule: every
+    # engine input declaration must be satisfied by a snapshot entry.
+    snapshot = normalize_input_snapshot(input_snapshot)
+    validate_snapshot_selections(engine_name, engine.input_files, snapshot)
     # endregion BLOCK_validate
 
     # region BLOCK_create_task
@@ -66,7 +64,7 @@ async def submit_task(
         webhook_url=metadata.get("webhook_url"),
         webhook_custom_params=metadata.get("webhook_custom_params", {}),
         extra=extra,
-        input_entries=input_snapshot if input_snapshot is not None else (),
+        input_entries=snapshot,
     )
     # endregion BLOCK_create_task
 

@@ -106,10 +106,10 @@ class TestCLIDeps:
         )
 
     @pytest.mark.asyncio
-    async def test_submit_legacy_path_forwards_snapshot_and_cleaned_metadata(
+    async def test_submit_legacy_path_forwards_snapshot_and_preserves_metadata(
         self,
     ) -> None:
-        """Known-engine legacy payload is normalized once before submit_task."""
+        """Known-engine legacy payload adds a snapshot during the transition."""
         engine = Engine(name="g09", spawn="run", input_files=("INPUT",))
         engines = EngineRepository(data={"g09": engine})
         uow_factory = MagicMock()
@@ -129,7 +129,7 @@ class TestCLIDeps:
         assert result == TaskId(42)
         mock_submit.assert_awaited_once_with(
             "my-label",
-            {"unrelated": 42, "local_folder": "local"},
+            metadata,
             "g09",
             engines,
             uow_factory,

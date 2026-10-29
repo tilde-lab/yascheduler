@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from pg8000 import DatabaseError
 from pg8000.native import Connection
 
-from .migration_base import Migration
+from .migration_base import EngineInputsContext, Migration
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -302,6 +302,7 @@ def _apply_py_migration(
     path: Path,
     prefix_id: str,
     config: PostgresDbConfig,
+    engine_inputs: EngineInputsContext | None = None,
 ) -> None:
     spec = importlib.util.spec_from_file_location(prefix_id, path)
     if spec is None or spec.loader is None:
@@ -313,7 +314,7 @@ def _apply_py_migration(
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         klass = _one_migration_subclass(module)
-        migration = klass(config, conn, logger)
+        migration = klass(config, conn, logger, engine_inputs=engine_inputs)
         migration.migrate()
         # endregion BLOCK_apply_py
 
@@ -331,8 +332,17 @@ def _apply_py_migration(
 # REQUIRES: config is a validated PostgresDbConfig with a reachable database; the database already has the yascheduler_migrations tracker table — apply_schema runs first in yainit and in test fixtures.
 # INVARIANTS: Synchronous — opens ONE pg8000 Connection for the whole run and closes it in finally; pending list is computed once from _last_applied + _scan_migrations + _pending — the directory is NOT re-scanned per migration; dispatches on path.suffix — .sql files route to _apply_sql_migration, everything else routes to _apply_py_migration; the runner does NOT validate prefix_id uniqueness at runtime — that is a unit-test responsibility; the runner does NOT delete tracker rows nor reverse applied migrations — the system is forward-only.
 # ENSURES: On success, every file in the pending list has a tracker row; on failure, the failing migration's tracker row is NOT inserted and the error propagates out of apply_migrations — the connection is closed in finally regardless.
-def apply_migrations(config: PostgresDbConfig) -> None:
-    """Apply pending migrations from sql/migrations/ to the DB described by config, each in its own transaction."""
+# INVARIANTS: engine_inputs is an optional engine-name-to-input-declarations mapping (ADR-0019); None (default) preserves the pre-context behavior for callers without engine configuration; only .py migrations receive it — SQL migrations never depend on engine context.
+def apply_migrations(
+    config: PostgresDbConfig,
+    engine_inputs: EngineInputsContext | None = None,
+) -> None:
+    """Apply pending migrations from sql/migrations/ to the DB described by config, each in its own transaction.
+
+    ``engine_inputs`` optionally supplies each engine's declared input file
+    selections to Python migrations (the ADR-0019 input conversion needs them);
+    ``None`` keeps the historical behavior.
+    """
     conn: Connection | None = None
     try:
         # region BLOCK_open_connection
@@ -358,7 +368,7 @@ def apply_migrations(config: PostgresDbConfig) -> None:
             if path.suffix == ".sql":
                 _apply_sql_migration(conn, path, pid)
             else:
-                _apply_py_migration(conn, path, pid, config)
+                _apply_py_migration(conn, path, pid, config, engine_inputs)
             logger.debug("APPLY_PENDING", extra={"prefix": pid})
         # endregion BLOCK_apply_pending
     finally:

@@ -22,7 +22,11 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Union
 
-from yascheduler.domain.exceptions import InvalidTaskSnapshotError, UnsafeTaskPathError
+from yascheduler.domain.exceptions import (
+    InvalidTaskSnapshotError,
+    MissingInputFileError,
+    UnsafeTaskPathError,
+)
 from yascheduler.shared import StrEnum, TypeAlias
 
 if TYPE_CHECKING:
@@ -38,6 +42,7 @@ __all__ = [
     "normalize_input_snapshot",
     "selection_matches",
     "validate_selection",
+    "validate_snapshot_selections",
     "validate_task_path",
 ]
 
@@ -175,6 +180,28 @@ def is_glob_pattern(selection: str) -> bool:
 
 
 # endregion FUNC_is_glob_pattern
+
+
+# region FUNC_validate_snapshot_selections
+# PURPOSE: Enforce the one input-validation rule — every engine input declaration is satisfied by at least one snapshot entry — so submission rejects incomplete snapshots before any task write, replacing both the engine's key-presence check and the use case's metadata loop (ADR-0019, task-input-snapshots task 2.2).
+# REQUIRES: declarations are the engine's raw input selections; snapshot is a normalized snapshot.
+# ENSURES: Each declaration is validated and matched against the snapshot with the shared selection language; the first unsatisfied declaration raises MissingInputFileError naming the engine and the declaration; an empty declaration set is trivially satisfied, and an empty snapshot satisfies only an empty declaration set.
+def validate_snapshot_selections(
+    engine_name: str,
+    declarations: Sequence[str],
+    snapshot: TaskInputSnapshot,
+) -> None:
+    """Raise MissingInputFileError for each engine declaration the snapshot misses."""
+    entries = tuple(snapshot)
+    for declaration in declarations:
+        selection = validate_selection(declaration)
+        if not any(
+            selection_matches(selection, entry.path, entry.kind) for entry in entries
+        ):
+            raise MissingInputFileError(engine_name, declaration)
+
+
+# endregion FUNC_validate_snapshot_selections
 
 
 # region FUNC_selection_matches

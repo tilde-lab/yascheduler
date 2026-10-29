@@ -7,8 +7,8 @@ migrations directory so synthetic migration files do not pollute the real
 """
 # region MODULE_CONTRACT
 # PURPOSE: Integration tests for the migration runner against real PostgreSQL via testcontainers.
-# SCOPE: Fresh/legacy/modern DB cohorts; read-only migration-state preflight; .py best-effort reopen; .sql failure rollback; migration 002 backfills node_id SERIAL; migration 010 extracts typed columns from metadata JSONB; migration 011 adds task_status_field_invariants CHECK.
-# KEYWORDS: migration runner, backfill, typed columns, JSONB extract
+# SCOPE: Fresh/legacy/modern DB cohorts; read-only migration-state preflight; .py best-effort reopen; .sql failure rollback; engine_inputs context supplied/absent; migration 002 backfills node_id SERIAL; migration 010 extracts typed columns from metadata JSONB; migration 011 adds task_status_field_invariants CHECK.
+# KEYWORDS: migration runner, backfill, typed columns, JSONB extract, engine inputs context
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
@@ -88,6 +88,16 @@ def _table_exists(conn: pg8000.native.Connection, table: str) -> bool:
     finally:
         conn.run("ROLLBACK")
     return rows[0][0] is not None
+
+
+def _rows(conn: pg8000.native.Connection, sql: str) -> list[list[object]]:
+    """Run a read query in a rolled-back txn and return its rows."""
+    conn.run("BEGIN")
+    try:
+        rows = conn.run(sql)
+    finally:
+        conn.run("ROLLBACK")
+    return rows
 
 
 def test_fresh_db_seeds_last_and_skips_migrations() -> None:
@@ -306,6 +316,128 @@ def test_sql_migration_failure_rolls_back_and_not_recorded(
         try:
             assert "014" not in _tracker_rows(conn)
             assert not _table_exists(conn, "fail_tbl")
+        finally:
+            conn.close()
+
+
+def test_py_migration_receives_supplied_engine_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """apply_migrations(engine_inputs=...) exposes the mapping to a .py migration."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "901_ctx_supplied.py").write_text(
+        "from yascheduler.infra.persistence.migration_base import Migration\n"
+        "class CtxSupplied(Migration):\n"
+        "    def migrate(self) -> None:\n"
+        "        self.conn.run(\n"
+        "            'CREATE TABLE ctx_supplied '\n"
+        "            '(engine text NOT NULL, input_file text NOT NULL)'\n"
+        "        )\n"
+        "        for engine, files in sorted(self.engine_inputs.items()):\n"
+        "            for input_file in files:\n"
+        "                self.conn.run(\n"
+        "                    'INSERT INTO ctx_supplied (engine, input_file) '\n"
+        "                    'VALUES (:engine, :input_file)',\n"
+        "                    engine=engine,\n"
+        "                    input_file=input_file,\n"
+        "                )\n",
+    )
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations._MIGRATIONS_DIR",
+        migrations_dir,
+    )
+
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+        apply_migrations(config, engine_inputs={"dummy": ("fort.9", "fort.10")})
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "901"]
+            recorded = _rows(
+                conn,
+                "SELECT engine, input_file FROM ctx_supplied",
+            )
+            assert {tuple(row) for row in recorded} == {
+                ("dummy", "fort.9"),
+                ("dummy", "fort.10"),
+            }
+        finally:
+            conn.close()
+
+
+def test_py_migration_receives_no_engine_inputs_when_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """apply_migrations(config) leaves the .py migration's engine_inputs as None."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "902_ctx_absent.py").write_text(
+        "from yascheduler.infra.persistence.migration_base import Migration\n"
+        "class CtxAbsent(Migration):\n"
+        "    def migrate(self) -> None:\n"
+        "        self.conn.run(\n"
+        "            'CREATE TABLE ctx_absent '\n"
+        "            '(engine_inputs_is_none boolean NOT NULL)'\n"
+        "        )\n"
+        "        self.conn.run(\n"
+        "            'INSERT INTO ctx_absent (engine_inputs_is_none) '\n"
+        "            'VALUES (:is_none)',\n"
+        "            is_none=self.engine_inputs is None,\n"
+        "        )\n",
+    )
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations._MIGRATIONS_DIR",
+        migrations_dir,
+    )
+
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+        apply_migrations(config)
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "902"]
+            assert _rows(
+                conn,
+                "SELECT engine_inputs_is_none FROM ctx_absent",
+            ) == [[True]]
+        finally:
+            conn.close()
+
+
+def test_sql_migration_still_applies_with_engine_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """.sql migrations ignore engine_inputs and still apply when it is supplied."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "903_ctx_sql.sql").write_text(
+        "CREATE TABLE ctx_sql (note text NOT NULL);"
+        "INSERT INTO ctx_sql (note) VALUES ('sql path unaffected');",
+    )
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations._MIGRATIONS_DIR",
+        migrations_dir,
+    )
+
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+        apply_migrations(config, engine_inputs={"dummy": ("fort.9",)})
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "903"]
+            assert _rows(conn, "SELECT note FROM ctx_sql") == [
+                ["sql path unaffected"],
+            ]
         finally:
             conn.close()
 

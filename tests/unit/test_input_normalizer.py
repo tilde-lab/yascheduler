@@ -49,7 +49,7 @@ class TestLegacyLiteralDeclarations:
         )
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"line1\nline2"),)
-        assert remaining == {}
+        assert remaining == {"INPUT": "line1\nline2"}
 
     def test_non_ascii_literal_value_is_utf8_encoded(self) -> None:
         snapshot, _ = normalize_task_inputs({"INPUT": "текст"}, _engine("INPUT"), None)
@@ -110,9 +110,11 @@ class TestLegacyLiteralDeclarations:
         snapshot, remaining = normalize_task_inputs(metadata, _engine("*"), None)
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        assert remaining == typed_metadata
+        assert remaining == metadata
 
-    def test_claimed_keys_are_removed_and_unrelated_metadata_preserved(self) -> None:
+    def test_claimed_keys_stay_in_metadata_and_unrelated_metadata_preserved(
+        self,
+    ) -> None:
         metadata = {
             "INPUT": "body",
             "count": 42,
@@ -122,8 +124,8 @@ class TestLegacyLiteralDeclarations:
         snapshot, remaining = normalize_task_inputs(metadata, _engine("INPUT"), None)
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        assert remaining == {"count": 42, "nested": {"items": [1, 2]}}
-        assert "INPUT" not in remaining
+        # Transition: claimed keys stay in metadata until the deployer flip (4.1).
+        assert remaining == metadata
 
     def test_empty_input_declarations_yield_empty_snapshot_and_metadata(self) -> None:
         metadata = {"engine": "x", "count": 42, "nested": {"a": 1}}
@@ -147,7 +149,7 @@ class TestLegacyLiteralDeclarations:
         )
 
         assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        assert remaining == {}
+        assert remaining == {"INPUT": "body"}
 
 
 class TestLegacyGlobDeclarations:
@@ -168,7 +170,7 @@ class TestLegacyGlobDeclarations:
             TaskInputDirectory(path="basis/deep"),
             TaskInputFile(path="basis/deep/x.orb", content=b"deep-orb"),
         )
-        assert remaining == {"unrelated": 42}
+        assert remaining == metadata
 
     def test_glob_with_no_claimable_keys_is_rejected(self) -> None:
         with pytest.raises(MissingInputFileError) as info:
@@ -192,11 +194,8 @@ class TestLegacyGlobDeclarations:
         snapshot, remaining = normalize_task_inputs(metadata, _engine("*"), None)
 
         assert snapshot == (TaskInputFile(path="safe", content=b"body"),)
-        assert remaining == {
-            "../evil": "parent",
-            "/abs": "absolute",
-            "a\\b": "backslash",
-        }
+        # Unsafe keys are never claimed and stay in the metadata untouched.
+        assert remaining == metadata
 
     def test_unsafe_glob_declaration_is_rejected(self) -> None:
         with pytest.raises(UnsafeTaskPathError) as info:

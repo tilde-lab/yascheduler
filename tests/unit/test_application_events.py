@@ -26,7 +26,7 @@ from yascheduler.application.allocation_tracker import AllocationTracker
 from yascheduler.application.consume_task import consume_task
 from yascheduler.application.submit_task import submit_task
 from yascheduler.application.uow import AbstractUnitOfWork
-from yascheduler.domain import Engine, EngineRepository
+from yascheduler.domain import Engine, EngineRepository, TaskInputFile
 from yascheduler.domain.events import (
     TaskAllocated,
     TaskCompleted,
@@ -82,6 +82,7 @@ class TestSubmitTaskEvents:
             engine_name="test_engine",
             engines=mock_engine_repo,
             uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"data"),),
         )
 
         saved_arg: Task = uow.tasks.save.call_args[0][0]
