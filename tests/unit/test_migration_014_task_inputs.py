@@ -1,18 +1,21 @@
 """Focused unit tests for migration 014's pure input-conversion seam."""
 # region MODULE_CONTRACT
 # PURPOSE: Pin migration 014's pure legacy payload conversion and encoding rules without a database, protecting the seam already covered by PostgreSQL integration tests.
-# SCOPE: Happy-path UTF-8/fort.9/not-guessed base64 encodings, one literal-directory/glob/overlap selection with unrelated metadata preservation, and pure conversion failures with safe diagnostics and no caller-payload mutation.
+# SCOPE: Happy-path UTF-8/fort.9/not-guessed base64 encodings, one literal-directory/glob/overlap selection with unrelated metadata preservation, pure conversion failures with safe diagnostics and no caller-payload mutation, and migration-wide failure context/log rendering.
 # KEYWORDS: migration 014, task inputs, legacy payload, base64, selection, deduplication
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
 
+from tests.log_assertions import extra_fields
 from yascheduler.domain import (
     InvalidTaskSnapshotError,
     MissingInputFileError,
@@ -38,7 +41,10 @@ _MIGRATION_PATH = (
 
 def _load_migration_module() -> ModuleType:
     """Load the numbered migration exactly as the runner does."""
-    spec = importlib.util.spec_from_file_location("014", _MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "yascheduler.infra.persistence.sql.migrations.014_task_input_snapshots",
+        _MIGRATION_PATH,
+    )
     if spec is None or spec.loader is None:
         message = f"cannot load migration module {_MIGRATION_PATH}"
         raise RuntimeError(message)
@@ -159,3 +165,58 @@ def test_convert_payload_reports_non_string_value_without_leaking_or_mutating() 
     assert "got dict" in str(info.value)
     assert "do-not-log" not in str(info.value)
     assert payload == {"INPUT": selected_value}
+
+
+def test_trigger_restore_failure_has_no_stale_task_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A migration-wide trigger failure is not attributed to the last converted task."""
+    secret = "UNIQUE_TRIGGER_FAILURE_SECRET_7d1a"
+
+    class _FailingEnableConnection:
+        def run(self, sql: str, **params: object) -> list[tuple[object, ...]] | None:
+            if sql == _MIGRATION._LIST_LEGACY_INPUTS:
+                return [(12, "test-engine", {"INPUT": "body"})]
+            if sql == _MIGRATION._ENABLE_TIMESTAMP_TRIGGER:
+                raise RuntimeError(f"trigger restore failed with {secret}")
+            return None
+
+    migration = _MIGRATION.TaskInputSnapshots(
+        MagicMock(),
+        _FailingEnableConnection(),
+        logging.getLogger("test-migration-014"),
+        engine_inputs={"test-engine": ("INPUT",)},
+    )
+
+    with (
+        caplog.at_level(
+            logging.DEBUG,
+            logger="yascheduler.infra.persistence.sql.migrations.014_task_input_snapshots",
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        migration.migrate()
+
+    failed = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "MIGRATE_INPUTS_FAILED"
+    ]
+    assert len(failed) == 1
+    assert failed[0].name == (
+        "yascheduler.infra.persistence.sql.migrations.014_task_input_snapshots"
+    )
+    fields = {
+        key: value for key, value in extra_fields(failed[0]).items() if key != "message"
+    }
+    assert fields == {
+        "tasks": 1,
+        "entry_count": 1,
+        "failure": "RuntimeError",
+    }
+    assert not any(
+        record.getMessage() == "MIGRATE_INPUTS_DONE" for record in caplog.records
+    )
+    rendered = repr([extra_fields(record) for record in caplog.records])
+    assert secret not in rendered
+    assert secret not in caplog.text

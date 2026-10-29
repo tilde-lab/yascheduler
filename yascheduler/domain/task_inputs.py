@@ -110,7 +110,9 @@ _DRIVE_ROOT = re.compile(r"[A-Za-z]:")
 def _validated_components(raw: object, what: str) -> tuple[str, ...]:
     """Return the canonical safe components of one path or selection."""
     if not isinstance(raw, str):
-        raise UnsafeTaskPathError(repr(raw), f"{what} must be a str")
+        placeholder = f"<{what}>"
+        reason = f"{what} must be a str"
+        raise UnsafeTaskPathError(placeholder, reason)
     if _DRIVE_ROOT.match(raw):
         raise UnsafeTaskPathError(raw, "Windows drive root")
     if "\\" in raw:
@@ -270,17 +272,17 @@ def normalize_input_snapshot(entries: Sequence[TaskInputEntry]) -> TaskInputSnap
     try:
         items = list(entries)
     except TypeError as err:
-        raise InvalidTaskSnapshotError(
-            repr(entries), "entries must be an iterable of task input entries"
-        ) from err
+        placeholder = "<entries>"
+        reason = "entries must be an iterable of task input entries"
+        raise InvalidTaskSnapshotError(placeholder, reason) from err
 
     by_path: dict[str, TaskInputEntry] = {}
     kinds: dict[str, TaskInputKind] = {}
     for position, entry in enumerate(items):
         if not isinstance(entry, (TaskInputFile, TaskInputDirectory)):
-            raise InvalidTaskSnapshotError(
-                repr(entry), f"item {position} is not a task input entry"
-            )
+            placeholder = f"<entry {position}>"
+            reason = f"item {position} is not a task input entry"
+            raise InvalidTaskSnapshotError(placeholder, reason)
         canonical = validate_task_path(entry.path)
         if isinstance(entry, TaskInputFile) and not isinstance(entry.content, bytes):
             raise InvalidTaskSnapshotError(canonical, "file content must be bytes")

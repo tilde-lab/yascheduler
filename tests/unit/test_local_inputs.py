@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
 # PURPOSE: Pin the local input-capture contract — exact bytes, explicit complete trees, component-aware glob selection, required selections, non-followed symlink and unsupported-entry rejection, root and selection validation ordering, read-time source rechecks, immutable normalized results, facade exports, and content-free structured logs.
-# SCOPE: capture_input_snapshot behavior over temporary filesystem fixtures, including binary and large files, hidden and empty entries, overlapping selections, symlinks, FIFOs, TOCTOU-style mutations, root failures, result shape/kind/frozen semantics, and CAPTURE/CAPTURE_DONE logs.
+# SCOPE: capture_input_snapshot behavior over temporary filesystem fixtures, including binary and large files, hidden and empty entries, overlapping selections, symlinks, FIFOs, TOCTOU-style mutations, root failures, result shape/kind/frozen semantics, and content-free CAPTURE/CAPTURE_DONE/CAPTURE_FAILED trajectory logs.
 # KEYWORDS: task inputs, capture, snapshot, local filesystem, glob, symlink, TOCTOU, ADR-0019
 # endregion MODULE_CONTRACT
 
@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.log_assertions import extra_fields
 from yascheduler.domain import (
     TaskInputCaptureError,
     TaskInputDirectory,
@@ -47,15 +48,21 @@ def _file_content(snapshot: TaskInputSnapshot, path: str) -> bytes:
     return entry.content
 
 
-def _find_log_record(
+def _log_records(
     caplog: pytest.LogCaptureFixture, message: str
-) -> logging.LogRecord:
-    records = [
+) -> list[logging.LogRecord]:
+    return [
         record
         for record in caplog.records
         if record.name == "yascheduler.infra.local_inputs"
         and record.getMessage() == message
     ]
+
+
+def _find_log_record(
+    caplog: pytest.LogCaptureFixture, message: str
+) -> logging.LogRecord:
+    records = _log_records(caplog, message)
     assert len(records) == 1
     return records[0]
 
@@ -691,8 +698,10 @@ class TestStructuredLogs:
             _capture(tmp_path, "one", "two")
 
         record = _find_log_record(caplog, "CAPTURE")
-        assert record.__dict__["root"] == str(tmp_path)
-        assert record.__dict__["selections"] == 2
+        fields = extra_fields(record)
+        assert fields["root"] == str(tmp_path)
+        assert fields["selections"] == 2
+        assert fields["entry_count"] == 0
 
     def test_capture_done_emits_counts(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -705,9 +714,90 @@ class TestStructuredLogs:
             snapshot = _capture(tmp_path, "basis")
 
         record = _find_log_record(caplog, "CAPTURE_DONE")
-        assert record.__dict__["root"] == str(tmp_path)
-        assert record.__dict__["files"] == 1
-        assert record.__dict__["directories"] == len(snapshot) - 1
+        fields = extra_fields(record)
+        assert fields["root"] == str(tmp_path)
+        assert fields["files"] == 1
+        assert fields["directories"] == len(snapshot) - 1
+        assert fields["entry_count"] == len(snapshot)
+
+    def test_capture_starts_before_selection_validation(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="yascheduler.infra.local_inputs"),
+            pytest.raises(UnsafeTaskPathError),
+        ):
+            _capture(tmp_path, "../escape")
+
+        assert caplog.records[0].getMessage() == "CAPTURE"
+        start = extra_fields(caplog.records[0])
+        assert start["root"] == str(tmp_path)
+        assert start["selections"] == 1
+        assert start["entry_count"] == 0
+
+        failed = _find_log_record(caplog, "CAPTURE_FAILED")
+        fields = extra_fields(failed)
+        assert fields["failure"] == "UnsafeTaskPathError"
+        assert fields["path"] == "../escape"
+        assert fields["entry_count"] == 0
+
+    def test_capture_failed_reports_missing_selection(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            caplog.at_level(logging.DEBUG, logger="yascheduler.infra.local_inputs"),
+            pytest.raises(TaskInputCaptureError),
+        ):
+            _capture(tmp_path, "basis/**/*.orb")
+
+        failed = _find_log_record(caplog, "CAPTURE_FAILED")
+        fields = extra_fields(failed)
+        assert fields["path"] == "basis/**/*.orb"
+        assert fields["selection"] == "basis/**/*.orb"
+        assert fields["entry_count"] == 0
+        assert fields["failure"] == "TaskInputCaptureError"
+
+    def test_capture_failed_read_reports_progress_without_exception_text(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        marker = "UNIQUE_CAPTURE_READ_SECRET_31d7"
+        target = tmp_path / "INPUT"
+        target.write_bytes(b"body")
+        other = tmp_path / "other"
+        other.write_bytes(b"other")
+        real_open = local_inputs.os.open
+
+        def failing_open(
+            path: os.PathLike[str],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if Path(path) == target:
+                raise PermissionError(f"payload={marker}")
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        monkeypatch.setattr(local_inputs.os, "open", failing_open)
+
+        with (
+            caplog.at_level(logging.DEBUG, logger="yascheduler.infra.local_inputs"),
+            pytest.raises(TaskInputCaptureError),
+        ):
+            _capture(tmp_path, "INPUT", "other")
+
+        failed = _find_log_record(caplog, "CAPTURE_FAILED")
+        fields = extra_fields(failed)
+        assert fields["path"] == "INPUT"
+        assert fields["selection"] is None
+        assert fields["entry_count"] == 2
+        assert fields["failure"] == "TaskInputCaptureError"
+        assert marker not in caplog.text
+        assert marker not in repr([extra_fields(record) for record in caplog.records])
+        assert all(record.exc_info is None for record in caplog.records)
 
     def test_logs_do_not_contain_file_contents(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -721,4 +811,4 @@ class TestStructuredLogs:
         marker_text = marker.decode()
         for record in caplog.records:
             assert marker_text not in record.getMessage()
-            assert marker_text not in repr(record.__dict__)
+            assert marker_text not in repr(extra_fields(record))

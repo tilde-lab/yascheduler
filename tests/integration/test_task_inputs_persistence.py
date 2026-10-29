@@ -1,7 +1,7 @@
 """Integration tests for task-owned input snapshot persistence."""
 # region MODULE_CONTRACT
 # PURPOSE: Verify the task input snapshot table, its owned-entry SQL, and the repository insert/hydration behavior against real PostgreSQL via testcontainers.
-# SCOPE: Binary/empty-file/empty-directory/nested round-trip through get/list_by_status/list_by_jobs; duplicate and orphan rejection at the layer that enforces them; entry-write failure rolling back task creation; deletion cascade across two tasks; snapshot survival through run/complete/fail saves.
+# SCOPE: Binary/empty-file/empty-directory/nested round-trip through get/list_by_status/list_by_jobs; duplicate and orphan rejection at the layer that enforces them; entry-write failure rolling back task creation; deletion cascade across two tasks; snapshot survival through run/complete/fail saves; and payload-free insert/hydration boundary logs.
 # DEPENDENCIES: USES API: PostgresUnitOfWork, pg8000.native, testcontainers.PostgresContainer
 # READS: PostgreSQL container (postgres:16-alpine)
 # KEYWORDS: task inputs, snapshot, round-trip, hydration, cascade, atomicity, lifecycle
@@ -9,12 +9,15 @@
 
 from __future__ import annotations
 
+import base64
+import logging
 from typing import TYPE_CHECKING
 
 import pg8000.native
 import pytest
 from pg8000.exceptions import DatabaseError
 
+from tests.log_assertions import extra_fields
 from yascheduler.domain import (
     InvalidTaskSnapshotError,
     TaskInputDirectory,
@@ -31,6 +34,7 @@ from yascheduler.domain.model import (
     TaskStatus,
     Todo,
 )
+from yascheduler.shared.log import LogFormatter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -105,9 +109,11 @@ async def _reload(
 async def test_snapshot_round_trips_through_insert_and_every_read_path(
     uow_factory: Callable[[], PostgresUnitOfWork],
     pg_conn: pg8000.native.Connection,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Binary, empty-file, empty-directory, and nested entries reload identically on every read path."""
     snapshot = _snapshot()
+    caplog.set_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres")
     async with uow_factory() as uow:
         inserted = await uow.tasks.insert(
             NewTask(
@@ -128,6 +134,54 @@ async def test_snapshot_round_trips_through_insert_and_every_read_path(
         by_status = await uow.tasks.list_by_status({TaskStatus.TO_DO})
         by_jobs = await uow.tasks.list_by_jobs([task_id])
         await uow.commit()
+
+    insert_start = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "persist_task_inputs_START"
+    ]
+    assert len(insert_start) == 1
+    assert {
+        key: value
+        for key, value in extra_fields(insert_start[0]).items()
+        if key != "message"
+    } == {
+        "task_id": task_id.value,
+        "engine": "fleur",
+        "entry_count": len(snapshot),
+    }
+    insert_done = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "persist_task_inputs"
+    ]
+    assert len(insert_done) == 1
+    assert {
+        key: value
+        for key, value in extra_fields(insert_done[0]).items()
+        if key != "message"
+    } == {
+        "task_id": task_id.value,
+        "engine": "fleur",
+        "entry_count": len(snapshot),
+    }
+    hydrate_done = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "hydrate_task_inputs_DONE"
+        and getattr(record, "task_id", None) == task_id.value
+    ]
+    assert hydrate_done
+    assert {
+        key: value
+        for key, value in extra_fields(hydrate_done[0]).items()
+        if key != "message"
+    } == {
+        "task_id": task_id.value,
+        "engine": "fleur",
+        "task_count": 1,
+        "entry_count": len(snapshot),
+    }
 
     assert len(by_status) == 1
     assert len(by_jobs) == 1
@@ -167,6 +221,51 @@ async def test_snapshot_round_trips_through_insert_and_every_read_path(
     assert stored["emptydir"]["kind"] == "directory"
     assert stored["emptydir"]["content"] is None
     assert stored["inp"]["content"] == BINARY_BYTES
+
+
+async def test_empty_snapshot_emits_insert_and_hydration_boundaries(
+    uow_factory: Callable[[], PostgresUnitOfWork],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An empty snapshot is still an observable persistence boundary with zero entries."""
+    caplog.set_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres")
+    async with uow_factory() as uow:
+        inserted = await uow.tasks.insert(NewTask(label="empty", engine="fleur"))
+        await uow.commit()
+        task_id = inserted.task_id
+
+    async with uow_factory() as uow:
+        loaded = await uow.tasks.get(task_id)
+        await uow.commit()
+
+    assert loaded is not None
+    assert loaded.input_entries == ()
+    for marker, expected in (
+        (
+            "persist_task_inputs_START",
+            {"task_id": task_id.value, "engine": "fleur", "entry_count": 0},
+        ),
+        (
+            "persist_task_inputs",
+            {"task_id": task_id.value, "engine": "fleur", "entry_count": 0},
+        ),
+        (
+            "hydrate_task_inputs_DONE",
+            {
+                "task_id": task_id.value,
+                "engine": "fleur",
+                "task_count": 1,
+                "entry_count": 0,
+            },
+        ),
+    ):
+        records = [record for record in caplog.records if record.getMessage() == marker]
+        assert len(records) == 1
+        assert {
+            key: value
+            for key, value in extra_fields(records[0]).items()
+            if key != "message"
+        } == expected
 
 
 async def test_normalize_input_snapshot_rejects_duplicate_paths() -> None:
@@ -234,6 +333,7 @@ async def test_database_rejects_orphan_entry(
 async def test_entry_write_failure_rolls_back_task_creation(
     uow_factory: Callable[[], PostgresUnitOfWork],
     pg_conn: pg8000.native.Connection,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A failing entry batch insert leaves neither the task row nor any entry behind.
 
@@ -241,12 +341,17 @@ async def test_entry_write_failure_rolls_back_task_creation(
     the database entry write fail *after* the task row insert, proving both share
     the UoW transaction instead of committing separately.
     """
+    input_secret = b"UNIQUE_PERSISTENCE_INPUT_SECRET_2da9"
+    credential = b"UNIQUE_PERSISTENCE_CREDENTIAL_71c4"
     duplicate_entries = (
-        TaskInputFile(path="dup", content=b"one"),
-        TaskInputFile(path="dup", content=b"two"),
+        TaskInputFile(path="dup", content=input_secret),
+        TaskInputFile(path="dup", content=credential),
     )
 
-    with pytest.raises(DatabaseError):
+    with (
+        caplog.at_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres"),
+        pytest.raises(DatabaseError),
+    ):
         async with uow_factory() as uow:
             await uow.tasks.insert(
                 NewTask(
@@ -256,6 +361,35 @@ async def test_entry_write_failure_rolls_back_task_creation(
                 )
             )
             await uow.commit()
+
+    failed = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "persist_task_inputs_FAILED"
+    ]
+    assert len(failed) == 1
+    fields = extra_fields(failed[0])
+    assert fields["engine"] == "fleur"
+    assert fields["entry_count"] == 2
+    assert fields["failure"] == "DatabaseError"
+    assert isinstance(fields["task_id"], int)
+    assert not any(
+        record.getMessage() == "persist_task_inputs" for record in caplog.records
+    )
+    rendered = LogFormatter().format(failed[0])
+    assert "persist_task_inputs_FAILED" in rendered
+    assert f"task_id={fields['task_id']}" in rendered
+    assert "failure='DatabaseError'" in rendered
+    leaked_markers = (
+        input_secret.decode(),
+        credential.decode(),
+        base64.b64encode(input_secret).decode(),
+        base64.b64encode(credential).decode(),
+    )
+    all_fields = repr([extra_fields(record) for record in caplog.records])
+    for marker in leaked_markers:
+        assert marker not in rendered
+        assert marker not in all_fields
 
     assert _query(pg_conn, "SELECT count(*) AS n FROM yascheduler_tasks")[0]["n"] == 0
     assert _entry_rows(pg_conn) == []

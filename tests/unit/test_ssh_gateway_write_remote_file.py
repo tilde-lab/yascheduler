@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for _write_remote_file exception contract (fix-write-remote-file-swallow) and _exec_spawn_command SPAWN log contract.
-# SCOPE: Non-SFTP exception propagates (not swallowed); asyncssh.misc.Error logged with structured code/reason and re-raised; start_task_on_machine aborts spawn on upload failure; successful write returns normally and the stored snapshot upload loop writes every file and materializes directory entries; _exec_spawn_command emits SPAWN debug log with hostname/task_id/cmd/cwd.
+# PURPOSE: Unit tests for _write_remote_file exception contract (fix-write-remote-file-swallow) and _exec_spawn_command SPAWN log contract under the task 4.3 content-free logging rule.
+# SCOPE: Non-SFTP exception propagates (not swallowed); asyncssh.misc.Error logs the SFTPError marker with path/code/failure class but no reason or traceback, then re-raises; start_task_on_machine records UPLOAD_INPUTS_FAILED and aborts spawn on upload failure; successful write returns normally and the stored snapshot upload loop writes every file and materializes directory entries; _exec_spawn_command emits SPAWN debug log with hostname/task_id/cmd/cwd.
 # KEYWORDS: _write_remote_file, exception contract, spawn abort, spawn log
 # endregion MODULE_CONTRACT
 
@@ -114,6 +114,22 @@ def _make_sftp_state(
     return state, sftp
 
 
+def _find_record(caplog: pytest.LogCaptureFixture, marker: str) -> logging.LogRecord:
+    records = [record for record in caplog.records if marker in record.getMessage()]
+    assert len(records) == 1
+    return records[0]
+
+
+def _find_upload_failure(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
+    records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "UPLOAD_INPUTS_FAILED"
+    ]
+    assert len(records) == 1
+    return records[0]
+
+
 def _make_engine(input_files: tuple[str, ...] = ("input.txt",)) -> Engine:
     return Engine(
         name="test_engine",
@@ -174,7 +190,7 @@ class TestWriteRemoteFilePropagation:
                 b"data",
             )
 
-        # The structured SFTPError log line is reserved for asyncssh.misc.Error.
+        # The SFTPError diagnostic is reserved for asyncssh.misc.Error.
         assert not any("SFTPError" in r.getMessage() for r in caplog.records), (
             "asyncssh.misc.Error-branch log was emitted for a non-SFTP exception"
         )
@@ -221,13 +237,13 @@ class TestWriteRemoteFilePropagation:
 
         # The same exception instance is re-raised (no swallow, no rewrap).
         assert exc_info.value is err
-        # The structured log line carries the path, reason, and code.
-        assert any(
-            "SFTPError" in r.getMessage()
-            and "No such file" in r.getMessage()
-            and "/r/input.txt" in r.getMessage()
-            for r in caplog.records
-        ), "asyncssh.misc.Error was not logged with structured code/reason and path"
+        record = _find_record(caplog, "SFTPError")
+        assert record.levelno == logging.ERROR
+        assert record.getMessage() == ("Write /r/input.txt - SFTPError: Error (2)")
+        assert "reason" not in extra_fields(record)
+        assert "exception" not in extra_fields(record)
+        assert record.exc_info is None
+        assert "No such file" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_sftp_error_subclass_logged_and_reraised(
@@ -249,10 +265,13 @@ class TestWriteRemoteFilePropagation:
             )
 
         assert exc_info.value is err
-        assert any(
-            "SFTPError" in r.getMessage() and "Permission denied" in r.getMessage()
-            for r in caplog.records
-        )
+        record = _find_record(caplog, "SFTPError")
+        assert record.levelno == logging.ERROR
+        assert record.getMessage() == ("Write /r/fort.9 - SFTPError: SFTPError (3)")
+        assert "reason" not in extra_fields(record)
+        assert "exception" not in extra_fields(record)
+        assert record.exc_info is None
+        assert "Permission denied" not in caplog.text
 
 
 # =============================================================================
@@ -269,8 +288,8 @@ class TestStartTaskAbortOnUploadFailure:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A non-SFTP exception during an input file write aborts start_task_on_machine:
-        _exec_spawn_command is NOT called; the exception propagates to the caller;
-        the upstream handler logs "Can't upload task_id=N files: <err>" with the task_id.
+        _exec_spawn_command is NOT called; the exception propagates; the upload
+        failure record classifies it without echoing the exception text.
         """
         deployer = TaskDeployer()
         session, _sftp = _make_sftp_state(write_side_effect=ValueError("bad input"))
@@ -281,7 +300,7 @@ class TestStartTaskAbortOnUploadFailure:
         )
 
         with (
-            caplog.at_level(logging.ERROR),
+            caplog.at_level(logging.DEBUG),
             pytest.raises(ValueError, match="bad input"),
         ):
             await deployer.start_task_on_machine(
@@ -298,11 +317,14 @@ class TestStartTaskAbortOnUploadFailure:
         assert spawn_calls == [], (
             "_exec_spawn_command was called despite an input file write failure"
         )
-        # The upstream handler logs with task_id (better diagnostics than the
-        # old swallowed "Error processing file" line which lacked task_id).
-        assert any(
-            "Can't upload task_id=7 files" in r.getMessage() for r in caplog.records
-        ), "upstream upload-failure log did not carry the task_id"
+        failed = extra_fields(_find_upload_failure(caplog))
+        assert failed["task_id"] == 7
+        assert type(failed["task_id"]) is int
+        assert failed["entry_count"] == 1
+        assert failed["path"] == "input.txt"
+        assert failed["failure"] == "ValueError"
+        assert "bad input" not in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_sftp_upload_failure_aborts_spawn(
@@ -316,7 +338,7 @@ class TestStartTaskAbortOnUploadFailure:
 
         deployer._exec_spawn_command = AsyncMock()  # type: ignore[method-assign]
 
-        with caplog.at_level(logging.ERROR), pytest.raises(asyncssh.misc.Error):
+        with caplog.at_level(logging.DEBUG), pytest.raises(asyncssh.misc.Error):
             await deployer.start_task_on_machine(
                 session,
                 _make_engine(input_files=("input.txt",)),
@@ -328,13 +350,22 @@ class TestStartTaskAbortOnUploadFailure:
             )
 
         deployer._exec_spawn_command.assert_not_awaited()  # type: ignore[attr-defined]
-        # Both diagnostic lines present: the structured SFTPError (from the
-        # _write_remote_file branch) and the task_id-bearing upload-failure
-        # log (from the start_task_on_machine DEPLOY handler).
-        assert any("SFTPError" in r.getMessage() for r in caplog.records)
-        assert any(
-            "Can't upload task_id=7 files" in r.getMessage() for r in caplog.records
+        # The SFTPError marker carries only path/code/failure class, the
+        # upload-failure record carries task/path/entry-count context, and the
+        # original exception reason never reaches rendered logs.
+        sftp_error = _find_record(caplog, "SFTPError")
+        assert sftp_error.getMessage() == (
+            "Write /remote/tasks/7/input.txt - SFTPError: Error (2)"
         )
+        assert sftp_error.exc_info is None
+        failed = extra_fields(_find_upload_failure(caplog))
+        assert failed["task_id"] == 7
+        assert type(failed["task_id"]) is int
+        assert failed["entry_count"] == 1
+        assert failed["path"] == "input.txt"
+        assert failed["failure"] == "Error"
+        assert "No such file" not in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)
 
 
 # =============================================================================

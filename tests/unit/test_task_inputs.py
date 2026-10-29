@@ -29,6 +29,16 @@ from yascheduler.domain import (
 )
 
 
+class _SensitiveRepr:
+    """Non-input object whose repr must never enter user-facing diagnostics."""
+
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+
+    def __repr__(self) -> str:
+        return f"SENSITIVE_REPR<{self.marker}>"
+
+
 class TestTaskInputFile:
     def test_holds_path_and_bytes(self) -> None:
         content = b"\x00\xff binary \n\r"
@@ -147,6 +157,15 @@ class TestValidateTaskPath:
         with pytest.raises(UnsafeTaskPathError):
             validate_task_path(raw)  # type: ignore[arg-type]
 
+    def test_non_str_path_uses_placeholder_instead_of_object_repr(self) -> None:
+        marker = "UNIQUE_TASK_PATH_SECRET_2f9a"
+        with pytest.raises(UnsafeTaskPathError) as info:
+            validate_task_path(_SensitiveRepr(marker))  # type: ignore[arg-type]
+
+        assert info.value.path == "<task path>"
+        assert info.value.reason == "task path must be a str"
+        assert marker not in str(info.value)
+
 
 class TestValidateSelection:
     def test_preserves_glob_metacharacters(self) -> None:
@@ -179,6 +198,15 @@ class TestValidateSelection:
     def test_rejects_non_string_selections(self) -> None:
         with pytest.raises(UnsafeTaskPathError):
             validate_selection(None)  # type: ignore[arg-type]
+
+    def test_non_str_selection_uses_placeholder_instead_of_object_repr(self) -> None:
+        marker = "UNIQUE_SELECTION_SECRET_4b1c"
+        with pytest.raises(UnsafeTaskPathError) as info:
+            validate_selection(_SensitiveRepr(marker))  # type: ignore[arg-type]
+
+        assert info.value.path == "<selection>"
+        assert info.value.reason == "selection must be a str"
+        assert marker not in str(info.value)
 
 
 class TestSelectionMatchesExplicit:
@@ -450,6 +478,26 @@ class TestNormalizeInputSnapshot:
     def test_rejects_non_iterable_entries(self) -> None:
         with pytest.raises(InvalidTaskSnapshotError):
             normalize_input_snapshot(5)  # type: ignore[arg-type]
+
+    def test_non_iterable_entries_use_placeholder_instead_of_object_repr(self) -> None:
+        marker = "UNIQUE_ENTRIES_SECRET_7d3e"
+        with pytest.raises(InvalidTaskSnapshotError) as info:
+            normalize_input_snapshot(_SensitiveRepr(marker))  # type: ignore[arg-type]
+
+        assert info.value.path == "<entries>"
+        assert info.value.reason == "entries must be an iterable of task input entries"
+        assert marker not in str(info.value)
+
+    def test_non_entry_uses_positional_placeholder_instead_of_object_repr(
+        self,
+    ) -> None:
+        marker = "UNIQUE_ENTRY_SECRET_8c5f"
+        with pytest.raises(InvalidTaskSnapshotError) as info:
+            normalize_input_snapshot([_SensitiveRepr(marker)])  # type: ignore[list-item]
+
+        assert info.value.path == "<entry 0>"
+        assert info.value.reason == "item 0 is not a task input entry"
+        assert marker not in str(info.value)
 
 
 class TestErrorContracts:

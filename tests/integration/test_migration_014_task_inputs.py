@@ -1,7 +1,7 @@
 """Integration tests for migration 014 task-input snapshot conversion."""
 # region MODULE_CONTRACT
 # PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap seeds the latest prefix without engine context, 013 databases convert every task status into equivalent binary snapshot entries, legacy databases upgrade without losing task identity, timestamps, state, bindings, or unrelated metadata, and failed conversion retries atomically after fixture repair.
-# SCOPE: Fresh/current/legacy migration cohorts, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, plus tracker/snapshot idempotency on rerun.
+# SCOPE: Fresh/current/legacy migration cohorts, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, tracker/snapshot idempotency on rerun, and qualified-runner structured failure logs with payload redaction.
 # DEPENDENCIES: USES API: apply_schema, apply_migrations, check_migration_status, pg8000.native, testcontainers.PostgresContainer
 # READS: PostgreSQL container (postgres:16-alpine)
 # KEYWORDS: migration 014, task inputs, snapshots, postgres, base64, legacy upgrade, rollback, retry, idempotency
@@ -9,7 +9,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
@@ -18,6 +20,7 @@ import pg8000.native
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+from tests.log_assertions import extra_fields
 from yascheduler.infra.persistence import (
     MigrationState,
     PostgresDbConfig,
@@ -25,6 +28,7 @@ from yascheduler.infra.persistence import (
     check_migration_status,
 )
 from yascheduler.infra.persistence.postgres_schema import apply_schema
+from yascheduler.shared.log import LogFormatter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -129,6 +133,11 @@ EXPECTED_INPUT_CONTRACT = {
 }
 UNKNOWN_ENGINE = "migration-014-unknown-engine"
 UNSAFE_ENGINE = "migration-014-unsafe-engine"
+LOG_SECRET = "UNIQUE_MIGRATION_INPUT_SECRET_8e2f"
+LOG_CREDENTIAL = "UNIQUE_MIGRATION_CREDENTIAL_46b1"
+MIGRATION_LOGGER = (
+    "yascheduler.infra.persistence.sql.migrations.014_task_input_snapshots"
+)
 
 
 # region CLASS__FailureCase
@@ -396,7 +405,11 @@ def _failure_cases() -> tuple[_FailureCase, ...]:
         _FailureCase(
             label="malformed-fort9",
             engine=ENGINE,
-            broken_payload={**full_payload, "fort.9": "a"},
+            broken_payload={
+                **full_payload,
+                "fort.9": f"{LOG_SECRET}!",
+                "unrelated_credential": LOG_CREDENTIAL,
+            },
             repaired_payload=full_payload,
             failing_engine_inputs={ENGINE: DECLARATIONS},
             repaired_engine_inputs={ENGINE: DECLARATIONS},
@@ -646,7 +659,9 @@ def test_fresh_bootstrap_seeds_014_without_engine_context() -> None:
             conn.close()
 
 
-def test_modern_013_migration_creates_table_and_converts_all_statuses() -> None:
+def test_modern_013_migration_creates_table_and_converts_all_statuses(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
         config = _make_config(pg)
         apply_schema(config)
@@ -662,7 +677,54 @@ def test_modern_013_migration_creates_table_and_converts_all_statuses() -> None:
             conn.close()
 
         # upto caps the chain at 014 so future migrations cannot leak in.
-        apply_migrations(config, engine_inputs={ENGINE: DECLARATIONS}, upto="014")
+        with caplog.at_level(logging.DEBUG, logger=MIGRATION_LOGGER):
+            apply_migrations(config, engine_inputs={ENGINE: DECLARATIONS}, upto="014")
+
+        overall_start = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_INPUTS_START"
+        ]
+        assert len(overall_start) == 1
+        assert overall_start[0].name == MIGRATION_LOGGER
+        assert {
+            key: value
+            for key, value in extra_fields(overall_start[0]).items()
+            if key != "message"
+        } == {"entry_count": 0}
+
+        overall_done = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_INPUTS_DONE"
+        ]
+        assert len(overall_done) == 1
+        assert overall_done[0].name == MIGRATION_LOGGER
+        assert {
+            key: value
+            for key, value in extra_fields(overall_done[0]).items()
+            if key != "message"
+        } == {
+            "tasks": len(task_ids),
+            "entry_count": len(task_ids) * len(EXPECTED_INPUT_ENTRIES),
+        }
+        for task_id in task_ids:
+            storage_done = [
+                record
+                for record in caplog.records
+                if record.getMessage() == "MIGRATE_TASK_STORAGE_DONE"
+                and getattr(record, "task_id", None) == task_id
+            ]
+            assert len(storage_done) == 1
+            assert {
+                key: value
+                for key, value in extra_fields(storage_done[0]).items()
+                if key != "message"
+            } == {
+                "task_id": task_id,
+                "engine": ENGINE,
+                "entry_count": len(EXPECTED_INPUT_ENTRIES),
+            }
 
         conn = _connect(config)
         try:
@@ -898,6 +960,7 @@ def test_migration_014_preserves_unrelated_high_precision_jsonb_number() -> None
 def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
     precreated: bool,
     case: _FailureCase,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     first_marker = "rollback-first"
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
@@ -946,7 +1009,10 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         finally:
             conn.close()
 
-        with pytest.raises(RuntimeError) as exc_info:
+        with (
+            caplog.at_level(logging.DEBUG, logger=MIGRATION_LOGGER),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
             apply_migrations(
                 config,
                 engine_inputs=case.failing_engine_inputs,
@@ -957,6 +1023,86 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         assert f"task {broken_task_id}, engine {case.engine!r}" in diagnostic
         for fragment in case.expected_diagnostic:
             assert fragment in diagnostic
+
+        assert caplog.records[0].getMessage() == "MIGRATE_INPUTS_START"
+        overall_failed = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_INPUTS_FAILED"
+        ]
+        assert len(overall_failed) == 1
+        overall_failed_fields = extra_fields(overall_failed[0])
+        assert overall_failed_fields["task_id"] == broken_task_id
+        assert overall_failed_fields["engine"] == case.engine
+        assert overall_failed_fields["failure"] == "RuntimeError"
+        assert overall_failed_fields["entry_count"] == len(EXPECTED_INPUT_ENTRIES)
+
+        task_failed = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_TASK_INPUTS_FAILED"
+            and getattr(record, "task_id", None) == broken_task_id
+        ]
+        assert len(task_failed) == 1
+        failed_record = task_failed[0]
+        assert failed_record.name == MIGRATION_LOGGER
+        failed_fields = extra_fields(failed_record)
+        expected_failure = {
+            "unknown-engine": "ValueError",
+            "missing-input": "MissingInputFileError",
+            "unsafe-path": "UnsafeTaskPathError",
+            "malformed-fort9": "InvalidTaskSnapshotError",
+            "unsupported-value": "InvalidTaskSnapshotError",
+        }[case.label]
+        assert failed_fields["engine"] == case.engine
+        assert failed_fields["entry_count"] == 0
+        assert failed_fields["failure"] == expected_failure
+        expected_path = {
+            "unknown-engine": None,
+            "missing-input": "INPUT",
+            "unsafe-path": "../escape",
+            "malformed-fort9": "fort.9",
+            "unsupported-value": "INPUT",
+        }[case.label]
+        if expected_path is None:
+            assert "path" not in failed_fields
+            assert "selection" not in failed_fields
+        else:
+            assert failed_fields["path"] == expected_path
+        if case.label in {"missing-input", "unsafe-path"}:
+            assert failed_fields["selection"] == expected_path
+        else:
+            assert "selection" not in failed_fields
+
+        assert not any(
+            record.getMessage() == "MIGRATE_TASK_INPUTS"
+            and getattr(record, "task_id", None) == broken_task_id
+            for record in caplog.records
+        )
+        assert not any(
+            record.getMessage() == "MIGRATE_TASK_STORAGE_DONE"
+            and getattr(record, "task_id", None) == broken_task_id
+            for record in caplog.records
+        )
+        assert not any(
+            record.getMessage() == "MIGRATE_INPUTS_DONE" for record in caplog.records
+        )
+
+        rendered = LogFormatter().format(failed_record)
+        assert "MIGRATE_TASK_INPUTS_FAILED" in rendered
+        assert f"task_id={broken_task_id}" in rendered
+        assert f"failure='{expected_failure}'" in rendered
+        if expected_path is not None:
+            assert f"path='{expected_path}'" in rendered
+        all_field_dump = repr([extra_fields(record) for record in caplog.records])
+        for marker in (
+            LOG_SECRET,
+            LOG_CREDENTIAL,
+            base64.b64encode(LOG_SECRET.encode()).decode(),
+        ):
+            assert marker not in rendered
+            assert marker not in all_field_dump
+        assert all(record.exc_info is None for record in caplog.records)
 
         # A fresh connection must see the complete pre-migration state: the
         # first task's snapshot insert and metadata-key removal rolled back,

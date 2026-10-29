@@ -1,7 +1,7 @@
 """PostgreSQL repository implementations for tasks and nodes."""
 # region MODULE_CONTRACT
 # PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks (with their owned input snapshot entries) and nodes transactionally without coupling domain logic to pg8000 or SQL details.
-# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert and batched hydration.
+# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert and batched hydration with content-free DEBUG boundary traces.
 # INVARIANTS: Every repository method is async and routes synchronous pg8000 calls through asyncio.get_running_loop().run_in_executor(self._executor, _fn).
 # DEPENDENCIES: USES API: pg8000.Connection, READS: SQL files from disk via sql_loader
 # KEYWORDS: postgres, repository, task, node, crud
@@ -238,25 +238,46 @@ class PostgresTaskRepository(_PgRepository):
         # region BLOCK_insert_input_entries
         # Owns nothing but the entry rows; task_id comes from RETURNING so the
         # entries share the caller's transaction and never outlive their task.
-        if new_task.input_entries:
-            entries = tuple(new_task.input_entries)
-            await self._run(
-                load_query("task/insert_inputs"),
-                task_id=task.task_id.value,
-                paths=[e.path for e in entries],
-                kinds=[e.kind.value for e in entries],
-                contents=[
-                    e.content if isinstance(e, TaskInputFile) else None for e in entries
-                ],
-            )
+        entries = tuple(new_task.input_entries)
+        logger.debug(
+            "persist_task_inputs_START",
+            extra={
+                "task_id": task.task_id.value,
+                "engine": new_task.engine,
+                "entry_count": len(entries),
+            },
+        )
+        try:
+            if entries:
+                await self._run(
+                    load_query("task/insert_inputs"),
+                    task_id=task.task_id.value,
+                    paths=[e.path for e in entries],
+                    kinds=[e.kind.value for e in entries],
+                    contents=[
+                        e.content if isinstance(e, TaskInputFile) else None
+                        for e in entries
+                    ],
+                )
+        except BaseException as err:
             logger.debug(
-                "persist_task_inputs",
+                "persist_task_inputs_FAILED",
                 extra={
                     "task_id": task.task_id.value,
                     "engine": new_task.engine,
                     "entry_count": len(entries),
+                    "failure": type(err).__name__,
                 },
             )
+            raise
+        logger.debug(
+            "persist_task_inputs",
+            extra={
+                "task_id": task.task_id.value,
+                "engine": new_task.engine,
+                "entry_count": len(entries),
+            },
+        )
         # endregion BLOCK_insert_input_entries
         return materialize_task(
             replace(task, input_entries=tuple(new_task.input_entries))
@@ -310,20 +331,48 @@ class PostgresTaskRepository(_PgRepository):
         if not tasks:
             return tasks
         # region BLOCK_load_entries
-        rows = await self._run(
-            load_query("task/list_inputs_by_task_ids"),
-            task_ids=[t.task_id.value for t in tasks],
-        )
-        by_task: dict[int, list[TaskInputEntry]] = {}
-        for row in rows:
-            by_task.setdefault(int(row["task_id"]), []).append(self._row_to_entry(row))
+        single_task = tasks[0] if len(tasks) == 1 else None
+        start_fields: dict[str, Any] = {"task_count": len(tasks)}
+        if single_task is not None:
+            start_fields["task_id"] = single_task.task_id.value
+            start_fields["engine"] = single_task.engine
+        logger.debug("hydrate_task_inputs_START", extra=start_fields)
+        try:
+            rows = await self._run(
+                load_query("task/list_inputs_by_task_ids"),
+                task_ids=[t.task_id.value for t in tasks],
+            )
+            by_task: dict[int, list[TaskInputEntry]] = {}
+            for row in rows:
+                by_task.setdefault(int(row["task_id"]), []).append(
+                    self._row_to_entry(row)
+                )
+            hydrated = [
+                replace(t, input_entries=tuple(by_task[t.task_id.value]))
+                if t.task_id.value in by_task
+                else t
+                for t in tasks
+            ]
+        except BaseException as err:
+            failed_fields: dict[str, Any] = {
+                "task_count": len(tasks),
+                "failure": type(err).__name__,
+            }
+            if single_task is not None:
+                failed_fields["task_id"] = single_task.task_id.value
+                failed_fields["engine"] = single_task.engine
+            logger.debug("hydrate_task_inputs_FAILED", extra=failed_fields)
+            raise
+        done_fields: dict[str, Any] = {
+            "task_count": len(tasks),
+            "entry_count": sum(len(task.input_entries) for task in hydrated),
+        }
+        if single_task is not None:
+            done_fields["task_id"] = single_task.task_id.value
+            done_fields["engine"] = single_task.engine
+        logger.debug("hydrate_task_inputs_DONE", extra=done_fields)
         # endregion BLOCK_load_entries
-        return [
-            replace(t, input_entries=tuple(by_task[t.task_id.value]))
-            if t.task_id.value in by_task
-            else t
-            for t in tasks
-        ]
+        return hydrated
 
     # endregion METHOD__hydrate_input_entries
 

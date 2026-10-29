@@ -8,6 +8,7 @@
 # INVARIANTS:
 # - Never follows or preserves symbolic links: a selected, matched, or in-subtree link fails with TaskInputCaptureError; unsupported entry types fail the same way when selected.
 # - Files are read as raw bytes with no decoding or newline normalization; file contents never enter logs or exceptions.
+# - Capture start/completion/failure records carry counts and selection/path context, never source bytes or arbitrary exception text.
 # - Traversal only joins validated components onto the root, so enumeration cannot escape the task root.
 # - Every selection is required: a missing explicit path or a glob with no matches fails the whole capture, naming the selection.
 # RATIONALE:
@@ -84,42 +85,64 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
     modification by another process is not observable and is not promised.
     """
     root = Path(root)
-    validated = [validate_selection(selection) for selection in selections]
-    _require_root_directory(root)
     logger.debug(
         "CAPTURE",
-        extra={"root": str(root), "selections": len(validated)},
+        extra={
+            "root": str(root),
+            "selections": len(selections),
+            "entry_count": 0,
+        },
     )
     matches: dict[str, TaskInputKind] = {}
     identities: dict[str, _Identity] = {}
-    for raw, selection in zip(selections, validated):
-        parts = tuple(selection.split("/"))
-        if not _select_matches(
-            root, parts, (), at_root=True, matches=matches, identities=identities
-        ):
-            reason = (
-                "glob selection matched no entries"
-                if is_glob_pattern(selection)
-                else "required selection not found"
+    raw: str | None = None
+    try:
+        validated = [validate_selection(selection) for selection in selections]
+        _require_root_directory(root)
+        for raw, selection in zip(selections, validated):
+            parts = tuple(selection.split("/"))
+            if not _select_matches(
+                root, parts, (), at_root=True, matches=matches, identities=identities
+            ):
+                reason = (
+                    "glob selection matched no entries"
+                    if is_glob_pattern(selection)
+                    else "required selection not found"
+                )
+                # Boundary logging classifies this validation failure; keep the raise local.
+                raise TaskInputCaptureError(raw, reason)  # noqa: TRY301
+        # Expansion and reads operate on the merged tree, not the last selection.
+        raw = None
+        _expand_matched_directories(root, matches, identities)
+        contents = _read_files(root, identities)
+        entries = [
+            (
+                TaskInputFile(path=path, content=contents[path])
+                if kind is TaskInputKind.FILE
+                else TaskInputDirectory(path=path)
             )
-            raise TaskInputCaptureError(raw, reason)
-    _expand_matched_directories(root, matches, identities)
-    contents = _read_files(root, identities)
-    entries = [
-        (
-            TaskInputFile(path=path, content=contents[path])
-            if kind is TaskInputKind.FILE
-            else TaskInputDirectory(path=path)
+            for path, kind in sorted(matches.items())
+        ]
+        snapshot = normalize_input_snapshot(entries)
+    except Exception as err:
+        logger.debug(
+            "CAPTURE_FAILED",
+            extra={
+                "root": str(root),
+                "selection": raw,
+                "path": getattr(err, "path", "."),
+                "entry_count": len(matches),
+                "failure": type(err).__name__,
+            },
         )
-        for path, kind in sorted(matches.items())
-    ]
-    snapshot = normalize_input_snapshot(entries)
+        raise
     logger.debug(
         "CAPTURE_DONE",
         extra={
             "root": str(root),
             "files": len(contents),
             "directories": len(snapshot) - len(contents),
+            "entry_count": len(snapshot),
         },
     )
     return snapshot

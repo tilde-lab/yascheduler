@@ -7,6 +7,7 @@
 # - NOT: filesystem capture (infra local_inputs), snapshot persistence, engine resolution, or submit use-case validation.
 # INVARIANTS:
 # - Pure: no filesystem, SQL, SSH, or config imports — normalization never reads the caller's filesystem to fill missing values.
+# - Boundary records distinguish start/completion/failure using source, engine, counts and path context, never metadata values, file bytes, encoded payloads or arbitrary exception text.
 # - Every engine input declaration is required: a missing literal key or a glob with no claimable metadata key raises MissingInputFileError naming the declaration.
 # - Explicit entries together with metadata keys the engine declarations would claim are ambiguous and rejected (an explicit empty sequence is a valid empty snapshot, not a fallback to metadata).
 # - Typed metadata fields (TYPED_METADATA_KEYS) are never consumed as input payload by any declaration.
@@ -81,34 +82,52 @@ def normalize_task_inputs(
     the declarations would claim then make the submission ambiguous and are
     rejected. Normalization never reads the filesystem.
     """
-    payload = {
-        key: value for key, value in metadata.items() if key not in TYPED_METADATA_KEYS
-    }
-    if input_entries is not None:
-        snapshot = normalize_input_snapshot(input_entries)
-        _reject_ambiguous_payload(payload, engine)
+    source = "explicit" if input_entries is not None else "legacy"
+    snapshot: TaskInputSnapshot = ()
+    logger.debug(
+        "NORMALIZE_INPUTS_START",
+        extra={"engine": engine.name, "source": source, "entry_count": 0},
+    )
+    try:
+        payload = {
+            key: value
+            for key, value in metadata.items()
+            if key not in TYPED_METADATA_KEYS
+        }
+        if input_entries is not None:
+            snapshot = normalize_input_snapshot(input_entries)
+            _reject_ambiguous_payload(payload, engine)
+        else:
+            claimed = _claim_legacy_payload(payload, engine)
+            entries = [
+                TaskInputFile(path=key, content=_encode_legacy_value(key, value))
+                for key, value in sorted(claimed.items())
+            ]
+            snapshot = normalize_input_snapshot(entries)
+        # Preserve the existing transitional metadata projection.
+        remaining_metadata = dict(metadata)
+    except Exception as err:
         logger.debug(
-            "NORMALIZE_INPUTS",
+            "NORMALIZE_INPUTS_FAILED",
             extra={
                 "engine": engine.name,
-                "source": "explicit",
-                "entries": len(snapshot),
+                "source": source,
+                "entry_count": len(snapshot),
+                "path": getattr(err, "path", getattr(err, "filename", None)),
+                "failure": type(err).__name__,
             },
         )
-        return snapshot, dict(metadata)
-    claimed = _claim_legacy_payload(payload, engine)
-    entries = [
-        TaskInputFile(path=key, content=_encode_legacy_value(key, value))
-        for key, value in sorted(claimed.items())
-    ]
-    snapshot = normalize_input_snapshot(entries)
+        raise
     logger.debug(
         "NORMALIZE_INPUTS",
-        extra={"engine": engine.name, "source": "legacy", "entries": len(snapshot)},
+        extra={
+            "engine": engine.name,
+            "source": source,
+            "entries": len(snapshot),
+            "entry_count": len(snapshot),
+        },
     )
-    # Transition: claimed keys stay in the metadata copy — the live deployer
-    # still reads task.extra[input_file]; task 4.1 removes this.
-    return snapshot, dict(metadata)
+    return snapshot, remaining_metadata
 
 
 # endregion FUNC_normalize_task_inputs

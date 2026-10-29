@@ -2,6 +2,7 @@
 # region MODULE_CONTRACT
 # PURPOSE: Reconstruct the task's stored input tree on a remote machine via MachineSession SFTP and spawn the calculation process; rolls back BUSY on failure.
 # SCOPE: TaskDeployer class; module-private helpers _write_remote_file, _make_remote_directory, _lstat_type, _check_destination.
+# INVARIANTS: Upload boundary records identify task/count/path and failure class, including cancellation; rollback records describe whether release occurred. Input-transfer diagnostics never attach exception text or tracebacks, which may contain file bodies or credentials.
 # DEPENDENCIES: USES API: asyncssh (SFTPClient, SFTP errors, SFTP file-type constants)
 # KEYWORDS: deploy, task, upload, spawn, TaskDeployer, sftp, input snapshot
 # endregion MODULE_CONTRACT
@@ -44,17 +45,18 @@ _ABSENT_SFTP_CODES = frozenset({FX_NO_SUCH_FILE, FX_NO_SUCH_PATH})
 
 # region FUNC__write_remote_file
 # PURPOSE: Write one stored input file's exact bytes to a remote path via SFTP.
-# INVARIANTS: Binary mode only — content is the stored snapshot bytes, never text-decoded; asyncssh.misc.Error is logged with path/reason/code and re-raised; any other exception propagates unlogged (the caller's handler reports task context).
+# INVARIANTS: Binary mode only — content is the stored snapshot bytes, never text-decoded; asyncssh.misc.Error is logged with path/code/class and re-raised; exception text and traceback are not logged because transport errors may echo payloads or credentials; any other exception propagates unlogged (the caller's handler reports task context).
 async def _write_remote_file(sftp: SFTPClient, path: str, data: bytes) -> None:
     # region BLOCK_write_file
     try:
         async with sftp.open(path, "wb") as f:
             await f.write(data)  # type: ignore[type-var]
     except asyncssh.misc.Error as err:
-        logger.exception(
+        # Traceback would leak arbitrary exception content.
+        logger.error(  # noqa: TRY400
             "Write %s - SFTPError: %s (%s)",
             path,
-            err.reason,
+            type(err).__name__,
             err.code,
         )
         raise
@@ -66,7 +68,7 @@ async def _write_remote_file(sftp: SFTPClient, path: str, data: bytes) -> None:
 
 # region FUNC__make_remote_directory
 # PURPOSE: Create one stored input directory entry (with parents) on the remote host so empty directories survive deployment.
-# INVARIANTS: The path is passed to SFTP in POSIX-separated string form regardless of the remote platform flavor, so backslash-flavored Windows paths are never sent as one opaque component; idempotent — exist_ok tolerates a directory that already exists (e.g. partial earlier attempt); asyncssh.misc.Error is logged with path/reason/code/task_id and re-raised; any other exception propagates unlogged.
+# INVARIANTS: The path is passed to SFTP in POSIX-separated string form regardless of the remote platform flavor, so backslash-flavored Windows paths are never sent as one opaque component; idempotent — exist_ok tolerates a directory that already exists (e.g. partial earlier attempt); asyncssh.misc.Error is logged with path/code/class/task_id and re-raised, never exception text or traceback; any other exception propagates unlogged.
 async def _make_remote_directory(
     sftp: SFTPClient,
     path: PurePath,
@@ -76,10 +78,11 @@ async def _make_remote_directory(
     try:
         await sftp.makedirs(path.as_posix(), exist_ok=True)
     except asyncssh.misc.Error as err:
-        logger.exception(
+        # Traceback would leak arbitrary exception content.
+        logger.error(  # noqa: TRY400
             "Mkdir %s - SFTPError: %s (%s) (task_id=%s)",
             path,
-            err.reason,
+            type(err).__name__,
             err.code,
             task_id,
         )
@@ -173,55 +176,79 @@ class TaskDeployer:
         # Trust boundary: re-validate the stored snapshot before any remote
         # write — unsafe paths, duplicates, and kind conflicts must not reach
         # SFTP path joining even if storage or hydration were corrupted.
-        entries = normalize_input_snapshot(task.input_entries)
+        path = "."
+        entry_count = 0
+        logger.debug(
+            "UPLOAD_INPUTS",
+            extra={"task_id": task.task_id.value, "entry_count": entry_count},
+        )
+        try:
+            entries = normalize_input_snapshot(task.input_entries)
+            entry_count = len(entries)
+            async with session.open_sftp() as sftp:
+                # Check the task root before creating it so a pre-existing symlink
+                # or a regular file at the root path fails with the same
+                # UnsafeTaskPathError contract as entry-level destinations.
+                await _check_destination(
+                    sftp,
+                    remote_dir,
+                    need_directory=True,
+                    task_id=task.task_id,
+                )
+                await _make_remote_directory(sftp, remote_dir, task.task_id)
 
-        async with session.open_sftp() as sftp:
-            # Check the task root before creating it so a pre-existing symlink
-            # or a regular file at the root path fails with the same
-            # UnsafeTaskPathError contract as entry-level destinations.
-            await _check_destination(
-                sftp,
-                remote_dir,
-                need_directory=True,
-                task_id=task.task_id,
+                for entry in entries:
+                    path = entry.path
+                    target = remote_dir.joinpath(*path.split("/"))
+                    # Confinement guard: a component like ``a:b`` is drive-parsed
+                    # by the Windows path flavor and would discard the task root
+                    # (e.g. ``C:/tasks`` / ``sub/a:b`` -> ``a:b``). Any target
+                    # that is not inside the remote task root is rejected before
+                    # it can reach SFTP.
+                    if not target.is_relative_to(remote_dir):
+                        logger.debug(
+                            "DESTINATION_REJECTED",
+                            extra={
+                                "path": path,
+                                "reason": "escapes the task root",
+                                "task_id": task.task_id,
+                            },
+                        )
+                        # Boundary logging classifies this validation failure; keep it local.
+                        raise UnsafeTaskPathError(  # noqa: TRY301
+                            path, "destination escapes the task root"
+                        )
+                    if isinstance(entry, TaskInputFile):
+                        await _check_destination(
+                            sftp,
+                            target,
+                            need_directory=False,
+                            task_id=task.task_id,
+                        )
+                        await _write_remote_file(sftp, target.as_posix(), entry.content)
+                    else:
+                        await _check_destination(
+                            sftp,
+                            target,
+                            need_directory=True,
+                            task_id=task.task_id,
+                        )
+                        await _make_remote_directory(sftp, target, task.task_id)
+        except BaseException as err:
+            logger.debug(
+                "UPLOAD_INPUTS_FAILED",
+                extra={
+                    "task_id": task.task_id.value,
+                    "path": getattr(err, "path", path),
+                    "entry_count": entry_count,
+                    "failure": type(err).__name__,
+                },
             )
-            await _make_remote_directory(sftp, remote_dir, task.task_id)
-
-            for entry in entries:
-                target = remote_dir.joinpath(*entry.path.split("/"))
-                # Confinement guard: a component like ``a:b`` is drive-parsed
-                # by the Windows path flavor and would discard the task root
-                # (e.g. ``C:/tasks`` / ``sub/a:b`` -> ``a:b``). Any target
-                # that is not inside the remote task root is rejected before
-                # it can reach SFTP.
-                if not target.is_relative_to(remote_dir):
-                    logger.debug(
-                        "DESTINATION_REJECTED",
-                        extra={
-                            "path": entry.path,
-                            "reason": "escapes the task root",
-                            "task_id": task.task_id,
-                        },
-                    )
-                    raise UnsafeTaskPathError(
-                        entry.path, "destination escapes the task root"
-                    )
-                if isinstance(entry, TaskInputFile):
-                    await _check_destination(
-                        sftp,
-                        target,
-                        need_directory=False,
-                        task_id=task.task_id,
-                    )
-                    await _write_remote_file(sftp, target.as_posix(), entry.content)
-                else:
-                    await _check_destination(
-                        sftp,
-                        target,
-                        need_directory=True,
-                        task_id=task.task_id,
-                    )
-                    await _make_remote_directory(sftp, target, task.task_id)
+            raise
+        logger.debug(
+            "UPLOAD_INPUTS_DONE",
+            extra={"task_id": task.task_id.value, "entry_count": entry_count},
+        )
         return True
         # endregion BLOCK_upload
 
@@ -306,10 +333,12 @@ class TaskDeployer:
                         task,
                         task_dir,
                     )
-                except Exception:
-                    logger.exception(
-                        "Can't upload task_id=%s files",
+                except Exception as err:
+                    # Traceback would leak arbitrary exception content.
+                    logger.error(  # noqa: TRY400
+                        "Can't upload task_id=%s files (%s)",
                         task.task_id,
+                        type(err).__name__,
                     )
                     raise
             # endregion BLOCK_deploy
@@ -331,7 +360,15 @@ class TaskDeployer:
                     "task_id=%s on %s: already disconnected, skipping rollback (%s)",
                     task.task_id,
                     session.hostname,
-                    err,
+                    type(err).__name__,
+                )
+                logger.debug(
+                    "DEPLOY_ROLLBACK",
+                    extra={
+                        "task_id": task.task_id.value,
+                        "failure": type(err).__name__,
+                        "released": False,
+                    },
                 )
                 raise
             if session.machine.state != MachineState.BUSY:
@@ -346,9 +383,17 @@ class TaskDeployer:
                     "task_id=%s on %s (%s); rolling back BUSY",
                     task.task_id,
                     session.hostname,
-                    err,
+                    type(err).__name__,
                 )
             session.update(session.machine.release())
+            logger.debug(
+                "DEPLOY_ROLLBACK",
+                extra={
+                    "task_id": task.task_id.value,
+                    "failure": type(err).__name__,
+                    "released": True,
+                },
+            )
             raise
             # endregion BLOCK_rollback_busy
         # endregion BLOCK_deploy_spawn

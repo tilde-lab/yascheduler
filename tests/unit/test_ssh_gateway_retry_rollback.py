@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for non-idempotent retry removal (run_bg/upload/download single-attempt), start_task_on_machine BUSY rollback, and SSHRetryExc shape invariants.
-# SCOPE: run_bg/upload/download no longer retry on transient SSH/SFTP errors; start_task_on_machine rolls back gateway BUSY on upload/spawn/Cancelled/unexpected-state/concurrent-disconnect failures; SSHRetryExc does not include PermissionDenied.
+# PURPOSE: Unit tests for non-idempotent retry removal (run_bg/upload/download single-attempt), start_task_on_machine BUSY rollback with content-free DEPLOY_ROLLBACK records, and SSHRetryExc shape invariants.
+# SCOPE: run_bg/upload/download no longer retry on transient SSH/SFTP errors; start_task_on_machine rolls back gateway BUSY on upload/spawn/Cancelled/unexpected-state/concurrent-disconnect failures and records task_id/failure/released without exception text; SSHRetryExc does not include PermissionDenied.
 # KEYWORDS: non-idempotent retry, BUSY rollback, start_task_on_machine, SSHRetryExc, PermissionDenied
 # endregion MODULE_CONTRACT
 
@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from asyncssh.misc import PermissionDenied
 
+from tests.log_assertions import extra_fields
 from tests.unit.test_ssh_gateway import _make_state
 from yascheduler.domain import Engine
 from yascheduler.domain.model import (
@@ -76,6 +77,22 @@ def _wire_realpath(state: SSHMachineSession) -> None:
         yield sftp
 
     state._conn.start_sftp_client = _sftp_ctx  # type: ignore[assignment]
+
+
+def _rollback_fields(
+    caplog: pytest.LogCaptureFixture, failure: str, released: bool
+) -> None:
+    records = [
+        record for record in caplog.records if record.getMessage() == "DEPLOY_ROLLBACK"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    fields = extra_fields(record)
+    assert fields["task_id"] == 1
+    assert type(fields["task_id"]) is int
+    assert fields["failure"] == failure
+    assert fields["released"] is released
+    assert record.exc_info is None
 
 
 # =============================================================================
@@ -168,7 +185,7 @@ class TestStartTaskRollback:
                 "_upload_task_data",
                 AsyncMock(side_effect=OSError("upload boom")),
             ),
-            caplog.at_level(logging.INFO),
+            caplog.at_level(logging.DEBUG),
             pytest.raises(OSError, match="upload boom"),
         ):
             await task_deployer.start_task_on_machine(
@@ -180,7 +197,8 @@ class TestStartTaskRollback:
             )
 
         assert repository._sessions[NodeId(1)].machine.state == MachineState.FREE
-        assert "rolling back BUSY" in caplog.text
+        _rollback_fields(caplog, "OSError", released=True)
+        assert "upload boom" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_rollback_busy_on_spawn_failure(
@@ -205,7 +223,7 @@ class TestStartTaskRollback:
                 "_exec_spawn_command",
                 AsyncMock(side_effect=ChannelOpenError(11, "no chan")),
             ),
-            caplog.at_level(logging.INFO),
+            caplog.at_level(logging.DEBUG),
             pytest.raises(ChannelOpenError),
         ):
             await task_deployer.start_task_on_machine(
@@ -217,7 +235,7 @@ class TestStartTaskRollback:
             )
 
         assert repository._sessions[NodeId(1)].machine.state == MachineState.FREE
-        assert "rolling back BUSY" in caplog.text
+        _rollback_fields(caplog, "ChannelOpenError", released=True)
 
     @pytest.mark.asyncio
     async def test_rollback_on_cancelled_error(
@@ -237,7 +255,7 @@ class TestStartTaskRollback:
                 "_upload_task_data",
                 AsyncMock(side_effect=asyncio.CancelledError()),
             ),
-            caplog.at_level(logging.INFO),
+            caplog.at_level(logging.DEBUG),
             pytest.raises(asyncio.CancelledError),
         ):
             await task_deployer.start_task_on_machine(
@@ -249,7 +267,7 @@ class TestStartTaskRollback:
             )
 
         assert repository._sessions[NodeId(1)].machine.state == MachineState.FREE
-        assert "rolling back BUSY" in caplog.text
+        _rollback_fields(caplog, "CancelledError", released=True)
 
     @pytest.mark.asyncio
     async def test_rollback_warns_on_unexpected_state(
@@ -278,7 +296,7 @@ class TestStartTaskRollback:
                 "_upload_task_data",
                 AsyncMock(side_effect=_fail_with_unexpected_state),
             ),
-            caplog.at_level(logging.WARNING),
+            caplog.at_level(logging.DEBUG),
             pytest.raises(OSError),
         ):
             await task_deployer.start_task_on_machine(
@@ -292,6 +310,7 @@ class TestStartTaskRollback:
         assert repository._sessions[NodeId(1)].machine.state == MachineState.FREE
         assert "unexpected state" in caplog.text
         assert "expected BUSY" in caplog.text
+        _rollback_fields(caplog, "OSError", released=True)
 
     @pytest.mark.asyncio
     async def test_rollback_warns_on_concurrent_disconnect(
@@ -322,7 +341,7 @@ class TestStartTaskRollback:
                 "_upload_task_data",
                 AsyncMock(side_effect=_fail_after_disconnect),
             ),
-            caplog.at_level(logging.WARNING),
+            caplog.at_level(logging.DEBUG),
             pytest.raises(OSError),
         ):
             await task_deployer.start_task_on_machine(
@@ -339,6 +358,8 @@ class TestStartTaskRollback:
         # occupy was called exactly once (the initial occupy); no release call.
         assert spy.call_count == 1
         assert "already disconnected" in caplog.text
+        assert "boom" not in caplog.text
+        _rollback_fields(caplog, "OSError", released=False)
 
 
 # =============================================================================

@@ -303,7 +303,7 @@ def _record_py_tracker(conn: Connection, prefix_id: str) -> None:
 
 # region FUNC__apply_py_migration
 # PURPOSE: Execute a Python migration step inside a transaction — load the module, call migrate(), and record the tracker — so complex DDL/DML logic runs safely and is never re-applied.
-# INVARIANTS: Loads the migration module from path via importlib.util.spec_from_file_location(prefix_id, path) — the prefix_id is the module name, so a .py migration file is importable only by the runner, not by regular import statements; raises RuntimeError if the spec or loader is None; the runner opens BEGIN BEFORE loading the module, so a module-level statement that touches the DB (rare but legal) runs inside the migration's transaction.
+# INVARIANTS: Loads the migration module from path under its qualified persistence module name, so module-local loggers retain source identity and structured trace rendering; tracker identity remains prefix_id. Raises RuntimeError if the spec or loader is None; the runner opens BEGIN BEFORE loading the module, so a module-level statement that touches the DB (rare but legal) runs inside the migration's transaction.
 # ENSURES: On success, the migration's migrate() body has run AND the tracker row for <prefix_id> is recorded (the tracker recording is delegated to _record_py_tracker); on any error from module load, migrate(), or tracker recording, issues best-effort ROLLBACK via _rollback(conn) and re-raises — no tracker row is inserted for the failed migration.
 def _apply_py_migration(
     conn: Connection,
@@ -312,7 +312,8 @@ def _apply_py_migration(
     config: PostgresDbConfig,
     engine_inputs: EngineInputsContext | None = None,
 ) -> None:
-    spec = importlib.util.spec_from_file_location(prefix_id, path)
+    module_name = f"{__package__}.sql.migrations.{path.stem}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         msg = f"{path}: cannot load migration module"
         raise RuntimeError(msg)
