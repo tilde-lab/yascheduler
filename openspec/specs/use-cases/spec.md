@@ -4,37 +4,44 @@ Application-layer use cases orchestrate task submission, allocation,
 consumption, and node deallocation. They drive the domain entities
 through the repository, SSH, and cloud ports. They do not own business
 rules; the domain entities do.
+
 ## Requirements
+
 ### Requirement: Submit a task
 
-The system SHALL create a new task in `TO_DO` state when the engine is
-known and the inputs are valid. The system SHALL reject an unknown
-engine before any write to the task store.
+The system SHALL create a new task in `TO_DO` state when the engine is known
+and a complete input snapshot satisfies `task-input-snapshots` and the engine's
+required selections in `task-file-selection`. Unknown engines and invalid
+inputs SHALL be rejected before writing the task store. The task and its
+complete snapshot SHALL commit together; acceptance SHALL return the new task
+identity only after commit. A persistence failure SHALL leave neither an
+accepted task nor partial input entries.
 
 #### Scenario: a known engine creates a TO_DO task
 
-- **WHEN** a task is submitted with a known engine and valid inputs
-- **THEN** a task is persisted in `TO_DO` state, the change is committed, and the new task identity is returned
+- **WHEN** a task is submitted with a known engine and a complete valid input snapshot
+- **THEN** a task is persisted in `TO_DO` state with its snapshot, the change is committed, and the new task identity is returned
 
 #### Scenario: an unknown engine prevents the write
 
 - **WHEN** a task is submitted with an engine the system does not know
-- **THEN** the submission fails before any write and no task is persisted
+- **THEN** the submission fails before any write and no task or input entries are persisted
+
+#### Scenario: invalid submission or failed persistence prevents acceptance
+
+- **WHEN** required inputs are invalid or incomplete, or persistence fails
+- **THEN** submission fails and neither an accepted task nor partial input entries are committed
 
 ### Requirement: Allocate a task
 
-The system SHALL match a TO_DO task to a free compatible machine. When
-a match is found, the task SHALL transition to RUNNING on that machine.
-When no match is found, the system SHALL request cloud provisioning and
-the task SHALL stay pending.
+The system SHALL match a `TO_DO` task to a free compatible machine. When a
+match is found, the task SHALL transition to `RUNNING` on that machine. When no
+match is found, the system SHALL request cloud provisioning and the task SHALL
+stay pending.
 
-Concurrent allocations SHALL be serialised at the capacity check so
-they do not over-provision. A failure inside the cloud-fallback path
-SHALL remove the temporary node row and SHALL NOT leave a partial
-allocation.
-
-When the task engine is unknown or has no platforms, the task SHALL be
-marked as failed and no provisioning SHALL be requested.
+Concurrent allocations SHALL be serialised at the capacity check so they do not
+over-provision. A failure inside the cloud-fallback path SHALL remove the
+temporary node row and SHALL NOT leave a partial allocation.
 
 #### Scenario: a free compatible machine runs the task
 
@@ -50,6 +57,17 @@ marked as failed and no provisioning SHALL be requested.
 
 - **WHEN** a failure occurs after the temporary node is inserted but before the allocation completes
 - **THEN** the temporary node row is removed and no partial allocation is committed
+
+### Requirement: Reject allocation for an unusable task engine
+
+When the task engine is unknown or has no platforms, the task SHALL be marked as
+failed and no provisioning SHALL be requested.
+
+#### Scenario: an unusable task engine fails the allocation
+
+- **WHEN** a `TO_DO` task is allocated and its engine is unknown or has no
+  platforms
+- **THEN** the task is marked as failed and no provisioning is requested
 
 ### Requirement: Deallocate idle nodes
 
@@ -67,21 +85,11 @@ can be deleted.
 ### Requirement: Abandon a node
 
 The system SHALL clean up a cloud node that never established its SSH
-connection. The system SHALL disable the node's DB row before it
-attempts to delete the cloud VM.
-
-On a successful VM deletion, the system SHALL remove the DB row. If
-that removal fails, the system SHALL report the failure.
-
-On a failed VM deletion, the system SHALL leave the DB row disabled so
-a later deallocate cycle can retry the VM deletion. The system SHALL
-report the failure.
-
-In all cases, the system SHALL release all in-flight allocation entries
-linked to the node and SHALL report the count released.
-
-When the node has no cloud, the system SHALL skip VM deletion, remove
-the DB row, and release the in-flight allocation entries.
+connection. The system SHALL disable the node's DB row before it attempts to
+delete the cloud VM. In all cases, the system SHALL release all in-flight
+allocation entries linked to the node and SHALL report the count released. The
+DB-row removal, failure reporting, and no-cloud behavior SHALL follow the abandon
+scenarios.
 
 #### Scenario: an abandoned cloud node is fully cleaned up
 
@@ -92,6 +100,18 @@ the DB row, and release the in-flight allocation entries.
 
 - **WHEN** the VM deletion fails during the abandon of a cloud node with one in-flight allocation entry
 - **THEN** the DB row stays disabled so the VM deletion can be retried, and the in-flight allocation entry is released
+
+#### Scenario: an abandoned node without a cloud VM is removed
+
+- **WHEN** an abandoned node has no cloud
+- **THEN** VM deletion is skipped, the DB row is removed, and the in-flight
+  allocation entries are released
+
+#### Scenario: a cleanup failure is reported
+
+- **WHEN** VM deletion fails during abandonment or DB-row removal fails after a
+  successful VM deletion
+- **THEN** the failure is reported
 
 ### Requirement: Consume a task
 
@@ -152,4 +172,3 @@ and SHALL report the count released.
 
 - **WHEN** allocations linked to a node are released
 - **THEN** every allocation linked to that node is removed and the count removed is reported
-

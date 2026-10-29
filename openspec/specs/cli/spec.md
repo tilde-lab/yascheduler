@@ -10,24 +10,28 @@ process supervisors.
 
 ### Requirement: Command surface and shared flags
 
-The system SHALL install these CLI commands and daemon launchers:
+The system SHALL install the CLI commands and daemon launchers listed in the
+command-roster scenario. Every command and launcher SHALL accept `--config PATH`
+and `--log-level`. `--config` SHALL point at an existing file; a missing file
+SHALL exit `2` with a message of the form `not a file: <path>`. `--log-level`
+SHALL accept only `DEBUG`, `INFO`, `WARNING`, `ERROR`, and `CRITICAL`. The daemon
+launchers SHALL also accept `--log-file`.
 
-| command      | prog         | purpose                                                  |
-| ------------ | ------------ | -------------------------------------------------------- |
-| yasubmit     | yasubmit     | Submit a task from an AiiDA script.                      |
-| yastatus     | yastatus     | Query and display task status.                           |
-| yanodes      | yanodes      | List nodes and their running tasks.                      |
-| yasetnode    | yasetnode    | Add, soft-remove, or hard-remove a node.                 |
-| yainit       | yainit       | Install the service unit and apply the DB schema.        |
-| yascheduler  | yascheduler  | Start the daemon (foreground launcher).                  |
-| daemon_systemd | yascheduler | Start the daemon under systemd, logs to journald.        |
-| daemon_sysv  | yascheduler  | Start the daemon under SysV init, detached with a pidfile. |
+#### Scenario: the command roster is installed
 
-Every command and launcher SHALL accept `--config PATH` and
-`--log-level`. `--config` SHALL point at an existing file; a missing
-file SHALL exit `2` with a message of the form `not a file: <path>`.
-`--log-level` SHALL accept only `DEBUG`, `INFO`, `WARNING`, `ERROR`,
-and `CRITICAL`. The daemon launchers SHALL also accept `--log-file`.
+- **WHEN** the installed CLI surface is inspected
+- **THEN** these commands and daemon launchers are available:
+
+| command        | prog         | purpose                                                  |
+| -------------- | ------------ | -------------------------------------------------------- |
+| yasubmit       | yasubmit     | Submit a task from an AiiDA script.                      |
+| yastatus       | yastatus     | Query and display task status.                           |
+| yanodes        | yanodes      | List nodes and their running tasks.                      |
+| yasetnode      | yasetnode    | Add, soft-remove, or hard-remove a node.                 |
+| yainit         | yainit       | Install the service unit and apply the DB schema.        |
+| yascheduler    | yascheduler  | Start the daemon (foreground launcher).                  |
+| daemon_systemd | yascheduler  | Start the daemon under systemd, logs to journald.        |
+| daemon_sysv    | yascheduler  | Start the daemon under SysV init, detached with a pidfile. |
 
 #### Scenario: a missing config file exits 2
 
@@ -41,7 +45,13 @@ and `CRITICAL`. The daemon launchers SHALL also accept `--log-file`.
 
 ### Requirement: Exit-code contract
 
-Every command and launcher SHALL use one exit code:
+Every command and launcher SHALL use the exit-code contract defined in the
+exit-code scenario.
+
+#### Scenario: the exit-code contract is defined
+
+- **WHEN** any command or launcher finishes
+- **THEN** it uses exactly one of these exit codes:
 
 | code | meaning                                                                |
 | ---- | ---------------------------------------------------------------------- |
@@ -61,16 +71,12 @@ Every command and launcher SHALL use one exit code:
 
 ### Requirement: yasubmit parses an AiiDA script
 
-`yasubmit` SHALL take one positional argument: the path to an AiiDA
-script. The path SHALL point at an existing file; otherwise the process
-exits `2`. `yasubmit` SHALL read `KEY = VALUE` lines from the script.
-It SHALL require an `ENGINE` key whose value is a known engine name.
-Validation failures SHALL print nothing to stdout.
-
-| script condition                     | stderr message                              | exit |
-| ------------------------------------ | ------------------------------------------- | ---- |
-| No `ENGINE` key                      | `Error: Script has not defined an engine`   | `1`  |
-| `ENGINE` value is not a known engine | `Error: Engine <name> is not supported`     | `1`  |
+`yasubmit` SHALL take one positional argument: the path to an AiiDA script.
+The path SHALL point at an existing file; otherwise the process exits `2`.
+`yasubmit` SHALL read `KEY = VALUE` lines from the script. It SHALL require an
+`ENGINE` key whose value is a known engine name. Validation failures SHALL print
+nothing to stdout. A missing `ENGINE` key or an unsupported engine SHALL print
+the corresponding `Error:` message to stderr and exit `1`.
 
 #### Scenario: a missing ENGINE key exits 1
 
@@ -95,26 +101,31 @@ suffix, decoration, or envelope SHALL be added.
 
 ### Requirement: yanodes lists nodes and their running tasks
 
-`yanodes` SHALL list every node and the single task running on it, if
-any. Each node SHALL produce one output row or one JSON object, in the
-order the node repository returns (by node identity ascending).
+`yanodes` SHALL list every node and the single task running on it, if any. Each
+node SHALL produce one output row or one JSON object, in node identity ascending
+order.
 
-`yanodes` SHALL accept these filters. Filters SHALL compose by AND: a
-node is shown only when it passes every active filter.
+`yanodes` SHALL accept the filters in the filter-roster scenario. Filters SHALL
+compose by AND: a node is shown only when it passes every active filter.
+`--cloud` and `--no-cloud` SHALL be mutually exclusive.
+`--enabled`/`--disabled` and `--busy`/`--free` SHALL be subset selectors.
+
+#### Scenario: the filter roster is defined
+
+- **WHEN** `yanodes` filters are inspected
+- **THEN** these flags keep nodes as follows:
 
 | flag           | keeps nodes where...                                  |
-| -------------- | ----------------------------------------------------- |
-| `--enabled`    | enabled is true.                                      |
-| `--disabled`   | enabled is false.                                     |
-| `--busy`       | a running task is allocated to the node.             |
-| `--free`       | no running task is allocated to the node.            |
-| `--cloud NAME` | cloud equals NAME (exact match).                     |
-| `--no-cloud`   | cloud is unset.                                       |
+| -------------- | ------------------------------------------------------ |
+| `--enabled`    | enabled is true.                                       |
+| `--disabled`   | enabled is false.                                      |
+| `--busy`       | a running task is allocated to the node.               |
+| `--free`       | no running task is allocated to the node.              |
+| `--cloud NAME` | cloud equals NAME (exact match).                       |
+| `--no-cloud`   | cloud is unset.                                        |
 
-`--cloud` and `--no-cloud` SHALL be mutually exclusive. The
-`--enabled`/`--disabled` and `--busy`/`--free` pairs SHALL be subset
-selectors: when both members of a pair are given, the pair selects all
-nodes on that axis.
+- **AND** when both members of the `--enabled`/`--disabled` or
+  `--busy`/`--free` pair are given, the pair selects all nodes on that axis.
 
 #### Scenario: filters compose by AND
 
@@ -128,11 +139,18 @@ nodes on that axis.
 
 ### Requirement: yanodes default table output
 
-When `--json` is not given, `yanodes` SHALL print a header row followed
-by one data row per node. The columns SHALL be, in order: `NODE_ID`,
-`HOSTNAME`, `PORT`, `NCPUS`, `ENABLED`, `CLOUD`, `TASK_ID`, `LABEL`.
-Column widths SHALL be computed from the data so the table is
-self-aligning. The cells SHALL apply these display transformations:
+When `--json` is not given, `yanodes` SHALL print a header row followed by one
+data row per node. The columns SHALL be the columns in the table-output scenario,
+in order. Column widths SHALL be computed from the data so the table is
+self-aligning. The cells SHALL apply the display transformations in that
+scenario.
+
+#### Scenario: the table columns and display transformations are defined
+
+- **WHEN** `yanodes` renders the default table
+- **THEN** the header cells are `NODE_ID`, `HOSTNAME`, `PORT`, `NCPUS`,
+  `ENABLED`, `CLOUD`, `TASK_ID`, and `LABEL`, in that order
+- **AND** cells use these display transformations:
 
 | column   | cell value                                                  |
 | -------- | ----------------------------------------------------------- |
@@ -141,7 +159,7 @@ self-aligning. The cells SHALL apply these display transformations:
 | PORT     | `-` when the port is `22`, else the port                    |
 | NCPUS    | `MAX` when the count is unset (or the legacy `0`), else the count |
 | ENABLED  | `yes` or `no`                                               |
-| CLOUD    | `-` when cloud is unset, else the cloud name               |
+| CLOUD    | `-` when cloud is unset, else the cloud name                |
 | TASK_ID  | `-` when no running task is allocated, else the task id     |
 | LABEL    | `-` when no running task is allocated, else the label       |
 
@@ -179,19 +197,11 @@ the node is free. An empty result SHALL print `[]`.
 
 ### Requirement: yasetnode host grammar
 
-`yasetnode` SHALL take one positional argument. A pure-digit argument
-SHALL be read as a node identity. Any other argument SHALL be parsed as
-a host spec with the grammar `[user@]host[:port][~ncpus]`:
-
-- `user` is optional.
-- `host` is an IPv4 address or a bracketed IPv6 address (for example,
-  `[fe80::1]`). An unbracketed IPv6 address SHALL be rejected.
-- `port` is `1`..`65535`; it defaults to `22`.
-- `ncpus` is a non-negative integer; absent or `~0` SHALL mean
-  unlimited (no stored count).
-
-A malformed argument SHALL exit `2`. A node identity SHALL be allowed
-only on a remove path; an identity on the add path SHALL exit `2`.
+`yasetnode` SHALL take one positional argument. A pure-digit argument SHALL be
+read as a node identity. Any other argument SHALL be parsed as the host spec
+defined in the host-grammar scenario. A malformed argument SHALL exit `2`. A node
+identity SHALL be allowed only on a remove path; an identity on the add path
+SHALL exit `2`.
 
 #### Scenario: a full host spec parses
 
@@ -208,33 +218,27 @@ only on a remove path; an identity on the add path SHALL exit `2`.
 - **WHEN** `yasetnode 5` is invoked with no remove flag
 - **THEN** a usage error is printed to stderr and the process exits `2`
 
+#### Scenario: the host grammar defines a target
+
+- **WHEN** a non-digit positional argument is parsed
+- **THEN** it uses the grammar `[user@]host[:port][~ncpus]`
+- **AND** `user` is optional
+- **AND** `host` is an IPv4 address or a bracketed IPv6 address (for example,
+  `[fe80::1]`); an unbracketed IPv6 address is rejected
+- **AND** `port` is `1`..`65535` and defaults to `22`
+- **AND** `ncpus` is a non-negative integer; absent or `~0` means unlimited (no
+  stored count)
+
 ### Requirement: yasetnode add and remove paths
 
-`yasetnode` SHALL dispatch to exactly one path. The add path SHALL
-create a node, connect to it, optionally run remote setup, then mark
-the node enabled. The remove-hard path SHALL mark each running task on
-the node `DONE`, then remove the node. The remove-soft path SHALL
-disable the node when it has running tasks, otherwise remove it.
+`yasetnode` SHALL dispatch to exactly one path. The add path SHALL create a
+node, connect to it, optionally run remote setup, then mark the node enabled. The
+remove-hard path SHALL mark each running task on the node `DONE`, then remove the
+node. The remove-soft path SHALL disable the node when it has running tasks,
+otherwise remove it.
 
-On the add path, the jump host, jump username, and jump port SHALL be
-read from the remote section of the config and stored on the node. When
-the connection fails, the created node row SHALL be removed and no
-enabled row SHALL remain.
-
-On success, `yasetnode` SHALL print these messages verbatim to stdout,
-after the commit succeeds:
-
-| path                | message (verbatim)                                                        |
-| ------------------- | ------------------------------------------------------------------------- |
-| add, before setup   | `Setup host...`                                                           |
-| add, after commit   | `Added host to yascheduler: {host}:{port}`                                |
-| remove-hard, per task | `An associated task {task_id} at {host} is now marked done!`            |
-| remove-hard, after commit | `Removed host from yascheduler: {host}`                            |
-| remove-soft, has tasks | `A task associated, prevent from assigning the new tasks` followed by `Prevented from assigning the new tasks: {host}` |
-| remove-soft, no tasks  | `No tasks associated, remove node immediately` followed by `Removed host from yascheduler: {host}` |
-
-`{host}` is the parsed host, `{port}` is the parsed port, and
-`{task_id}` is a running task identity on the node.
+On success, `yasetnode` SHALL print the path-specific messages in the
+path-output scenario verbatim to stdout after the commit succeeds.
 
 #### Scenario: add success prints the verbatim messages after commit
 
@@ -245,6 +249,29 @@ after the commit succeeds:
 
 - **WHEN** the add path cannot connect to the host
 - **THEN** the created row is removed and no enabled row for that host remains
+
+#### Scenario: add stores the jump-leg parameters from the config
+
+- **WHEN** `yasetnode` adds a node and the remote config section specifies a jump
+  host, jump username, and jump port
+- **THEN** those values are read from the config and stored on the new node
+
+#### Scenario: each successful path prints its verbatim messages after commit
+
+- **WHEN** a `yasetnode` add or remove path succeeds and its commit completes
+- **THEN** stdout contains these path-specific messages:
+
+| path                | message (verbatim)                                                        |
+| ------------------- | ------------------------------------------------------------------------- |
+| add, before setup   | `Setup host...`                                                           |
+| add, after commit   | `Added host to yascheduler: {host}:{port}`                                |
+| remove-hard, per task | `An associated task {task_id} at {host} is now marked done!`            |
+| remove-hard, after commit | `Removed host from yascheduler: {host}`                            |
+| remove-soft, has tasks | `A task associated, prevent from assigning the new tasks` followed by `Prevented from assigning the new tasks: {host}` |
+| remove-soft, no tasks  | `No tasks associated, remove node immediately` followed by `Removed host from yascheduler: {host}` |
+
+- **AND** `{host}` is the parsed host, `{port}` is the parsed port, and
+  `{task_id}` is a running task identity on the node.
 
 ### Requirement: yasetnode rejects invalid combinations
 
@@ -265,23 +292,16 @@ The flag-combination violations above SHALL exit `2`.
 
 ### Requirement: yastatus task query and renderers
 
-`yastatus` SHALL query tasks and render them. The flags SHALL be:
+`yastatus` SHALL query tasks and render them. The flags SHALL be the flags in
+the renderer-flags scenario.
 
-| flag             | behavior                                                              |
-| ---------------- | --------------------------------------------------------------------- |
-| `-j`/`--jobs ID...` | Filter to the given task ids. When absent, the default query returns `RUNNING` and `TO_DO` tasks. |
-| `-v`/`--view`    | Verbose renderer: connect to each running task's node and tail its remote output. |
-| `-i`/`--info`    | One-line, tab-separated renderer.                                     |
-| `--json`         | JSON renderer with raw domain values.                                 |
-| `-o`/`--convergence` | With `-v`, also download and print a CRYSTAL convergence snippet.  |
+`-v`, `-i`, and `--json` SHALL be mutually exclusive. When none is given, the
+default AiiDA-compatible renderer SHALL run. `-o` SHALL be valid only with `-v`;
+`-o` without `-v` SHALL exit `2`.
 
-`-v`, `-i`, and `--json` SHALL be mutually exclusive. When none is
-given, the default AiiDA-compatible renderer SHALL run. `-o` SHALL be
-valid only with `-v`; `-o` without `-v` SHALL exit `2`.
-
-The default renderer SHALL print one line per task: the task id, three
-spaces, and the status name. `DONE` tasks SHALL appear only when the
-query is by id (with `-j`).
+The default renderer SHALL print one line per task: the task id, three spaces,
+and the status name. `DONE` tasks SHALL appear only when the query is by id
+(with `-j`).
 
 #### Scenario: the default output is two columns
 
@@ -297,6 +317,19 @@ query is by id (with `-j`).
 
 - **WHEN** `yastatus -o` is invoked without `-v`
 - **THEN** a usage error is printed to stderr and the process exits `2`
+
+#### Scenario: the renderer flags are defined
+
+- **WHEN** `yastatus` is invoked
+- **THEN** these flags are accepted:
+
+| flag             | behavior                                                              |
+| ---------------- | --------------------------------------------------------------------- |
+| `-j`/`--jobs ID...` | Filter to the given task ids. When absent, the default query returns `RUNNING` and `TO_DO` tasks. |
+| `-v`/`--view`    | Verbose renderer: connect to each running task's node and tail its remote output. |
+| `-i`/`--info`    | One-line, tab-separated renderer.                                     |
+| `--json`         | JSON renderer with raw domain values.                                 |
+| `-o`/`--convergence` | With `-v`, also download and print a CRYSTAL convergence snippet.  |
 
 ### Requirement: yastatus JSON output
 
@@ -344,20 +377,13 @@ cleaned up after display.
 ### Requirement: yainit bootstraps the service and the database
 
 `yainit` SHALL install the service unit and apply the database schema.
-`--schema` and `--daemon` SHALL be subset selectors:
+`--schema` and `--daemon` SHALL be subset selectors as defined in the
+invocation-matrix scenario.
 
-| invocation      | service unit   | schema + migrations |
-| --------------- | -------------- | ------------------- |
-| no flag         | installed      | applied             |
-| `--schema`      | skipped        | applied             |
-| `--daemon`      | installed      | skipped             |
-| `--schema --daemon` | installed  | applied             |
-
-The service unit SHALL be systemd on a host that has
-`/run/systemd/system`, otherwise SysV. The schema apply SHALL be
-idempotent: running `yainit` against an already-initialized database
-SHALL succeed and exit `0`. A database error or a service-file write
-failure SHALL exit `1` with an `Error:` message.
+The service unit SHALL be systemd on a host with `/run/systemd/system`, otherwise
+SysV. The schema apply SHALL be idempotent: an already-initialized database SHALL
+succeed and exit `0`. A database error or service-file write failure SHALL exit
+`1` with an `Error:` message.
 
 #### Scenario: default invocation installs the service and applies the schema
 
@@ -374,21 +400,25 @@ failure SHALL exit `1` with an `Error:` message.
 - **WHEN** the database is unreachable during `yainit`
 - **THEN** an `Error:` message is printed to stderr and the process exits `1`
 
+#### Scenario: yainit flags select service and schema work
+
+- **WHEN** `yainit` is invoked with flag combinations
+- **THEN** the selected work is:
+
+| invocation      | service unit   | schema + migrations |
+| --------------- | -------------- | ------------------- |
+| no flag         | installed      | applied             |
+| `--schema`      | skipped        | applied             |
+| `--daemon`      | installed      | skipped             |
+| `--schema --daemon` | installed  | applied             |
+
 ### Requirement: Daemon launcher roster
 
-The three daemon launchers SHALL share the program name `yascheduler`
-and the `--config` and `--log-level` flags. They SHALL differ as
-follows:
-
-| launcher        | process mode                | short flags              | default `--log-file`        | timestamp |
-| --------------- | --------------------------- | ------------------------ | --------------------------- | --------- |
-| `daemonize`     | foreground                  | `-l` aliases `--log-level` | unset (stderr)            | on        |
-| `daemon_systemd` | foreground, stderr to journald | none                  | unset (stderr)            | off       |
-| `daemon_sysv`   | detached with a pidfile     | `-l` aliases `--log-file`, `-p` aliases `--pid-file` | `/var/log/yascheduler.log` (or the `YASCHEDULER_LOG_PATH` override) | on        |
-
-`daemon_sysv` SHALL keep `--config` and `--log-level` long-only. The
-timestamp prefix SHALL be on for launchers whose output is not stamped
-by journald, and off for `daemon_systemd`.
+The three daemon launchers SHALL share the program name `yascheduler` and the
+`--config` and `--log-level` flags. They SHALL differ as defined in the
+launcher-roster scenario. `daemon_sysv` SHALL keep `--config` and `--log-level`
+long-only. The timestamp prefix SHALL be on for launchers whose output is not
+stamped by journald, and off for `daemon_systemd`.
 
 #### Scenario: daemonize accepts -l as the log-level alias
 
@@ -400,23 +430,36 @@ by journald, and off for `daemon_systemd`.
 - **WHEN** the SysV launcher is started with no `--log-file`
 - **THEN** the daemon logs to `/var/log/yascheduler.log` (or the `YASCHEDULER_LOG_PATH` override)
 
+#### Scenario: the daemon launcher roster is defined
+
+- **WHEN** the daemon launchers are inspected
+- **THEN** they differ as follows:
+
+| launcher        | process mode                | short flags              | default `--log-file`        | timestamp |
+| --------------- | --------------------------- | ------------------------ | --------------------------- | --------- |
+| `daemonize`     | foreground                  | `-l` aliases `--log-level` | unset (stderr)            | on        |
+| `daemon_systemd` | foreground, stderr to journald | none                  | unset (stderr)            | off       |
+| `daemon_sysv`   | detached with a pidfile     | `-l` aliases `--log-file`, `-p` aliases `--pid-file` | `/var/log/yascheduler.log` (or the `YASCHEDULER_LOG_PATH` override) | on        |
+
 ### Requirement: Logger configuration
 
-The daemon launchers SHALL configure the root logger to always emit to
-stderr, and to a file only when `--log-file` is set. Both handlers
-SHALL share one formatter, with the timestamp prefix enabled or
-disabled per the launcher table. The `asyncssh` logger SHALL be set to
-`ERROR` and `warnings.warn` output SHALL be routed through logging.
-
-The five non-daemon commands SHALL share a separate logger setup. It
-SHALL emit to stderr with the timestamp prefix off, SHALL add no file
-handler, and SHALL leave the `asyncssh` logger unchanged. It SHALL not
-remove a handler that an outer harness attached before the command ran.
+The daemon launchers SHALL configure the root logger to always emit to stderr,
+and to a file only when `--log-file` is set. Both handlers SHALL share one
+formatter, with the timestamp prefix enabled or disabled per the launcher table.
+The `asyncssh` logger SHALL be set to `ERROR` and `warnings.warn` output SHALL be
+routed through logging.
 
 #### Scenario: a set log file is written alongside stderr with a timestamp
 
 - **WHEN** a daemon launcher is started with `--log-file /tmp/y.log`
 - **THEN** log records reach both stderr and `/tmp/y.log`, and each rendered line carries a leading timestamp
+
+### Requirement: Non-daemon logger configuration
+
+The five non-daemon commands SHALL share a separate logger setup. It SHALL emit
+to stderr with the timestamp prefix off, SHALL add no file handler, and SHALL
+leave the `asyncssh` logger unchanged. It SHALL not remove a handler that an
+outer harness attached before the command ran.
 
 #### Scenario: non-daemon log records render without a timestamp
 
@@ -456,3 +499,27 @@ Before constructing the daemon dependency graph or starting scheduling loops, ev
 
 - **WHEN** the preflight encounters a database connection, authentication, permission, or query error
 - **THEN** the daemon exits nonzero and exposes the original operational error without labelling it as missing or pending migrations
+
+### Requirement: yasubmit captures the selected input tree
+
+`yasubmit` SHALL resolve the engine's `input_files` selections against its
+current working directory and submit the captured snapshot defined by
+`task-input-snapshots`. The script's parent directory SHALL not replace the
+working directory as the submission root. A selection or capture failure
+SHALL leave no accepted task.
+
+#### Scenario: submission captures from the working directory
+
+- **WHEN** `yasubmit` runs from a directory containing the engine's selected input tree and receives a script located in a different directory
+- **THEN** the accepted snapshot comes from the working directory, and stdout contains only the new task identity followed by a newline
+- **AND** binary files enter the typed snapshot directly rather than untagged file-value metadata
+
+#### Scenario: existing submit surface remains stable
+
+- **WHEN** `yasubmit` submits with the current engine INI list syntax, script metadata handling, and flags
+- **THEN** that handling is unchanged, including the bare task-id stdout contract
+
+#### Scenario: unsafe or unreadable input fails cleanly
+
+- **WHEN** a required selection is missing, unsafe, or unreadable
+- **THEN** stderr identifies the failing selection or path with an `Error:` diagnostic, stdout is empty, exit status is `1`, and no task is accepted
