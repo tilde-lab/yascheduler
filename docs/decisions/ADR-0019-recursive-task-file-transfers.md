@@ -2,6 +2,10 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-28
+- **Amended:** 2026-10-29 — §4 simplified during part-2 implementation
+  review: no durable retrieval-progress state; finalisation now precedes
+  remote cleanup, which makes the persisted retrieval-to-cleanup boundary
+  and retained-diagnostics machinery unnecessary.
 - **Supersedes:** [ADR-0013](ADR-0013-task-metadata-typed-columns-not-jsonb.md),
   only its placement of task input files in `extra`
 - **Superseded by:**
@@ -107,22 +111,22 @@ existing per-file retry isolation and local transient-retry budget. When
 that budget is exhausted, unresolved transient failures defer the task to a
 later daemon pass, without a new task-wide retry limit.
 
-Transient failures take precedence over finalisation even when permanent
-failures also exist: keep the task pending retrieval and preserve its remote
-results while transient failures remain. Retain permanent failure diagnostics
-across those retries, so a later pass cannot silently turn partial retrieval
-into success.
+Transient failures defer finalisation even when permanent failures also
+exist: the task stays pending retrieval and its remote results stay
+untouched while transient failures remain. Each pass re-attempts every
+selected output and re-derives the error lists from that pass alone; a pass
+with no transient failures finalises the task on its own errors. There is no
+durable retrieval-progress state: no retained diagnostics and no persisted
+retrieval-to-cleanup boundary.
 
-Once no transient retrieval failures remain, remove the remote task
-directory on either complete success or permanent retrieval failure. Then
-finalise the task with the corresponding outcome. This deliberately permits
-deletion of outputs that could not be retrieved because of permanent errors.
-
-Cleanup is not best effort. A transient cleanup failure defers completion
-and retries cleanup; it must not restart retrieval from a partly deleted
-source. A permanent cleanup failure finalises with an explicit cleanup
-error and identifies the remaining remote directory. These rules do not
-introduce a separate policy for retaining cloud nodes.
+Remote cleanup runs strictly after the terminal transition is committed.
+This ordering removes the partial-deletion crash window by construction: a
+crash before finalisation changes nothing remotely, and after finalisation
+the task is terminal and is never consumed again. Cleanup is one best-effort
+attempt per finalisation (transient errors retried within the shared
+time-based budget); a failure is logged and the remaining directory is left
+to node teardown. These rules do not introduce a separate policy for
+retaining cloud nodes.
 
 ### 5. Migration and compatibility
 
@@ -168,6 +172,16 @@ Rejected. When transient errors also exist, immediate finalisation and
 cleanup discard outputs that a later retry could still recover. We accept
 longer task lifetimes to retrieve those outputs first.
 
+### Persist a retrieval-to-cleanup boundary and retained diagnostics
+
+Rejected during part-2 implementation review. Ordering finalisation before
+remote deletion removes the partial-deletion crash window without any stored
+state: before finalisation nothing is deleted, after finalisation the task
+is never consumed again. Retained per-path diagnostics added a table, a
+migration, and a second state machine to guard only against a permanent
+error vanishing between passes — which either never happens for a finished
+process or signals a misclassification that retention would wrongly punish.
+
 ## Consequences
 
 - **Positive:** Both transfer directions preserve task-relative trees;
@@ -176,7 +190,7 @@ longer task lifetimes to retrieve those outputs first.
   consistent semantics across engines.
 - **Positive:** Input snapshots remain independent of the source filesystem.
   Partial output retrieval retains recoverable data while transient errors
-  remain, and cleanup failures are observable rather than silently ignored.
+  remain, and cleanup failures are logged rather than silently ignored.
 - **Negative / trade-offs:** Adoption requires a data migration, coordinated
   downtime, and documented query-payload changes. Input snapshots still
   consume database capacity; normalization does not provide external blob
