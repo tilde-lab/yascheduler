@@ -9,12 +9,12 @@ specs/postgres-schema-apply/spec.md:
 * unallocated tasks (ip IS NULL) stay allocated_node_id = NULL
 * FK ON DELETE SET NULL nulls allocated_node_id when the node is removed
   (the task row is preserved; allocated_ip column is dropped by migration 009)
-* a fresh DB seeds yascheduler_migrations to '013' and apply_migrations skips 013
+* a fresh DB seeds yascheduler_migrations to '014' and apply_migrations skips 014
 """
 
 # region MODULE_CONTRACT
 # PURPOSE: Integration tests for migration 004 (add-allocated-node-id) and the schema.sql snapshot against real PostgreSQL via testcontainers.
-# SCOPE: migration 004 adds nullable allocated_node_id column with FK ON DELETE SET NULL; backfills existing tasks by joining ip; leaves unallocated (ip IS NULL) tasks NULL; FK nulls allocated_node_id on node delete (allocated_ip dropped by migration 009); fresh DB seeds to 013; schema.sql CREATE TABLE includes the column.
+# SCOPE: migration 004 adds nullable allocated_node_id column with FK ON DELETE SET NULL; backfills existing tasks by joining ip; leaves unallocated (ip IS NULL) tasks NULL; FK nulls allocated_node_id on node delete (allocated_ip dropped by migration 009); fresh DB seeds to 014; schema.sql CREATE TABLE includes the column.
 # KEYWORDS: migration 004, allocated_node_id, backfill, FK
 # endregion MODULE_CONTRACT
 
@@ -156,45 +156,36 @@ def test_migration_004_backfills_existing_tasks() -> None:
             conn.run("INSERT INTO yascheduler_nodes (ip) VALUES ('10.0.0.1')")
             conn.run("INSERT INTO yascheduler_nodes (ip) VALUES ('10.0.0.2')")
             # Two tasks referencing those ips. status=1 (RUNNING); metadata
-            # carries remote_folder so migration 010 extracts it and the row
-            # satisfies the task_status_field_invariants CHECK when migration
-            # 011 runs (RUNNING requires allocated_node_id + remote_folder).
+            # carries engine context (unused at this era — the run stops at
+            # migration 004 via upto).
             conn.run(
                 "INSERT INTO yascheduler_tasks (label, ip, status, metadata) "
-                "VALUES ('a', '10.0.0.1', 1, '{\"remote_folder\": \"/r/a\"}'::jsonb)",
+                "VALUES ('a', '10.0.0.1', 1, "
+                '\'{"engine": "fleur", "fort.9": "QUJD", '
+                '"remote_folder": "/r/a"}\'::jsonb)',
             )
             conn.run(
                 "INSERT INTO yascheduler_tasks (label, ip, status, metadata) "
-                "VALUES ('b', '10.0.0.2', 1, '{\"remote_folder\": \"/r/b\"}'::jsonb)",
+                "VALUES ('b', '10.0.0.2', 1, "
+                '\'{"engine": "fleur", "fort.9": "REVG", '
+                '"remote_folder": "/r/b"}\'::jsonb)',
             )
         finally:
             conn.close()
 
-        # apply_schema is a no-op on existing tables; apply_migrations runs 004
-        # (adds allocated_node_id + backfills) and 005 (converts SERIAL PKs to
-        # GENERATED ALWAYS AS IDENTITY).
+        # apply_schema is a no-op on existing tables; apply_migrations runs
+        # exactly 004 (adds allocated_node_id + backfills) — upto caps the
+        # chain, so later migrations cannot leak into this era test.
         apply_schema(config)
-        apply_migrations(config)
+        apply_migrations(config, upto="004")
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == [
-                "003",
-                "004",
-                "005",
-                "006",
-                "007",
-                "008",
-                "009",
-                "010",
-                "011",
-                "012",
-                "013",
-            ]
+            assert _tracker_rows(conn) == ["003", "004"]
             conn.run("BEGIN")
             try:
                 rows = conn.run(
-                    "SELECT t.allocated_node_id, n.hostname "
+                    "SELECT t.allocated_node_id, n.ip "
                     "FROM yascheduler_tasks t "
                     "LEFT JOIN yascheduler_nodes n ON n.node_id = t.allocated_node_id "
                     "ORDER BY t.task_id",
@@ -237,22 +228,23 @@ def test_migration_004_leaves_unallocated_tasks_null() -> None:
             # An unallocated TO_DO task: ip IS NULL.
             conn.run(
                 "INSERT INTO yascheduler_tasks (label, ip, status, metadata) "
-                "VALUES ('todo', NULL, 0, '{}'::jsonb)",
+                "VALUES ('todo', NULL, 0, "
+                '\'{"engine": "fleur", "fort.9": "QUJD"}\'::jsonb)',
             )
         finally:
             conn.close()
 
+        # Runs exactly 004 (upto caps the chain at this era).
         apply_schema(config)
-        apply_migrations(config)
+        apply_migrations(config, upto="004")
 
         conn = _connect(config)
         try:
             conn.run("BEGIN")
             try:
-                # After migration 006, label was renamed to title.
                 rows = conn.run(
                     "SELECT allocated_node_id FROM yascheduler_tasks "
-                    "WHERE title = 'todo'",
+                    "WHERE label = 'todo'",
                 )
             finally:
                 conn.run("ROLLBACK")
@@ -309,23 +301,23 @@ def test_fk_on_delete_set_null() -> None:
             conn.close()
 
 
-def test_fresh_db_seeds_to_013() -> None:
+def test_fresh_db_seeds_to_014() -> None:
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
         config = _make_config(pg)
         apply_schema(config)
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["013"]
+            assert _tracker_rows(conn) == ["014"]
             assert "allocated_node_id" in _columns(conn, "yascheduler_tasks")
         finally:
             conn.close()
 
-        # apply_migrations finds MAX='013' and skips 013 (already seeded).
+        # apply_migrations finds MAX='014' and skips 014 (already seeded).
         apply_migrations(config)
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["013"]
+            assert _tracker_rows(conn) == ["014"]
         finally:
             conn.close()

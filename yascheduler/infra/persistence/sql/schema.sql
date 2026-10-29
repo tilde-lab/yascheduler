@@ -5,7 +5,7 @@
 -- last_migration is the single manual edit point when a migration is added.
 DO $$
 DECLARE
-  last_migration CONSTANT TEXT := '013';
+  last_migration CONSTANT TEXT := '014';
 BEGIN
   IF to_regclass('yascheduler_migrations') IS NULL THEN
     EXECUTE 'CREATE TABLE yascheduler_migrations (

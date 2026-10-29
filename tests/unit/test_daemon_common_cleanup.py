@@ -39,8 +39,8 @@ def _current_migration_status(monkeypatch: pytest.MonkeyPatch) -> None:
         MagicMock(
             return_value=MigrationStatus(
                 MigrationState.CURRENT,
-                "013",
-                "013",
+                "014",
+                "014",
             )
         ),
     )
