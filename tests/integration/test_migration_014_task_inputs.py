@@ -1,15 +1,16 @@
 """Integration tests for migration 014 task-input snapshot conversion."""
 # region MODULE_CONTRACT
-# PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap seeds the latest prefix without engine context, 013 databases convert every task status into equivalent binary snapshot entries, and legacy databases upgrade from a pre-tracker schema without losing task identity, timestamps, state, bindings, or unrelated metadata.
-# SCOPE: Fresh/current/legacy migration cohorts, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation.
+# PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap seeds the latest prefix without engine context, 013 databases convert every task status into equivalent binary snapshot entries, legacy databases upgrade without losing task identity, timestamps, state, bindings, or unrelated metadata, and failed conversion retries atomically after fixture repair.
+# SCOPE: Fresh/current/legacy migration cohorts, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, plus tracker/snapshot idempotency on rerun.
 # DEPENDENCIES: USES API: apply_schema, apply_migrations, check_migration_status, pg8000.native, testcontainers.PostgresContainer
 # READS: PostgreSQL container (postgres:16-alpine)
-# KEYWORDS: migration 014, task inputs, snapshots, postgres, base64, legacy upgrade
+# KEYWORDS: migration 014, task inputs, snapshots, postgres, base64, legacy upgrade, rollback, retry, idempotency
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
 
@@ -126,6 +127,30 @@ EXPECTED_INPUT_CONTRACT = {
         ),
     ),
 }
+UNKNOWN_ENGINE = "migration-014-unknown-engine"
+UNSAFE_ENGINE = "migration-014-unsafe-engine"
+
+
+# region CLASS__FailureCase
+# PURPOSE: Describe one broken conversion scenario, its repaired fixture, and the exact retained metadata/snapshot so one generic real-PostgreSQL test can prove rollback, diagnostics, repair, and retry without duplicating setup.
+@dataclass(frozen=True)
+class _FailureCase:
+    """Broken and repaired state for one migration 014 failure scenario."""
+
+    label: str
+    engine: str
+    broken_payload: Mapping[str, object]
+    repaired_payload: Mapping[str, object]
+    failing_engine_inputs: Mapping[str, tuple[str, ...]]
+    repaired_engine_inputs: Mapping[str, tuple[str, ...]]
+    expected_diagnostic: tuple[str, ...]
+    expected_entries: Mapping[str, tuple[str, bytes | None]]
+    expected_remaining: Mapping[str, object]
+
+
+# endregion CLASS__FailureCase
+
+
 PRESERVED_TASK_COLUMNS = (
     "task_id",
     "created_at",
@@ -181,6 +206,14 @@ def _tracker_rows(conn: pg8000.native.Connection) -> list[str]:
             "SELECT migration_id FROM yascheduler_migrations ORDER BY migration_id",
         )
     ]
+
+
+def _tracker_snapshot(conn: pg8000.native.Connection) -> list[dict[str, object]]:
+    return _query(
+        conn,
+        "SELECT migration_id, created_at FROM yascheduler_migrations "
+        "ORDER BY migration_id",
+    )
 
 
 def _table_exists(conn: pg8000.native.Connection) -> bool:
@@ -246,19 +279,46 @@ def _input_rows(
     return {str(row["path"]): row for row in rows}
 
 
-def _assert_converted_snapshot(
+def _all_input_rows(conn: pg8000.native.Connection) -> list[dict[str, object]]:
+    return _query(
+        conn,
+        "SELECT task_id, path, kind, content FROM yascheduler_task_inputs "
+        "ORDER BY task_id, path",
+    )
+
+
+def _assert_input_snapshot(
     conn: pg8000.native.Connection,
     task_id: int,
+    expected: Mapping[str, tuple[str, bytes | None]],
 ) -> None:
     rows = _input_rows(conn, task_id)
-    assert set(rows) == set(EXPECTED_INPUT_ENTRIES)
-    for path, (kind, content) in EXPECTED_INPUT_ENTRIES.items():
+    assert set(rows) == set(expected)
+    for path, (kind, content) in expected.items():
         assert rows[path]["task_id"] == task_id
         assert rows[path]["kind"] == kind, path
         if kind == "file":
             assert rows[path]["content"] == content, path
         else:
             assert rows[path]["content"] is None, path
+
+
+def _assert_converted_snapshot(
+    conn: pg8000.native.Connection,
+    task_id: int,
+) -> None:
+    _assert_input_snapshot(conn, task_id, EXPECTED_INPUT_ENTRIES)
+
+
+def _timestamp_trigger_state(conn: pg8000.native.Connection) -> str:
+    rows = _query(
+        conn,
+        "SELECT tgenabled FROM pg_trigger "
+        "WHERE tgrelid = 'yascheduler_tasks'::regclass "
+        "AND tgname = 'yascheduler_tasks_touch_updated_at'",
+    )
+    assert len(rows) == 1
+    return str(rows[0]["tgenabled"])
 
 
 def _payload(task_marker: str) -> dict[str, object]:
@@ -274,6 +334,97 @@ def _expected_remaining_metadata(task_marker: str) -> dict[str, object]:
         **UNRELATED_METADATA,
         "marker": task_marker,
     }
+
+
+# region FUNC__failure_cases
+# PURPOSE: Build the five broken/repaired migration fixtures required by task 3.4 while keeping each failure isolated to the later task and reusing the existing rich success payload.
+def _failure_cases() -> tuple[_FailureCase, ...]:
+    marker = "rollback-broken"
+    full_payload = _payload(marker)
+    expected_remaining = _expected_remaining_metadata(marker)
+    missing_input_payload = {
+        key: value for key, value in full_payload.items() if key != "INPUT"
+    }
+    unsafe_payload: dict[str, object] = {
+        "INPUT": UTF8_TEXT,
+        **UNRELATED_METADATA,
+        "marker": marker,
+    }
+    return (
+        _FailureCase(
+            label="unknown-engine",
+            engine=UNKNOWN_ENGINE,
+            broken_payload=full_payload,
+            repaired_payload=full_payload,
+            failing_engine_inputs={ENGINE: DECLARATIONS},
+            repaired_engine_inputs={
+                ENGINE: DECLARATIONS,
+                UNKNOWN_ENGINE: DECLARATIONS,
+            },
+            expected_diagnostic=(
+                f"engine {UNKNOWN_ENGINE!r} has no input declarations",
+                "supply its configuration",
+            ),
+            expected_entries=EXPECTED_INPUT_ENTRIES,
+            expected_remaining=expected_remaining,
+        ),
+        _FailureCase(
+            label="missing-input",
+            engine=ENGINE,
+            broken_payload=missing_input_payload,
+            repaired_payload=full_payload,
+            failing_engine_inputs={ENGINE: DECLARATIONS},
+            repaired_engine_inputs={ENGINE: DECLARATIONS},
+            expected_diagnostic=(f"missing input file 'INPUT' for engine: {ENGINE}",),
+            expected_entries=EXPECTED_INPUT_ENTRIES,
+            expected_remaining=expected_remaining,
+        ),
+        _FailureCase(
+            label="unsafe-path",
+            engine=UNSAFE_ENGINE,
+            broken_payload=unsafe_payload,
+            repaired_payload=unsafe_payload,
+            failing_engine_inputs={ENGINE: DECLARATIONS, UNSAFE_ENGINE: ("../escape",)},
+            repaired_engine_inputs={ENGINE: DECLARATIONS, UNSAFE_ENGINE: ("INPUT",)},
+            expected_diagnostic=(
+                "unsafe task path '../escape'",
+                "'..' component escapes the task root",
+            ),
+            expected_entries={"INPUT": ("file", UTF8_TEXT.encode("utf-8"))},
+            expected_remaining=expected_remaining,
+        ),
+        _FailureCase(
+            label="malformed-fort9",
+            engine=ENGINE,
+            broken_payload={**full_payload, "fort.9": "a"},
+            repaired_payload=full_payload,
+            failing_engine_inputs={ENGINE: DECLARATIONS},
+            repaired_engine_inputs={ENGINE: DECLARATIONS},
+            expected_diagnostic=(
+                "invalid task input snapshot at 'fort.9'",
+                "legacy fort.9 value is not valid base64",
+            ),
+            expected_entries=EXPECTED_INPUT_ENTRIES,
+            expected_remaining=expected_remaining,
+        ),
+        _FailureCase(
+            label="unsupported-value",
+            engine=ENGINE,
+            broken_payload={**full_payload, "INPUT": 123},
+            repaired_payload=full_payload,
+            failing_engine_inputs={ENGINE: DECLARATIONS},
+            repaired_engine_inputs={ENGINE: DECLARATIONS},
+            expected_diagnostic=(
+                "invalid task input snapshot at 'INPUT'",
+                "legacy input value must be a str, got int",
+            ),
+            expected_entries=EXPECTED_INPUT_ENTRIES,
+            expected_remaining=expected_remaining,
+        ),
+    )
+
+
+# endregion FUNC__failure_cases
 
 
 def _insert_node(
@@ -734,3 +885,168 @@ def test_migration_014_preserves_unrelated_high_precision_jsonb_number() -> None
             assert after == before
         finally:
             conn.close()
+
+
+# region FUNC_test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent
+# PURPOSE: Prove every required conversion failure rolls back prior task inserts, metadata removals, table DDL, tracker recording, and trigger state; repair only the broken fixture; then verify exact retry output and context-free idempotency.
+@pytest.mark.parametrize(
+    "precreated",
+    [False, True],
+    ids=["migration-created-table", "bootstrap-precreated-table"],
+)
+@pytest.mark.parametrize("case", _failure_cases(), ids=lambda case: case.label)
+def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
+    precreated: bool,
+    case: _FailureCase,
+) -> None:
+    first_marker = "rollback-first"
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+
+        conn = _connect(config)
+        try:
+            if not precreated:
+                conn.run("DROP TABLE yascheduler_task_inputs")
+            _set_tracker_to_013(conn)
+            node_id = _insert_node(conn, "10.14.2.1", 4)
+            first_task_id = _insert_modern_task(
+                conn,
+                title="rollback-first-valid",
+                status="RUNNING",
+                extra=_payload(first_marker),
+                created_at="2024-05-06T07:08:09+00:00",
+                updated_at="2024-05-06T07:09:10+00:00",
+                allocated_node_id=node_id,
+                local_folder="/rollback/local/first",
+                remote_folder="/rollback/remote/first",
+                webhook_url="https://example.invalid/rollback-first",
+                webhook_custom_params={"marker": first_marker},
+            )
+            broken_task_id = _insert_modern_task(
+                conn,
+                title=f"rollback-broken-{case.label}",
+                status="DONE",
+                extra=case.broken_payload,
+                created_at="2024-06-07T08:09:10+00:00",
+                updated_at="2024-06-07T08:10:11+00:00",
+                local_folder="/rollback/local/broken",
+                remote_folder="/rollback/remote/broken",
+                error="historical rollback warning",
+            )
+            if case.engine != ENGINE:
+                conn.run(
+                    "UPDATE yascheduler_tasks SET engine = :engine "
+                    "WHERE task_id = :task_id",
+                    engine=case.engine,
+                    task_id=broken_task_id,
+                )
+            before_failure_tasks = _task_rows(conn)
+            before_failure_tracker = _tracker_snapshot(conn)
+        finally:
+            conn.close()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            apply_migrations(
+                config,
+                engine_inputs=case.failing_engine_inputs,
+                upto="014",
+            )
+
+        diagnostic = str(exc_info.value)
+        assert f"task {broken_task_id}, engine {case.engine!r}" in diagnostic
+        for fragment in case.expected_diagnostic:
+            assert fragment in diagnostic
+
+        # A fresh connection must see the complete pre-migration state: the
+        # first task's snapshot insert and metadata-key removal rolled back,
+        # the tracker did not record 014, and the timestamp trigger is on.
+        conn = _connect(config)
+        try:
+            assert _tracker_snapshot(conn) == before_failure_tracker
+            assert _task_rows(conn) == before_failure_tasks
+            assert _timestamp_trigger_state(conn) == "O"
+            if precreated:
+                assert _table_exists(conn)
+                assert _all_input_rows(conn) == []
+            else:
+                assert not _table_exists(conn)
+
+            # Repair only the broken payload. Unknown-engine and unsafe-path
+            # scenarios need only their engine declaration repaired instead.
+            if case.repaired_payload != case.broken_payload:
+                conn.run(
+                    "UPDATE yascheduler_tasks SET extra = CAST(:extra AS JSONB) "
+                    "WHERE task_id = :task_id",
+                    extra=json.dumps(case.repaired_payload),
+                    task_id=broken_task_id,
+                )
+            before_retry_tasks = {
+                cast(int, row["task_id"]): row for row in _task_rows(conn)
+            }
+        finally:
+            conn.close()
+
+        apply_migrations(
+            config,
+            engine_inputs=case.repaired_engine_inputs,
+            upto="014",
+        )
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "014"]
+            assert _table_exists(conn)
+            _assert_converted_snapshot(conn, first_task_id)
+            _assert_input_snapshot(conn, broken_task_id, case.expected_entries)
+
+            after_success_tasks = {
+                cast(int, row["task_id"]): row for row in _task_rows(conn)
+            }
+            assert set(after_success_tasks) == {first_task_id, broken_task_id}
+            for task_id, expected_extra in (
+                (first_task_id, _expected_remaining_metadata(first_marker)),
+                (broken_task_id, case.expected_remaining),
+            ):
+                for column in PRESERVED_TASK_COLUMNS:
+                    assert (
+                        after_success_tasks[task_id][column]
+                        == before_retry_tasks[task_id][column]
+                    ), (task_id, column)
+                assert json.loads(str(after_success_tasks[task_id]["extra"])) == (
+                    expected_extra
+                )
+
+            first_inputs = _input_rows(conn, first_task_id)
+            # Non-fort.9 strings are never guessed as base64; this text
+            # happens to be valid base64 but must remain its literal UTF-8.
+            assert first_inputs["looks-like-base64.txt"][
+                "content"
+            ] == BASE64_LOOKALIKE_TEXT.encode("utf-8")
+            assert first_inputs["looks-like-base64.txt"]["content"] != b"Hello"
+            # FORT9_TEXT has whitespace and missing padding, both historically
+            # accepted; the malformed case above uses the reliably invalid 'a'.
+            assert first_inputs["fort.9"]["content"] == b"\x00\x01\x02\xff"
+            assert _timestamp_trigger_state(conn) == "O"
+
+            success_tasks = _task_rows(conn)
+            success_inputs = _all_input_rows(conn)
+            success_tracker = _tracker_snapshot(conn)
+        finally:
+            conn.close()
+
+        # No 014 is pending after success. Running without engine context must
+        # be a no-op; if conversion reran, the missing context would fail.
+        apply_migrations(config)
+
+        conn = _connect(config)
+        try:
+            assert _task_rows(conn) == success_tasks
+            assert _all_input_rows(conn) == success_inputs
+            assert _tracker_snapshot(conn) == success_tracker
+            assert _timestamp_trigger_state(conn) == "O"
+        finally:
+            conn.close()
+
+
+# endregion FUNC_test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent

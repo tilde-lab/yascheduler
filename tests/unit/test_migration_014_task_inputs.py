@@ -1,7 +1,7 @@
 """Focused unit tests for migration 014's pure input-conversion seam."""
 # region MODULE_CONTRACT
 # PURPOSE: Pin migration 014's pure legacy payload conversion and encoding rules without a database, protecting the seam already covered by PostgreSQL integration tests.
-# SCOPE: Happy-path UTF-8/fort.9/not-guessed base64 encodings and one literal-directory/glob/overlap selection with unrelated metadata preservation.
+# SCOPE: Happy-path UTF-8/fort.9/not-guessed base64 encodings, one literal-directory/glob/overlap selection with unrelated metadata preservation, and pure conversion failures with safe diagnostics and no caller-payload mutation.
 # KEYWORDS: migration 014, task inputs, legacy payload, base64, selection, deduplication
 # endregion MODULE_CONTRACT
 
@@ -13,7 +13,13 @@ from types import ModuleType
 
 import pytest
 
-from yascheduler.domain import TaskInputDirectory, TaskInputFile
+from yascheduler.domain import (
+    InvalidTaskSnapshotError,
+    MissingInputFileError,
+    TaskInputDirectory,
+    TaskInputFile,
+    UnsafeTaskPathError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -103,3 +109,53 @@ def test_convert_payload_selects_tree_glob_overlap_and_preserves_metadata() -> N
         "priority": 7,
         "nested_metadata": {"keep": True},
     }
+
+
+def test_convert_payload_reports_missing_selection_without_mutating_payload() -> None:
+    payload: dict[str, object] = {"INPUT": "body"}
+
+    with pytest.raises(MissingInputFileError) as info:
+        _MIGRATION._convert_payload("test-engine", ("INPUT", "missing.orb"), payload)
+
+    assert info.value.engine_name == "test-engine"
+    assert info.value.filename == "missing.orb"
+    assert "test-engine" in str(info.value)
+    assert "missing.orb" in str(info.value)
+    assert payload == {"INPUT": "body"}
+
+
+def test_convert_payload_rejects_unsafe_declaration_without_mutating_payload() -> None:
+    payload: dict[str, object] = {"INPUT": "body"}
+
+    with pytest.raises(UnsafeTaskPathError) as info:
+        _MIGRATION._convert_payload("test-engine", ("../outside",), payload)
+
+    assert info.value.path == "../outside"
+    assert "outside" in str(info.value)
+    assert payload == {"INPUT": "body"}
+
+
+def test_convert_payload_reports_malformed_fort9_without_leaking_or_mutating() -> None:
+    malformed = "c2VjcmV0Q"
+    payload: dict[str, object] = {"fort.9": malformed}
+
+    with pytest.raises(InvalidTaskSnapshotError) as info:
+        _MIGRATION._convert_payload("test-engine", ("fort.9",), payload)
+
+    assert info.value.path == "fort.9"
+    assert "base64" in str(info.value)
+    assert malformed not in str(info.value)
+    assert payload == {"fort.9": malformed}
+
+
+def test_convert_payload_reports_non_string_value_without_leaking_or_mutating() -> None:
+    selected_value: dict[str, object] = {"secret": "do-not-log"}
+    payload: dict[str, object] = {"INPUT": selected_value}
+
+    with pytest.raises(InvalidTaskSnapshotError) as info:
+        _MIGRATION._convert_payload("test-engine", ("INPUT",), payload)
+
+    assert info.value.path == "INPUT"
+    assert "got dict" in str(info.value)
+    assert "do-not-log" not in str(info.value)
+    assert payload == {"INPUT": selected_value}
