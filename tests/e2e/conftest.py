@@ -188,6 +188,15 @@ def e2e_config(
         f"deploy_local_files = run.sh\n"
         f"sleep_interval = 1\n"
         f"platforms = linux\n"
+        f"\n"
+        f"[engine.test_tree]\n"
+        f"spawn = {{engine_path}}/run.sh\n"
+        f"check_pname = sleep\n"
+        f"input_files = 1.input\n"
+        f"output_files = OUT.aiida OUT.aiida/**/*.dat root.dat\n"
+        f"deploy_local_files = run.sh\n"
+        f"sleep_interval = 1\n"
+        f"platforms = linux\n"
     )
     ini_path.write_text(ini_content)
 
@@ -196,6 +205,22 @@ def e2e_config(
     run_sh = engines_dir / "run.sh"
     run_sh.write_text("#!/bin/sh\nsleep 3\ncat 1.input > 1.input.out\n")
     run_sh.chmod(run_sh.stat().st_mode | stat.S_IEXEC)
+
+    # Tree-producing engine: a declared directory plus an overlapping glob
+    # select the same nested file, and a root file exercises an explicit-file
+    # selection in the same task.
+    tree_engine_dir = tmp / "data" / "engines" / "test_tree"
+    tree_engine_dir.mkdir(parents=True)
+    tree_run_sh = tree_engine_dir / "run.sh"
+    tree_run_sh.write_text(
+        "#!/bin/sh\n"
+        "sleep 3\n"
+        "mkdir -p OUT.aiida/nested\n"
+        "printf 'nested-result-tree\\n' > OUT.aiida/nested/result.dat\n"
+        "printf 'root-result-tree\\n' > root.dat\n"
+        "cat 1.input > 1.input.out\n"
+    )
+    tree_run_sh.chmod(tree_run_sh.stat().st_mode | stat.S_IEXEC)
 
     keys_dir = tmp / "data" / "keys"
     keys_dir.mkdir(parents=True)

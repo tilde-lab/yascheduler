@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from functools import partial
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
     from yascheduler.domain import (
         DoneTask,
-        Engine,
         EngineRepository,
         MachineSession,
         RunningTask,
@@ -35,13 +34,12 @@ __all__ = ["consume_task"]
 
 
 # region FUNC__prepare_store_folder
-# PURPOSE: Ensure the local filesystem is ready to receive remote outputs and resolve what to fetch, so the download step has a target directory and file list.
+# PURPOSE: Ensure the local filesystem is ready to receive remote outputs and return the remote task root, so the download step can resolve the engine's selections against it without pre-joining paths.
 async def _prepare_store_folder(
-    task: RunningTask, local_tasks_dir: Path, engine: Engine
-) -> tuple[Path, list[str], str]:
+    task: RunningTask, local_tasks_dir: Path
+) -> tuple[Path, str]:
     # region BLOCK_create_dir
     remote_folder: str = task.state.remote_folder
-    output_files = [str(PurePosixPath(remote_folder) / x) for x in engine.output_files]
     if task.local_folder:
         store_folder = Path(task.local_folder)
     else:
@@ -51,7 +49,7 @@ async def _prepare_store_folder(
         partial(store_folder.mkdir, 0o777, parents=True, exist_ok=True),
     )
     # endregion BLOCK_create_dir
-    return store_folder, output_files, remote_folder
+    return store_folder, remote_folder
 
 
 # endregion FUNC__prepare_store_folder
@@ -197,11 +195,11 @@ async def consume_task(
             task, finalised, None, session, output_downloader, uow_factory, tracker
         )
 
-    store_folder, output_files, task_remote_folder = await _prepare_store_folder(
+    store_folder, task_remote_folder = await _prepare_store_folder(
         task,
         local_tasks_dir,
-        engine,
     )
+    # region BLOCK_download
     (
         _local_folder,
         _remote_folder,
@@ -211,9 +209,18 @@ async def consume_task(
         session=session,
         remote_dir=task_remote_folder,
         local_dir=store_folder,
-        files=output_files,
+        selections=list(engine.output_files),
         task_id=task.task_id,
     )
+    logger.debug(
+        "RETRIEVAL_ENTRIES",
+        extra={
+            "task_id": task.task_id.value,
+            "transient": [path or "" for path, _ in transient_errors],
+            "permanent": [path or "" for path, _ in permanent_errors],
+        },
+    )
+    # endregion BLOCK_download
 
     # region BLOCK_defer
     # Defer while ANY transient failure remains — including when permanent

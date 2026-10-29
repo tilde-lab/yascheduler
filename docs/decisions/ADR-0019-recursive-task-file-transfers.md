@@ -6,6 +6,9 @@
   review: no durable retrieval-progress state; finalisation now precedes
   remote cleanup, which makes the persisted retrieval-to-cleanup boundary
   and retained-diagnostics machinery unnecessary.
+- **Implemented:** 2026-10-30 — all three parts delivered: input snapshots
+  and recursive upload, the retrieval lifecycle with post-finalisation
+  cleanup, and recursive output selection and retrieval.
 - **Supersedes:** [ADR-0013](ADR-0013-task-metadata-typed-columns-not-jsonb.md),
   only its placement of task input files in `extra`
 - **Superseded by:**

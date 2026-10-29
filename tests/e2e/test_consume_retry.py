@@ -215,7 +215,7 @@ async def test_consume_retry_then_success(
         session: MachineSession,
         remote_dir: str,
         local_dir: Path,
-        files: list[str],
+        selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
         str,
@@ -232,7 +232,7 @@ async def test_consume_retry_then_success(
                 return (
                     "",
                     "",
-                    [(remote_dir + "/1.input.out", SFTPFailure("transient blip"))],
+                    [("1.input.out", SFTPFailure("transient blip"))],
                     [],
                 )
             if call_count == 2:
@@ -242,7 +242,7 @@ async def test_consume_retry_then_success(
             session=session,
             remote_dir=remote_dir,
             local_dir=local_dir,
-            files=files,
+            selections=selections,
             task_id=task_id,
         )
 
@@ -307,8 +307,8 @@ async def test_consume_permanent_marks_done_with_error(
     ssh_container: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing output file is permanent: DONE with a Download error naming the
-    path, and V0 still performs the post-finalisation remote cleanup.
+    """A missing output selection is permanent: DONE with a Download error naming
+    the raw selection, and V0 still performs the post-finalisation remote cleanup.
     """
     task_id = await _setup_node_and_submit(e2e_config, uow_factory, ssh_container)
     events = _capture_events(monkeypatch)
@@ -316,13 +316,14 @@ async def test_consume_permanent_marks_done_with_error(
     orchestrator = await make_daemon(e2e_config)
     real_download = orchestrator._output_downloader.download_outputs
     remote_dirs: list[str] = []
-    missing_paths: list[str] = []
+    missing_selections: list[str] = []
+    missing_selection = "missing.out"
 
     async def missing_output_download(
         session: MachineSession,
         remote_dir: str,
         local_dir: Path,
-        files: list[str],
+        selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
         str,
@@ -331,13 +332,12 @@ async def test_consume_permanent_marks_done_with_error(
         list[tuple[str | None, Exception]],
     ]:
         remote_dirs.append(remote_dir)
-        missing_path = remote_dir + "/missing.out"
-        missing_paths.append(missing_path)
+        missing_selections.append(missing_selection)
         return await real_download(
             session=session,
             remote_dir=remote_dir,
             local_dir=local_dir,
-            files=[*files, missing_path],
+            selections=[*selections, missing_selection],
             task_id=task_id,
         )
 
@@ -350,13 +350,17 @@ async def test_consume_permanent_marks_done_with_error(
 
         assert task is not None, "Task did not reach DONE"
         assert task.status == DomainTaskStatus.DONE
-        assert missing_paths, "download_outputs was never called"
-        missing_path = missing_paths[-1]
+        assert missing_selections, "download_outputs was never called"
         assert task.state.error is not None, (
             "Expected error on permanent download failure"
         )
         assert "Download error" in task.state.error
-        assert missing_path in task.state.error
+        assert missing_selection in task.state.error
+        assert "selection matched no entries" in task.state.error
+        assert remote_dirs[-1] + "/" + missing_selection not in task.state.error, (
+            "the permanent error must name the raw selection, not a "
+            "pre-joined remote path"
+        )
 
         node_id = allocated_node_id_of(task)
         assert node_id is not None
@@ -397,7 +401,7 @@ async def test_consume_transient_preserves_remote_dir_regression(
         session: MachineSession,
         remote_dir: str,
         local_dir: Path,
-        files: list[str],
+        selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
         str,
@@ -410,7 +414,7 @@ async def test_consume_transient_preserves_remote_dir_regression(
         return (
             "",
             "",
-            [(remote_dir + "/1.input.out", SFTPFailure("transient"))],
+            [("1.input.out", SFTPFailure("transient"))],
             [],
         )
 
@@ -462,8 +466,9 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
     real_download = orchestrator._output_downloader.download_outputs
     call_count = 0
     remote_dirs: list[str] = []
-    missing_paths: list[str] = []
-    stale_paths: list[str] = []
+    missing_selection = "still-missing.out"
+    missing_selections: list[str] = []
+    stale_selections: list[str] = []
     first_pass_seen = asyncio.Event()
     second_pass_started = asyncio.Event()
     allow_second_pass = asyncio.Event()
@@ -472,7 +477,7 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
         session: MachineSession,
         remote_dir: str,
         local_dir: Path,
-        files: list[str],
+        selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
         str,
@@ -484,19 +489,18 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
         if task_id == task_id_from_setup:
             call_count += 1
             remote_dirs.append(remote_dir)
-            missing_path = remote_dir + "/still-missing.out"
-            missing_paths.append(missing_path)
             if call_count == 1:
-                stale_path = remote_dir + "/stale-only.out"
-                stale_paths.append(stale_path)
+                stale_selection = "stale-only.out"
+                missing_selections.append(missing_selection)
+                stale_selections.append(stale_selection)
                 first_pass_seen.set()
                 return (
                     "",
                     "",
-                    [(remote_dir + "/1.input.out", SFTPFailure("transient blip"))],
+                    [("1.input.out", SFTPFailure("transient blip"))],
                     [
-                        (missing_path, OSError("No such file")),
-                        (stale_path, OSError("old permanent failure")),
+                        (missing_selection, FileNotFoundError("No such file")),
+                        (stale_selection, OSError("old permanent failure")),
                     ],
                 )
             second_pass_started.set()
@@ -505,14 +509,14 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
                 session=session,
                 remote_dir=remote_dir,
                 local_dir=local_dir,
-                files=[*files, missing_path],
+                selections=[*selections, missing_selection],
                 task_id=task_id,
             )
         return await real_download(
             session=session,
             remote_dir=remote_dir,
             local_dir=local_dir,
-            files=files,
+            selections=selections,
             task_id=task_id,
         )
 
@@ -540,8 +544,12 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
         assert task.status == DomainTaskStatus.DONE
         assert task.state.error is not None
         assert "Download error" in task.state.error
-        assert missing_paths[-1] in task.state.error
-        assert stale_paths[0] not in task.state.error, (
+        assert missing_selections[-1] in task.state.error
+        assert "selection matched no entries" in task.state.error
+        assert remote_dirs[0] + "/" + missing_selections[-1] not in task.state.error, (
+            "the final error must name the raw selection, not a pre-joined remote path"
+        )
+        assert stale_selections[0] not in task.state.error, (
             "the failed pass must report only its own permanent errors"
         )
         assert "transient blip" not in task.state.error
@@ -586,7 +594,7 @@ async def test_consume_restart_after_defer_redownloads_and_succeeds(
         session: MachineSession,
         remote_dir: str,
         local_dir: Path,
-        files: list[str],
+        selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
         str,
@@ -599,7 +607,7 @@ async def test_consume_restart_after_defer_redownloads_and_succeeds(
         return (
             "",
             "",
-            [(remote_dir + "/1.input.out", SFTPFailure("daemon restart blip"))],
+            [("1.input.out", SFTPFailure("daemon restart blip"))],
             [],
         )
 
@@ -630,7 +638,7 @@ async def test_consume_restart_after_defer_redownloads_and_succeeds(
             session: MachineSession,
             remote_dir: str,
             local_dir: Path,
-            files: list[str],
+            selections: Sequence[str],
             task_id: TaskId | None = None,
         ) -> tuple[
             str,
@@ -645,7 +653,7 @@ async def test_consume_restart_after_defer_redownloads_and_succeeds(
                 session=session,
                 remote_dir=remote_dir,
                 local_dir=local_dir,
-                files=files,
+                selections=selections,
                 task_id=task_id,
             )
 

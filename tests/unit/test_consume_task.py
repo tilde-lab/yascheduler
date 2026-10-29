@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ from yascheduler.domain import (
     TaskFailed,
     TaskId,
     TaskStatus,
+    UnsafeTaskPathError,
 )
 
 if TYPE_CHECKING:
@@ -156,7 +158,7 @@ class TestConsumeTask:
             session=session,
             remote_dir=REMOTE_FOLDER,
             local_dir=tmp_path / "20250101_120000_42",
-            files=[OUTPUT_PATH],
+            selections=["OUTPUT"],
             task_id=TaskId(1),
         )
         mock_output_downloader.cleanup_remote.assert_awaited_once_with(
@@ -189,6 +191,212 @@ class TestConsumeTask:
         assert not any(
             record.getMessage() == "FINALISE_FAIL" for record in caplog.records
         )
+        assert _marker_fields(caplog, "RETRIEVAL_ENTRIES") == {
+            "task_id": 1,
+            "transient": [],
+            "permanent": [],
+        }
+
+    async def test_nested_tree_success_passes_raw_selections_and_finalises(
+        self,
+        mock_output_downloader: MagicMock,
+        running_task: Task,
+        mock_engine_repo: MagicMock,
+        engine,
+        tmp_path: Path,
+    ) -> None:
+        """A nested output tree with no retrieval errors finalises the task as done."""
+        nested_engine = replace(
+            engine, output_files=("OUT.aiida", "OUT.aiida/**/*.dat")
+        )
+        mock_engine_repo.get.return_value = nested_engine
+        uow = _make_uow(running_task)
+        tracker = _make_tracker()
+        session = SimpleNamespace()
+
+        result = await _run_consume(
+            task_id=running_task.task_id,
+            session=session,
+            uow_factory=MagicMock(return_value=uow),
+            output_downloader=mock_output_downloader,
+            engines=mock_engine_repo,
+            local_tasks_dir=tmp_path,
+            tracker=tracker,
+        )
+
+        expected_store = str(tmp_path / "20250101_120000_42")
+        assert result is True
+        mock_output_downloader.download_outputs.assert_awaited_once_with(
+            session=session,
+            remote_dir=REMOTE_FOLDER,
+            local_dir=tmp_path / "20250101_120000_42",
+            selections=["OUT.aiida", "OUT.aiida/**/*.dat"],
+            task_id=TaskId(1),
+        )
+        saved_task = uow.tasks.save.call_args.args[0]
+        assert saved_task.status is TaskStatus.DONE
+        assert saved_task.state.error is None
+        assert saved_task.local_folder == expected_store
+        assert isinstance(saved_task.events[-1], TaskCompleted)
+        uow.commit.assert_awaited_once()
+        tracker.discard.assert_called_once_with(TaskId(1))
+        mock_output_downloader.cleanup_remote.assert_awaited_once_with(
+            session=session,
+            remote_dir=REMOTE_FOLDER,
+            task_id=TaskId(1),
+        )
+
+    async def test_unmatched_pattern_is_permanent_and_names_the_selection(
+        self,
+        mock_output_downloader: MagicMock,
+        running_task: Task,
+        mock_engine_repo: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An unmatched selection fails the task with the selection and reason."""
+        permanent = [
+            ("missing/*.orb", FileNotFoundError("selection matched no entries"))
+        ]
+        mock_output_downloader.download_outputs = AsyncMock(
+            return_value=("", "", [], permanent)
+        )
+        uow = _make_uow(running_task)
+        tracker = _make_tracker()
+        session = SimpleNamespace()
+
+        with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
+            result = await _run_consume(
+                task_id=running_task.task_id,
+                session=session,
+                uow_factory=MagicMock(return_value=uow),
+                output_downloader=mock_output_downloader,
+                engines=mock_engine_repo,
+                local_tasks_dir=tmp_path,
+                tracker=tracker,
+            )
+
+        expected_error = "Download error: missing/*.orb: selection matched no entries"
+        assert result is True
+        saved_task = uow.tasks.save.call_args.args[0]
+        assert saved_task.status is TaskStatus.DONE
+        assert saved_task.state.error == expected_error
+        assert isinstance(saved_task.events[-1], TaskFailed)
+        assert saved_task.events[-1].reason == expected_error
+        uow.commit.assert_awaited_once()
+        tracker.discard.assert_called_once_with(TaskId(1))
+        mock_output_downloader.cleanup_remote.assert_awaited_once_with(
+            session=session,
+            remote_dir=REMOTE_FOLDER,
+            task_id=TaskId(1),
+        )
+        assert _marker_fields(caplog, "FINALISE_DECISION") == {
+            "will_fail": True,
+            "permanent": 1,
+            "transient": 0,
+        }
+        assert _marker_fields(caplog, "RETRIEVAL_ENTRIES") == {
+            "task_id": 1,
+            "transient": [],
+            "permanent": ["missing/*.orb"],
+        }
+
+    async def test_directory_creation_failure_is_transient_and_defers(
+        self,
+        mock_output_downloader: MagicMock,
+        running_task: Task,
+        mock_engine_repo: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A transient directory-path failure leaves the task RUNNING without side effects."""
+        transient = [("OUT/empty", SFTPFailure("directory creation failed"))]
+        mock_output_downloader.download_outputs = AsyncMock(
+            return_value=("", "", transient, [])
+        )
+        uow = _make_uow(running_task)
+        tracker = _make_tracker()
+        session = SimpleNamespace()
+
+        with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
+            result = await _run_consume(
+                task_id=running_task.task_id,
+                session=session,
+                uow_factory=MagicMock(return_value=uow),
+                output_downloader=mock_output_downloader,
+                engines=mock_engine_repo,
+                local_tasks_dir=tmp_path,
+                tracker=tracker,
+            )
+
+        assert result is False
+        uow.tasks.save.assert_not_awaited()
+        uow.commit.assert_not_awaited()
+        tracker.discard.assert_not_called()
+        mock_output_downloader.cleanup_remote.assert_not_awaited()
+        assert _marker_fields(caplog, "RETRIEVAL_DEFER") == {
+            "task_id": 1,
+            "transient": 1,
+            "permanent": 0,
+        }
+        assert _marker_fields(caplog, "RETRIEVAL_ENTRIES") == {
+            "task_id": 1,
+            "transient": ["OUT/empty"],
+            "permanent": [],
+        }
+        assert not any(
+            record.getMessage() == "FINALISE_DECISION" for record in caplog.records
+        )
+
+    async def test_retrieval_entries_record_reports_each_pass_exactly(
+        self,
+        mock_output_downloader: MagicMock,
+        running_task: Task,
+        mock_engine_repo: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """RETRIEVAL_ENTRIES names every path-or-selection and an empty path for None."""
+        transient = [
+            (None, SFTPFailure("session lost")),
+            ("OUT/empty", SFTPFailure("mkdir failed")),
+        ]
+        permanent = [
+            ("missing/*.orb", FileNotFoundError("selection matched no entries")),
+            ("OUT/run.log", UnsafeTaskPathError("OUT/run.log", "symbolic link")),
+        ]
+        mock_output_downloader.download_outputs = AsyncMock(
+            return_value=("", "", transient, permanent)
+        )
+        uow = _make_uow(running_task)
+        tracker = _make_tracker()
+        session = SimpleNamespace()
+
+        with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
+            result = await _run_consume(
+                task_id=running_task.task_id,
+                session=session,
+                uow_factory=MagicMock(return_value=uow),
+                output_downloader=mock_output_downloader,
+                engines=mock_engine_repo,
+                local_tasks_dir=tmp_path,
+                tracker=tracker,
+            )
+
+        assert result is False
+        assert _marker_fields(caplog, "RETRIEVAL_ENTRIES") == {
+            "task_id": 1,
+            "transient": ["", "OUT/empty"],
+            "permanent": ["missing/*.orb", "OUT/run.log"],
+        }
+        assert _marker_fields(caplog, "RETRIEVAL_DEFER") == {
+            "task_id": 1,
+            "transient": 2,
+            "permanent": 2,
+        }
+        uow.tasks.save.assert_not_awaited()
+        uow.commit.assert_not_awaited()
+        mock_output_downloader.cleanup_remote.assert_not_awaited()
 
     async def test_permanent_only_fails_with_formatted_download_error(
         self,
