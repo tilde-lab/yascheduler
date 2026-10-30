@@ -1,7 +1,11 @@
-## Unreleased
+## v2.1.0 (2026-10-30)
 
-### BREAKING CHANGE
+### Upgrade notes
 
+- no public API break: existing configuration, command-line flags, single-file
+  `input_files`/`output_files` lists, and the query `metadata` keys keep
+  working. What this release changes is the upgrade procedure and the rollback
+  story, not the package contract.
 - database schema change: migrations 014 (task input snapshots) and 015 (task
   output selections) are applied by `yainit`, which must run before the new
   daemon starts. Migration 014 requires an engine declaration context: no
@@ -21,6 +25,10 @@
   nested key stays unrelated metadata, exactly as the previous scheduler
   accepted and deployed it. Tree submissions express directories with a glob
   (`basis/**`) or with typed `input_entries`.
+- rollback: after migration 014 the stored inputs live in
+  `yascheduler_task_inputs` and are gone from `extra`, so an older package
+  cannot start tasks against the migrated database. Rolling back needs the
+  database restored from a backup taken before `yainit`.
 
 ### Feat
 
