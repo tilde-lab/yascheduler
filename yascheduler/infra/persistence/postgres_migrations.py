@@ -351,9 +351,9 @@ def apply_migrations(
 
     ``engine_inputs`` optionally supplies each engine's declared input file
     selections to Python migrations (the input conversion needs them);
-    ``None`` keeps the historical behavior. ``upto`` optionally caps the run
-    inclusively at that migration prefix so callers (tests) can apply exactly
-    one step of the chain; ``None`` applies everything pending.
+    ``None`` keeps the historical behavior. ``upto`` optionally stops the
+    chain after the named revision (``upto="012"`` applies through 012 when
+    the tracker sits at '011'); ``None`` applies everything pending.
     """
     conn: Connection | None = None
     try:
