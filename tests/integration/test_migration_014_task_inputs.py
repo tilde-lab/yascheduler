@@ -40,10 +40,10 @@ DECLARATIONS = (
     "INPUT",
     "fort.9",
     "looks-like-base64.txt",
-    "basis",
+    "basis/**",
     "basis/nested/*.orb",
     "globbed/**/*.dat",
-    "tree/*",
+    "tree/**",
 )
 UTF8_TEXT = "line one\nline two — ü"
 FORT9_TEXT = "AAEC\n/w"

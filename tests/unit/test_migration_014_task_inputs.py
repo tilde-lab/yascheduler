@@ -1,8 +1,8 @@
-"""Focused unit tests for migration 014's pure input-conversion seam."""
+"""Focused unit tests for migration 014's failure policy."""
 # region MODULE_CONTRACT
-# PURPOSE: Pin migration 014's pure legacy payload conversion and encoding rules without a database, protecting the seam already covered by PostgreSQL integration tests.
-# SCOPE: Happy-path UTF-8/fort.9/not-guessed base64 encodings, one literal-directory/glob/overlap selection with unrelated metadata preservation, pure conversion failures with safe diagnostics and no caller-payload mutation, required engine context, started-task skip boundaries, storage/unexpected failures, and migration-wide failure context/log rendering.
-# KEYWORDS: migration 014, task inputs, legacy payload, base64, selection, deduplication
+# PURPOSE: Pin when migration 014 stops and when it skips, without a database, protecting the boundary already covered by PostgreSQL integration tests.
+# SCOPE: Required engine context, started-task skip boundaries, the pre-start stop diagnostics, storage/unexpected failures, and migration-wide failure context/log rendering. Payload conversion itself belongs to the shared domain conversion, tested in test_legacy_inputs.
+# KEYWORDS: migration 014, task inputs, skip, failure policy, deduplication
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
@@ -16,13 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests.log_assertions import extra_fields
-from yascheduler.domain import (
-    InvalidTaskSnapshotError,
-    MissingInputFileError,
-    TaskInputDirectory,
-    TaskInputFile,
-    UnsafeTaskPathError,
-)
 
 pytestmark = pytest.mark.unit
 
@@ -54,141 +47,6 @@ def _load_migration_module() -> ModuleType:
 
 
 _MIGRATION = _load_migration_module()
-
-
-@pytest.mark.parametrize(
-    ("path", "value", "expected"),
-    [
-        ("INPUT", "line one\nline two — ü", "line one\nline two — ü".encode()),
-        ("empty.orb", "", b""),
-        ("fort.9", "AAEC\n/w", b"\x00\x01\x02\xff"),
-        ("looks-like-base64.txt", "SGVsbG8=", b"SGVsbG8="),
-    ],
-)
-def test_legacy_bytes_preserves_recorded_encoding_meaning(
-    path: str,
-    value: str,
-    expected: bytes,
-) -> None:
-    assert _MIGRATION._legacy_bytes(path, value) == expected
-
-
-def test_legacy_fort9_decoder_keeps_historical_lenient_base64() -> None:
-    """Pin deployment compatibility; invalid characters are deliberately discarded."""
-    assert _MIGRATION._legacy_bytes("fort.9", "QUJD$") == b"ABC"
-    assert _MIGRATION._legacy_bytes("fort.9", "!!!!") == b""
-
-
-def test_convert_payload_selects_tree_glob_overlap_and_preserves_metadata() -> None:
-    payload: dict[str, object] = {
-        "INPUT": "body",
-        "basis/one.orb": "one",
-        "basis/.hidden.orb": "hidden",
-        "basis/empty.orb": "",
-        "basis/nested/two.orb": "two",
-        "globbed/root.dat": "root",
-        "globbed/nested/leaf.dat": "leaf",
-        "globbed/notes.txt": "keep",
-        "other.orb": "keep",
-        "remote_folder": "/keep/typed-metadata",
-        "priority": 7,
-        "nested_metadata": {"keep": True},
-    }
-
-    snapshot, remaining = _MIGRATION._convert_payload(
-        "test-engine",
-        ("INPUT", "basis", "basis/nested/*.orb", "globbed/**/*.dat"),
-        payload,
-    )
-
-    assert snapshot == (
-        TaskInputFile(path="INPUT", content=b"body"),
-        TaskInputDirectory(path="basis"),
-        TaskInputFile(path="basis/.hidden.orb", content=b"hidden"),
-        TaskInputFile(path="basis/empty.orb", content=b""),
-        TaskInputDirectory(path="basis/nested"),
-        TaskInputFile(path="basis/nested/two.orb", content=b"two"),
-        TaskInputFile(path="basis/one.orb", content=b"one"),
-        TaskInputDirectory(path="globbed"),
-        TaskInputDirectory(path="globbed/nested"),
-        TaskInputFile(path="globbed/nested/leaf.dat", content=b"leaf"),
-        TaskInputFile(path="globbed/root.dat", content=b"root"),
-    )
-    assert remaining == {
-        "globbed/notes.txt": "keep",
-        "other.orb": "keep",
-        "remote_folder": "/keep/typed-metadata",
-        "priority": 7,
-        "nested_metadata": {"keep": True},
-    }
-
-
-def test_convert_payload_glob_leaves_unsafe_key_in_extra() -> None:
-    payload: dict[str, object] = {
-        "good.orb": "good",
-        "../evil.orb": "unrelated-payload",
-    }
-
-    snapshot, remaining = _MIGRATION._convert_payload(
-        "test-engine", ("*.orb",), payload
-    )
-
-    assert snapshot == (TaskInputFile(path="good.orb", content=b"good"),)
-    assert remaining == {"../evil.orb": "unrelated-payload"}
-    assert payload == {
-        "good.orb": "good",
-        "../evil.orb": "unrelated-payload",
-    }
-
-
-def test_convert_payload_reports_missing_selection_without_mutating_payload() -> None:
-    payload: dict[str, object] = {"INPUT": "body"}
-
-    with pytest.raises(MissingInputFileError) as info:
-        _MIGRATION._convert_payload("test-engine", ("INPUT", "missing.orb"), payload)
-
-    assert info.value.engine_name == "test-engine"
-    assert info.value.filename == "missing.orb"
-    assert "test-engine" in str(info.value)
-    assert "missing.orb" in str(info.value)
-    assert payload == {"INPUT": "body"}
-
-
-def test_convert_payload_rejects_unsafe_declaration_without_mutating_payload() -> None:
-    payload: dict[str, object] = {"INPUT": "body"}
-
-    with pytest.raises(UnsafeTaskPathError) as info:
-        _MIGRATION._convert_payload("test-engine", ("../outside",), payload)
-
-    assert info.value.path == "../outside"
-    assert "outside" in str(info.value)
-    assert payload == {"INPUT": "body"}
-
-
-def test_convert_payload_reports_malformed_fort9_without_leaking_or_mutating() -> None:
-    malformed = "c2VjcmV0Q"
-    payload: dict[str, object] = {"fort.9": malformed}
-
-    with pytest.raises(InvalidTaskSnapshotError) as info:
-        _MIGRATION._convert_payload("test-engine", ("fort.9",), payload)
-
-    assert info.value.path == "fort.9"
-    assert "base64" in str(info.value)
-    assert malformed not in str(info.value)
-    assert payload == {"fort.9": malformed}
-
-
-def test_convert_payload_reports_non_string_value_without_leaking_or_mutating() -> None:
-    selected_value: dict[str, object] = {"secret": "do-not-log"}
-    payload: dict[str, object] = {"INPUT": selected_value}
-
-    with pytest.raises(InvalidTaskSnapshotError) as info:
-        _MIGRATION._convert_payload("test-engine", ("INPUT",), payload)
-
-    assert info.value.path == "INPUT"
-    assert "got dict" in str(info.value)
-    assert "do-not-log" not in str(info.value)
-    assert payload == {"INPUT": selected_value}
 
 
 def test_trigger_restore_failure_has_no_stale_task_context(
@@ -383,7 +241,7 @@ def test_unexpected_error_is_not_skipped_for_started_task(
                 return [(22, "test-engine", "DONE", {"INPUT": "body"})]
             return None
 
-    monkeypatch.setattr(_MIGRATION, "_convert_payload", _unexpected_conversion)
+    monkeypatch.setattr(_MIGRATION, "legacy_input_snapshot", _unexpected_conversion)
     migration = _MIGRATION.TaskInputSnapshots(
         MagicMock(),
         _StartedTaskConnection(),

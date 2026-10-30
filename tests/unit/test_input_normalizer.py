@@ -47,58 +47,6 @@ def _find_log_record(
 
 
 class TestLegacyLiteralDeclarations:
-    def test_literal_value_is_utf8_encoded(self) -> None:
-        snapshot, remaining = normalize_task_inputs(
-            {"INPUT": "line1\nline2"}, _engine("INPUT"), None
-        )
-
-        assert snapshot == (TaskInputFile(path="INPUT", content=b"line1\nline2"),)
-        assert remaining == {}
-
-    def test_non_ascii_literal_value_is_utf8_encoded(self) -> None:
-        snapshot, _ = normalize_task_inputs({"INPUT": "текст"}, _engine("INPUT"), None)
-
-        assert snapshot == (TaskInputFile(path="INPUT", content="текст".encode()),)
-
-    def test_fort9_standard_base64_is_decoded(self) -> None:
-        snapshot, _ = normalize_task_inputs({"fort.9": "QUJD"}, _engine("fort.9"), None)
-
-        assert snapshot == (TaskInputFile(path="fort.9", content=b"ABC"),)
-
-    def test_fort9_whitespace_and_newlines_are_ignored(self) -> None:
-        snapshot, _ = normalize_task_inputs(
-            {"fort.9": " \nQUJD\n "}, _engine("fort.9"), None
-        )
-
-        assert snapshot == (TaskInputFile(path="fort.9", content=b"ABC"),)
-
-    def test_fort9_missing_padding_is_repaired(self) -> None:
-        snapshot, _ = normalize_task_inputs({"fort.9": "QUI"}, _engine("fort.9"), None)
-
-        assert snapshot == (TaskInputFile(path="fort.9", content=b"AB"),)
-
-    def test_fort9_invalid_base64_is_rejected(self) -> None:
-        with pytest.raises(InvalidTaskSnapshotError) as info:
-            normalize_task_inputs({"fort.9": "a"}, _engine("fort.9"), None)
-
-        assert info.value.path == "fort.9"
-        assert "not valid base64" in info.value.reason
-
-    @pytest.mark.parametrize("value", [b"ABC", 42, {"nested": 1}])
-    def test_non_string_literal_value_is_rejected(self, value: object) -> None:
-        with pytest.raises(InvalidTaskSnapshotError) as info:
-            normalize_task_inputs({"INPUT": value}, _engine("INPUT"), None)
-
-        assert info.value.path == "INPUT"
-        assert type(value).__name__ in info.value.reason
-
-    def test_missing_literal_declaration_is_rejected(self) -> None:
-        with pytest.raises(MissingInputFileError) as info:
-            normalize_task_inputs({"other": "value"}, _engine("INPUT"), None)
-
-        assert info.value.filename == "INPUT"
-        assert info.value.engine_name == "test_engine"
-
     def test_typed_metadata_keys_are_never_claimed(self) -> None:
         typed_metadata: dict[str, object] = {
             "engine": "other-engine",
@@ -142,78 +90,6 @@ class TestLegacyLiteralDeclarations:
 
         assert snapshot == ()
         assert remaining == metadata
-
-    def test_snapshot_is_sorted_tuple(self) -> None:
-        snapshot, _ = normalize_task_inputs(
-            {"z": "last", "a": "first"}, _engine("z", "a"), None
-        )
-
-        assert isinstance(snapshot, tuple)
-        assert [entry.path for entry in snapshot] == ["a", "z"]
-
-    def test_overlapping_declarations_share_one_claimed_key(self) -> None:
-        snapshot, remaining = normalize_task_inputs(
-            {"INPUT": "body"}, _engine("INPUT", "IN*"), None
-        )
-
-        assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
-        assert remaining == {}
-
-
-class TestLegacyGlobDeclarations:
-    def test_glob_claims_matching_keys_and_materializes_parents(self) -> None:
-        metadata = {
-            "basis/Si.orb": "root-orb",
-            "basis/deep/x.orb": "deep-orb",
-            "unrelated": 42,
-        }
-
-        snapshot, remaining = normalize_task_inputs(
-            metadata, _engine("basis/**/*.orb"), None
-        )
-
-        assert snapshot == (
-            TaskInputDirectory(path="basis"),
-            TaskInputFile(path="basis/Si.orb", content=b"root-orb"),
-            TaskInputDirectory(path="basis/deep"),
-            TaskInputFile(path="basis/deep/x.orb", content=b"deep-orb"),
-        )
-        assert remaining == {"unrelated": 42}
-
-    def test_glob_with_no_claimable_keys_is_rejected(self) -> None:
-        with pytest.raises(MissingInputFileError) as info:
-            normalize_task_inputs(
-                {"text.txt": "not-an-orb", "count": 42},
-                _engine("*.orb"),
-                None,
-            )
-
-        assert info.value.filename == "*.orb"
-        assert info.value.engine_name == "test_engine"
-
-    def test_unsafe_keys_remain_unclaimed(self) -> None:
-        metadata = {
-            "../evil": "parent",
-            "/abs": "absolute",
-            "a\\b": "backslash",
-            "safe": "body",
-        }
-
-        snapshot, remaining = normalize_task_inputs(metadata, _engine("*"), None)
-
-        assert snapshot == (TaskInputFile(path="safe", content=b"body"),)
-        # Unsafe keys are never claimed and stay in the metadata untouched.
-        assert remaining == {
-            "../evil": "parent",
-            "/abs": "absolute",
-            "a\\b": "backslash",
-        }
-
-    def test_unsafe_glob_declaration_is_rejected(self) -> None:
-        with pytest.raises(UnsafeTaskPathError) as info:
-            normalize_task_inputs({"safe": "body"}, _engine("../**"), None)
-
-        assert info.value.path == "../**"
 
 
 class TestExplicitEntries:

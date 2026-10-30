@@ -3,7 +3,7 @@
 # PURPOSE: Preserve deployable task inputs while allowing already-started tasks with unconvertible legacy inputs to stop blocking the upgrade.
 # SCOPE: Forward migration 014; configured engine declarations select stored payload paths, never local files. No submission, deployment, or output behavior.
 # INVARIANTS: DDL, conversion, metadata removal, and tracker recording share the runner's transaction; no intermediate commits. Missing context, TO_DO conversion failures, and storage failures abort; RUNNING/DONE conversion failures leave rows unchanged and are reported per engine. All task columns except converted extra keys remain unchanged, including timestamps. Content-free boundary traces carry task/engine/path counts and failure classes, never file bodies, payloads, SQL params, or exception text.
-# DEPENDENCIES: Domain snapshot/path/selection rules; Migration engine context; SQL frozen in this module, not mutable runtime task queries.
+# DEPENDENCIES: Domain legacy payload conversion — the same function the submission boundary calls — plus domain snapshot rules; Migration engine context; SQL frozen in this module, not mutable runtime task queries.
 # endregion MODULE_CONTRACT
 
 # Dynamic migration modules live outside a package; the runner loads them by path.
@@ -11,31 +11,18 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import logging
 from itertools import islice
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from yascheduler.application import legacy_input_snapshot
 from yascheduler.domain import (
-    TYPED_METADATA_KEYS,
-    InvalidTaskSnapshotError,
     MissingInputFileError,
     TaskInputFile,
-    TaskInputKind,
     UnsafeTaskPathError,
     ValidationError,
-    normalize_input_snapshot,
-    selection_matches,
-    validate_selection,
-    validate_task_path,
 )
 from yascheduler.infra.persistence.migration_base import Migration
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
-
-    from yascheduler.domain import TaskInputSnapshot
 
 __all__ = ["TaskInputSnapshots"]
 
@@ -155,7 +142,7 @@ class TaskInputSnapshots(Migration):
                     if not isinstance(payload, dict):
                         message = "legacy extra must be a metadata object"
                         raise TypeError(message)  # noqa: TRY301
-                    snapshot, remaining = _convert_payload(
+                    snapshot, remaining = legacy_input_snapshot(
                         engine, self.engine_inputs[engine], payload
                     )
                 except BaseException as err:
@@ -312,86 +299,3 @@ class TaskInputSnapshots(Migration):
 
 
 # endregion CLASS_TaskInputSnapshots
-
-
-# region FUNC__convert_payload
-# PURPOSE: Select legacy files and implied directories with the shared language, preserving unrelated values and enforcing required selections before persistence.
-def _convert_payload(
-    engine: str, declarations: Sequence[str], payload: Mapping[str, object]
-) -> tuple[TaskInputSnapshot, dict[str, object]]:
-    """Return the selected snapshot and metadata with only its file keys removed."""
-    paths: dict[str, str] = {}
-    directories: set[str] = set()
-    for key in payload:
-        if key in TYPED_METADATA_KEYS:
-            continue
-        try:
-            path = validate_task_path(key)
-        except UnsafeTaskPathError:
-            # Unsafe unrelated metadata is not a filesystem entry. Unsafe
-            # declarations are rejected separately, never silently skipped.
-            continue
-        paths[key] = path
-        parts = path.split("/")
-        directories.update("/".join(parts[:depth]) for depth in range(1, len(parts)))
-
-    selected: set[str] = set()
-    for declaration in declarations:
-        selection = validate_selection(declaration)
-        matched_directories = {
-            path
-            for path in directories
-            if selection_matches(selection, path, TaskInputKind.DIRECTORY)
-        }
-        matched_keys = {
-            key
-            for key, path in paths.items()
-            if selection_matches(selection, path, TaskInputKind.FILE)
-            or any(
-                path.startswith(directory + "/") for directory in matched_directories
-            )
-        }
-        if not matched_keys:
-            raise MissingInputFileError(engine, declaration)
-        selected.update(matched_keys)
-
-    snapshot = normalize_input_snapshot(
-        [
-            TaskInputFile(path=key, content=_legacy_bytes(key, payload[key]))
-            for key in sorted(selected)
-        ]
-    )
-    return snapshot, {
-        key: value for key, value in payload.items() if key not in selected
-    }
-
-
-# endregion FUNC__convert_payload
-
-
-# region FUNC__legacy_bytes
-# PURPOSE: Preserve historical UTF-8 and exact fort.9 lenient base64 deployment meanings without guessing other encodings.
-def _legacy_bytes(path: str, value: object) -> bytes:
-    """Convert one selected legacy value, reporting the path but not its body."""
-    if not isinstance(value, str):
-        raise InvalidTaskSnapshotError(
-            path, f"legacy input value must be a str, got {type(value).__name__}"
-        )
-    if path == "fort.9":
-        compact = value.strip().replace("\n", "").replace(" ", "")
-        compact += "=" * (-len(compact) % 4)
-        try:
-            return base64.b64decode(compact)
-        except (binascii.Error, ValueError) as err:
-            raise InvalidTaskSnapshotError(
-                path, "legacy fort.9 value is not valid base64"
-            ) from err
-    try:
-        return value.encode("utf-8")
-    except UnicodeEncodeError as err:
-        raise InvalidTaskSnapshotError(
-            path, "legacy input value cannot be encoded as UTF-8"
-        ) from err
-
-
-# endregion FUNC__legacy_bytes

@@ -145,6 +145,33 @@ every task.
 - **WHEN** the upgrade runs on stored tasks with available engine declarations and valid legacy file payloads
 - **THEN** each task has equivalent input entries, only the converted file keys leave metadata, and task state and unrelated data remain unchanged
 
+#### Scenario: a key that also has children stays one file
+
+- **WHEN** a stored payload holds `basis` and `basis/Si.orb` while the engine declares the literal `basis`
+- **THEN** the migration converts `basis` as one file entry with its stored value and leaves `basis/Si.orb` in unrelated metadata
+- **AND** the run does not fail for a file/child conflict
+
+#### Scenario: conversion agrees with submission
+
+- **WHEN** the same payload and the same declarations are converted by the upgrade and accepted at submission
+- **THEN** both produce the same input entries and the same leftover metadata
+
+### Requirement: A stored legacy payload is flat
+
+The forward migration SHALL read a stored legacy input payload as a flat map of
+names to text values: each declaration identifies keys on its own, and no key
+expands into a directory or into the keys sharing its prefix.
+
+#### Scenario: a key that also has children stays one file
+
+- **WHEN** a stored payload holds `basis` and `basis/Si.orb` while the engine declares the literal `basis`
+- **THEN** the migration converts `basis` as one file entry with its stored value and leaves `basis/Si.orb` in unrelated metadata
+- **AND** the run does not fail for a file/child conflict
+
+#### Scenario: conversion agrees with submission
+
+- **WHEN** the same payload and declarations are converted by the upgrade and accepted at submission
+- **THEN** both produce the same input entries and the same leftover metadata
 ### Requirement: Legacy encodings convert only by recorded convention
 
 Legacy text SHALL retain its UTF-8 deployment meaning. The existing `fort.9`

@@ -6,6 +6,7 @@
 
 from .abandon_node import abandon_node
 from .allocation_tracker import AllocationTracker
+from .legacy_inputs import legacy_input_snapshot, legacy_selection_selects
 from .message_bus import MessageBus
 from .orchestrator import Orchestrator
 from .query_tasks import query_tasks
@@ -18,6 +19,8 @@ __all__ = [
     "MessageBus",
     "Orchestrator",
     "abandon_node",
+    "legacy_input_snapshot",
+    "legacy_selection_selects",
     "query_tasks",
     "submit_task",
 ]

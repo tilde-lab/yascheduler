@@ -12,6 +12,15 @@
   stop the upgrade; a warning reports each affected engine with its task count.
   Storage faults still abort. Unconverted tasks are not backfilled
   automatically.
+- **inputs**: a legacy filename/value payload is read as a flat set of names,
+  by submission and by migration 014 through one shared rule. A literal
+  `input_files` declaration claims exactly the key of its name and a glob
+  claims keys as file paths; a key is never expanded into a directory or into
+  the keys sharing its prefix. A payload that carried both `basis` and
+  `basis/Si.orb` therefore converts instead of aborting the upgrade, and its
+  nested key stays unrelated metadata, exactly as the previous scheduler
+  accepted and deployed it. Tree submissions express directories with a glob
+  (`basis/**`) or with typed `input_entries`.
 
 ### Feat
 

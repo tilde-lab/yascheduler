@@ -1,0 +1,157 @@
+"""The one conversion of a flat legacy input payload into a task input snapshot."""
+# region MODULE_CONTRACT
+# PURPOSE: Retire the pre-snapshot input format in one place: give the submission boundary and the forward migration one implementation of "which keys of a stored metadata payload are engine inputs", so a payload cannot be read two ways and a row the boundary accepted cannot stop the upgrade. Transitional — when no stored payload remains, this module and its callers go.
+# SCOPE:
+# - legacy_input_snapshot(engine_name, declarations, payload): select the claimed keys, encode their recorded value meanings, normalize the snapshot, and return the payload left unrelated.
+# - legacy_selection_selects(declaration, key): the single selection rule, also used by the submission ambiguity check.
+# - NOT: filesystem traversal, SQL, configuration parsing, persistence, or any runtime rule for current submissions.
+# INVARIANTS:
+# - A flat payload has no directories: a key is one name that may contain `/`, never a file inside a directory, so no key brings another key's value along. A literal declaration selects exactly its own key; a glob selects keys as file paths, where `*` never crosses `/` and a trailing `**` component selects every key below its prefix.
+# - Typed metadata keys are never claimed, unsafe keys claim nothing, and an unsafe declaration is a configuration error.
+# - Every declaration selects at least one key (MissingInputFileError), and every claimed value is a str (InvalidTaskSnapshotError): str(object) coercion is not a file encoding contract.
+# - Values keep their recorded meanings: UTF-8 text, except the exact `fort.9` lenient base64 convention; base64 is never guessed for other names.
+# RATIONALE:
+# - Q: Why does a claimed key never expand into a directory?
+#   A: The pre-snapshot scheduler stored a flat name-to-text map and wrote one file per declared name, so `basis/one.orb` was a name, not a file in a directory `basis`. Deriving directories from `/` invented a structure no stored payload had, and made one key both a file and its own directory, which aborted the upgrade on rows submission had accepted.
+# - Q: Why the application layer, not the domain?
+#   A: The domain describes what the scheduler is, and a retired input format is not part of it; only the flat reading of a selection is a rule the domain still needs shape for. The application layer is the highest one both callers reach downward (entrypoints and infra), and it holds the submission use case this format is retired by.
+# - Q: Why not infra, which both callers also reach?
+#   A: Importing yascheduler.infra executes its package facade, which loads the cloud and SSH adapters; the submission boundary would pay for transports it never uses.
+# - Q: Why is the ambiguity check given a predicate instead of the claim?
+#   A: It reports an overlap without a missing declaration becoming an error, so it asks whether a key would be claimed and never reads a value.
+# KEYWORDS: legacy inputs, flat payload, claim, snapshot, fort.9, base64, migration, submission, transitional
+# endregion MODULE_CONTRACT
+
+from __future__ import annotations
+
+import base64
+import binascii
+from typing import TYPE_CHECKING
+
+from yascheduler.domain.exceptions import (
+    InvalidTaskSnapshotError,
+    MissingInputFileError,
+    UnsafeTaskPathError,
+)
+from yascheduler.domain.model import TYPED_METADATA_KEYS
+from yascheduler.domain.task_inputs import (
+    TaskInputFile,
+    TaskInputKind,
+    is_glob_pattern,
+    normalize_input_snapshot,
+    selection_matches,
+    validate_selection,
+    validate_task_path,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from yascheduler.domain.task_inputs import TaskInputSnapshot
+
+__all__ = ["legacy_input_snapshot", "legacy_selection_selects"]
+
+# The one legacy filename whose value was stored as lenient base64 text.
+_LEGACY_BASE64_KEY: str = "fort.9"
+
+
+# region FUNC_legacy_selection_selects
+# PURPOSE: Answer whether one engine declaration claims one flat legacy key, so claiming, the ambiguity check, and the migration cannot disagree.
+# REQUIRES: declaration is an engine input selection; key is any raw payload key.
+# INVARIANTS: A literal declaration claims only the key of that exact name; a glob claims keys as file paths with `*` never crossing `/`, and a trailing `**` component claims every key below its prefix; an unsafe key claims nothing; an unsafe declaration raises UnsafeTaskPathError.
+def legacy_selection_selects(declaration: str, key: str) -> bool:
+    """Return True when the declaration claims the flat payload key."""
+    selection = validate_selection(declaration)
+    try:
+        path = validate_task_path(key)
+    except UnsafeTaskPathError:
+        return False
+    if not is_glob_pattern(selection):
+        return path == selection
+    if selection == "**" or selection.endswith("/**"):
+        return path.startswith(selection[:-2])
+    return selection_matches(selection, path, TaskInputKind.FILE)
+
+
+# endregion FUNC_legacy_selection_selects
+
+
+# region FUNC__claim_legacy_inputs
+# PURPOSE: Move the values each declaration claims out of the payload into one ``key -> value`` map, requiring one value per declaration.
+# INVARIANTS: Typed metadata keys are never claimable; overlapping declarations claim a key once; the first unsatisfied declaration raises MissingInputFileError and the first non-str value raises InvalidTaskSnapshotError.
+def _claim_legacy_inputs(
+    declarations: Sequence[str], engine_name: str, payload: Mapping[str, object]
+) -> dict[str, str]:
+    """Return ``{key: value}`` claimed by the declarations."""
+    claimable = {
+        key: value for key, value in payload.items() if key not in TYPED_METADATA_KEYS
+    }
+    claimed: dict[str, str] = {}
+    for declaration in declarations:
+        selected = [
+            key
+            for key in sorted(claimable)
+            if legacy_selection_selects(declaration, key)
+        ]
+        if not selected:
+            raise MissingInputFileError(engine_name, declaration)
+        for key in selected:
+            value = claimable[key]
+            if not isinstance(value, str):
+                message = (
+                    "legacy input value must be a str, got "
+                    f"{type(value).__name__}; str(object) coercion is not a "
+                    "file encoding contract"
+                )
+                raise InvalidTaskSnapshotError(key, message)
+            claimed[key] = value
+    return claimed
+
+
+# endregion FUNC__claim_legacy_inputs
+
+
+# region FUNC__legacy_input_bytes
+# PURPOSE: Encode one claimed value with its recorded deployment meaning, so a migrated row and a submitted row carry the same bytes.
+# INVARIANTS: Only the exact `fort.9` name decodes lenient base64; every other value is UTF-8 text and never guessed; both failures name the key without echoing the value.
+def _legacy_input_bytes(path: str, value: str) -> bytes:
+    """Return the file bytes a claimed legacy string encodes."""
+    if path != _LEGACY_BASE64_KEY:
+        try:
+            return value.encode("utf-8")
+        except UnicodeEncodeError as err:
+            message = "legacy input value cannot be encoded as UTF-8"
+            raise InvalidTaskSnapshotError(path, message) from err
+    compact = value.strip().replace("\n", "").replace(" ", "")
+    compact += "=" * (-len(compact) % 4)
+    try:
+        return base64.b64decode(compact)
+    except (binascii.Error, ValueError) as err:
+        message = f"legacy {_LEGACY_BASE64_KEY} value is not valid base64"
+        raise InvalidTaskSnapshotError(path, message) from err
+
+
+# endregion FUNC__legacy_input_bytes
+
+
+# region FUNC_legacy_input_snapshot
+# PURPOSE: Convert one flat legacy payload into the snapshot the task owns plus the metadata that is not an input, identically at submission and during the upgrade.
+# REQUIRES: declarations are the engine's input declarations; payload is the flat name-to-value metadata; the caller keeps the values stable.
+# ENSURES: The snapshot holds one entry per claimed key, sorted, with parents materialized; the returned mapping is the caller's payload without the claimed keys, so a caller's own non-input keys survive untouched.
+def legacy_input_snapshot(
+    engine_name: str, declarations: Sequence[str], payload: Mapping[str, object]
+) -> tuple[TaskInputSnapshot, dict[str, object]]:
+    """Return the input snapshot and the unrelated metadata of one legacy payload."""
+    claimed = _claim_legacy_inputs(declarations, engine_name, payload)
+    snapshot = normalize_input_snapshot(
+        [
+            TaskInputFile(path=key, content=_legacy_input_bytes(key, value))
+            for key, value in sorted(claimed.items())
+        ]
+    )
+    return snapshot, {
+        key: value for key, value in payload.items() if key not in claimed
+    }
+
+
+# endregion FUNC_legacy_input_snapshot
