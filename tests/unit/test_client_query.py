@@ -336,6 +336,22 @@ class TestQueryInputProjection:
         assert len(encoded) % 4 == 0
         assert "\n" not in encoded
 
+    async def test_fort9_keeps_legacy_metadata_base64_value(self) -> None:
+        """`fort.9` has its own recorded meaning: always base64, never plain text."""
+        payload = b"ABC"
+        repo = FakeTaskRepository(
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputFile(path="fort.9", content=payload),)},
+        )
+        uow = FakeUnitOfWork(repo)
+        client = _build_client(uow)
+
+        result = await client.queue_get_tasks_async(jobs=[1])
+
+        assert result[0]["metadata"]["fort.9"] == base64.b64encode(payload).decode(
+            "ascii"
+        )
+
     async def test_file_entries_keep_empty_legacy_metadata_value(self) -> None:
         repo = FakeTaskRepository(
             tasks=[_make_task()],

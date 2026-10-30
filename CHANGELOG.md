@@ -49,6 +49,11 @@
 
 ### Fix
 
+- **query**: the legacy `metadata` view of an input keeps its recorded meaning
+  for every name: UTF-8 text as before, binary as base64, and the exact
+  `fort.9` name as base64 in both directions. A value a consumer decodes from
+  `metadata["fort.9"]` is now the bytes the submission accepted, instead of
+  plain text that decoded to nothing or to the wrong bytes.
 - **retrieval**: a selection that matches nothing, or a selected symbolic link,
   is a permanent error naming the failing selection while the remaining
   selections are still attempted; a destination symbolic link or a

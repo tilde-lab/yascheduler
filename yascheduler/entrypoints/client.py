@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from yascheduler.application import query_tasks
+from yascheduler.application import legacy_input_value, query_tasks
 from yascheduler.domain import (
     AnyTask,
     Node,
@@ -90,23 +90,9 @@ def _input_entry_to_public(entry: TaskInputEntry) -> dict[str, Any]:
 # endregion FUNC__input_entry_to_public
 
 
-# region FUNC__legacy_input_metadata_value
-# PURPOSE: Reproduce the legacy CLI metadata encoding of one snapshot file — UTF-8 text as a plain string, anything else as canonical padded base64 — so existing metadata consumers keep reading files from queries unchanged after the storage move (input_entries stays the canonical projection).
-# INVARIANTS: Pure function of the entry's bytes; no newline insertion (single-line base64); directories have no legacy representation and are skipped by the caller.
-def _legacy_input_metadata_value(content: bytes) -> str:
-    """Return the legacy metadata representation of one file's bytes."""
-    try:
-        return content.decode("utf-8")
-    except UnicodeDecodeError:
-        return base64.b64encode(content).decode("ascii")
-
-
-# endregion FUNC__legacy_input_metadata_value
-
-
 # region FUNC__task_to_dict
 # PURPOSE: Project a Task plus its optional allocated Node and its input snapshot into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId; inputs project top-level as `input_entries` while metadata keeps legacy filename/value file keys for consumer compatibility.
-# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; the snapshot comes from the query's explicit batched read, never from the task record; entries ordered by task-relative path; file entries stay visible in metadata under their legacy encoding (old CLI: UTF-8 text, else base64), derived from the immutable snapshot — never a second stored copy; pre-migration `extra` copies of input keys (the normalizer and the forward migration strip them) keep precedence over derived values while they exist; directories never appear in metadata; typed fields are never overwritten by input paths.
+# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; the snapshot comes from the query's explicit batched read, never from the task record; entries ordered by task-relative path; file entries stay visible in metadata under their recorded legacy encoding (UTF-8 text, except `fort.9`, which stays base64 as submitted), derived from the immutable snapshot — never a second stored copy; pre-migration `extra` copies of input keys (the normalizer and the forward migration strip them) keep precedence over derived values while they exist; directories never appear in metadata; typed fields are never overwritten by input paths.
 def _task_to_dict(
     t: AnyTask,
     nodes_by_id: dict[NodeId, Node],
@@ -141,7 +127,7 @@ def _task_to_dict(
             continue
         if entry.path in metadata:
             continue
-        metadata[entry.path] = _legacy_input_metadata_value(entry.content)
+        metadata[entry.path] = legacy_input_value(entry.path, entry.content)
     # endregion BLOCK_derive_legacy_input_metadata
     return {
         "task_id": t.task_id.value,

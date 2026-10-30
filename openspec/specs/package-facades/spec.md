@@ -100,15 +100,18 @@ and carry no content field.
 The `metadata` projection SHALL contain non-null typed fields, unrelated
 extra payload, and a derived legacy view of the task's input files: one
 filename/value key per file entry under the legacy CLI encoding, derived from
-the immutable snapshot. Directory entries SHALL NOT appear in metadata;
-exact input bytes SHALL be recovered from `input_entries`. Typed fields
-SHALL NOT be overwritten by input paths, and stored legacy extra copies keep
-precedence over derived values while they exist.
+the immutable snapshot. The legacy encoding SHALL be UTF-8 text, except the
+exact `fort.9` name, which SHALL always be canonical base64 — the same
+meaning its submission accepts, so a value taken from `metadata` and decoded
+as base64 yields the stored bytes. Directory entries SHALL NOT appear in
+metadata; exact input bytes SHALL be recovered from `input_entries`. Typed
+fields SHALL NOT be overwritten by input paths, and stored legacy extra
+copies keep precedence over derived values while they exist.
 
 #### Scenario: query keeps legacy metadata keys and adds typed inputs
 
 - **WHEN** a consumer queries an existing task that has input files
-- **THEN** the mapping's `input_entries` carry the input paths and exact bytes, its `metadata` still contains one filename/value key per input file under the legacy encoding (text as a string, binary as base64), and unrelated metadata is preserved unchanged
+- **THEN** the mapping's `input_entries` carry the input paths and exact bytes, its `metadata` still contains one filename/value key per input file under the legacy encoding (text as a string, binary as base64, `fort.9` always base64), and unrelated metadata is preserved unchanged
 
 ### Requirement: Public API stability
 

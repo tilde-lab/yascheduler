@@ -19,6 +19,10 @@
   snapshot entry by entry. Ownership, storage, and the upload contract in this
   ADR stand; see
   [ADR-0021](ADR-0021-input-bytes-read-apart-from-task.md).
+- **Amended:** 2026-10-30 — §5 states the query payload explicitly: typed
+  `input_entries` are canonical and the existing metadata filename/value keys
+  stay, derived from the snapshot, with `fort.9` keeping base64 in both
+  directions. Nothing consumers read today is removed by this change.
 - **Supersedes:** [ADR-0013](ADR-0013-task-metadata-typed-columns-not-jsonb.md),
   only its placement of task input files in `extra`
 - **Superseded by:**
@@ -148,8 +152,13 @@ retaining cloud nodes.
 Convert existing stored inputs through a forward migration, using the
 existing engine input declarations to identify file payloads and leaving
 unrelated metadata intact. Legacy submitters remain supported through
-boundary normalization; public query documentation must reflect typed input
-entries rather than promise legacy file-value shapes.
+boundary normalization. Public query documentation presents typed
+`input_entries` as the canonical input projection and states that the
+pre-existing metadata filename/value keys are kept, derived from the
+snapshot, so consumers reading them today keep working unchanged. The one
+legacy name with a recorded encoding of its own, `fort.9`, keeps its base64
+meaning in both directions: what a consumer decodes is what the submitter
+encoded.
 
 Perform the upgrade with submitters and the daemon stopped. Old and new
 daemons must not concurrently use the database during the transition;
@@ -206,11 +215,13 @@ process or signals a misclassification that retention would wrongly punish.
 - **Positive:** Input snapshots remain independent of the source filesystem.
   Partial output retrieval retains recoverable data while transient errors
   remain, and cleanup failures are logged rather than silently ignored.
-- **Negative / trade-offs:** Adoption requires a data migration, coordinated
-  downtime, and documented query-payload changes. Input snapshots still
-  consume database capacity; normalization does not provide external blob
-  storage. Legacy encodings that were never recorded cannot be inferred
-  reliably by migration.
+- **Negative / trade-offs:** Adoption requires a data migration and
+  coordinated downtime. Input snapshots still consume database capacity;
+  normalization does not provide external blob storage. Legacy encodings
+  that were never recorded cannot be inferred reliably by migration. Query
+  responses carry two representations of the same inputs: the canonical
+  typed `input_entries` and the metadata filename/value keys derived from
+  them on every query, which the legacy view is deliberately kept for.
 - **Accepted risks:** Required patterns make absent optional-looking outputs
   an error. Symbolic links cannot be used to reference shared datasets.
   Persistent transient failures can defer completion indefinitely; this ADR

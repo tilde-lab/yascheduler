@@ -49,7 +49,11 @@ if TYPE_CHECKING:
 
     from yascheduler.domain.task_inputs import TaskInputSnapshot
 
-__all__ = ["legacy_input_snapshot", "legacy_selection_selects"]
+__all__ = [
+    "legacy_input_snapshot",
+    "legacy_input_value",
+    "legacy_selection_selects",
+]
 
 # The one legacy filename whose value was stored as lenient base64 text.
 _LEGACY_BASE64_KEY: str = "fort.9"
@@ -132,6 +136,22 @@ def _legacy_input_bytes(path: str, value: str) -> bytes:
 
 
 # endregion FUNC__legacy_input_bytes
+
+
+# region FUNC_legacy_input_value
+# PURPOSE: Project one stored file back to the legacy metadata string its payload would have carried, so a query keeps answering in the shape the submission accepted instead of a second reading of the same bytes.
+# INVARIANTS: The exact `fort.9` name always answers canonical padded base64, matching what its submission decodes; every other name answers UTF-8 text and falls back to canonical base64 only when the bytes are not valid UTF-8.
+def legacy_input_value(path: str, content: bytes) -> str:
+    """Return the legacy metadata string of one stored input file."""
+    if path == _LEGACY_BASE64_KEY:
+        return base64.b64encode(content).decode("ascii")
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return base64.b64encode(content).decode("ascii")
+
+
+# endregion FUNC_legacy_input_value
 
 
 # region FUNC_legacy_input_snapshot

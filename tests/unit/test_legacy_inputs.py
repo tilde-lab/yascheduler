@@ -1,7 +1,7 @@
 """One flat legacy payload conversion, shared by submission and migration 014."""
 # region MODULE_CONTRACT
 # PURPOSE: Pin the single rule for reading a stored legacy metadata payload, so the submission boundary and the forward migration cannot claim different keys or encode different bytes.
-# SCOPE: Literal and glob claims over a flat payload, the recorded UTF-8/`fort.9` value meanings, required declarations, unsafe keys and declarations, and non-mutating failure behavior.
+# SCOPE: Literal and glob claims over a flat payload, the recorded UTF-8/`fort.9` value meanings, the projection back to that value, required declarations, unsafe keys and declarations, and non-mutating failure behavior.
 # KEYWORDS: legacy inputs, flat payload, claim, snapshot, fort.9, base64
 # endregion MODULE_CONTRACT
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from yascheduler.application import legacy_input_snapshot
+from yascheduler.application import legacy_input_snapshot, legacy_input_value
 from yascheduler.domain import (
     InvalidTaskSnapshotError,
     MissingInputFileError,
@@ -149,6 +149,27 @@ def test_fort9_decoder_keeps_historical_lenient_base64() -> None:
     snapshot, _ = legacy_input_snapshot("abacus", ("fort.9",), {"fort.9": "QUJD$"})
 
     assert snapshot == (TaskInputFile(path="fort.9", content=b"ABC"),)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "expected"),
+    [
+        ("fort.9", "QUJD", "QUJD"),
+        ("fort.9", "AAEC\n/w", "AAEC/w=="),
+        ("INPUT", "plain text", "plain text"),
+        ("INPUT", "ABC", "ABC"),
+        ("looks-like-base64.txt", "SGVsbG8=", "SGVsbG8="),
+    ],
+)
+def test_projected_value_returns_what_submission_accepted(
+    path: str, value: str, expected: str
+) -> None:
+    """One meaning per name: the query projection inverts the input encoding."""
+    snapshot, _ = legacy_input_snapshot("abacus", (path,), {path: value})
+    (entry,) = snapshot
+    assert isinstance(entry, TaskInputFile)
+
+    assert legacy_input_value(path, entry.content) == expected
 
 
 def test_malformed_fort9_names_the_key_and_not_the_value() -> None:
