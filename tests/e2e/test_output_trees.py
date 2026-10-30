@@ -491,8 +491,6 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
@@ -508,12 +506,7 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
         call_count += 1
         remote_dirs.append(remote_dir)
         if call_count == 1:
-            (
-                local_folder,
-                remote_folder,
-                _transient,
-                permanent,
-            ) = await real_download(
+            _transient, permanent = await real_download(
                 session=session,
                 remote_dir=remote_dir,
                 local_dir=local_dir,
@@ -527,8 +520,6 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
             # Mixed pass: the real unresolved selection is permanent, and the
             # injected transient failure keeps the task RUNNING.
             return (
-                local_folder,
-                remote_folder,
                 [("OUT.aiida/nested/result.dat", SFTPFailure("transient blip"))],
                 permanent,
             )

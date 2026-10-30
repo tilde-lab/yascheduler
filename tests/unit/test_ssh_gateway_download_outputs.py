@@ -210,14 +210,10 @@ class TestDownloadTrees:
         session = _make_session_with_sftp(sftp)
 
         (
-            local_folder,
-            remote_folder,
             transient_errors,
             permanent_errors,
         ) = await _download(session, tmp_path, ["f1.out", "f2.out"], task_id=TaskId(42))
 
-        assert local_folder == str(tmp_path)
-        assert remote_folder == REMOTE_DIR
         assert transient_errors == []
         assert permanent_errors == []
         assert get_calls == [
@@ -242,9 +238,7 @@ class TestDownloadTrees:
         sftp = _make_sftp(tree, get_calls=get_calls)
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["OUT"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["OUT"])
 
         assert transient_errors == []
         assert permanent_errors == []
@@ -266,9 +260,7 @@ class TestDownloadTrees:
         sftp = _make_sftp(tree, get_calls=get_calls, payload=b"nested-result")
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["OUT"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["OUT"])
 
         expected = tmp_path / "OUT" / "nested" / "result.dat"
         assert transient_errors == []
@@ -288,7 +280,7 @@ class TestDownloadTrees:
         sftp = _make_sftp(tree, get_calls=get_calls, payload=b"body")
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
+        transient_errors, permanent_errors = await _download(
             session, tmp_path, ["OUTPUT"]
         )
 
@@ -314,9 +306,7 @@ class TestDownloadTrees:
         sftp = _make_sftp(tree, payload=b"log")
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["OUT"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["OUT"])
 
         assert transient_errors == []
         assert permanent_errors == []
@@ -336,7 +326,7 @@ class TestDownloadTrees:
         assert (tmp_path / "result.dat").read_bytes() == b"first"
 
         sftp.get = _recording_get(get_calls, payload=b"second")
-        _, _, transient_errors, permanent_errors = await _download(
+        transient_errors, permanent_errors = await _download(
             session, tmp_path, ["result.dat"]
         )
 
@@ -372,9 +362,7 @@ class TestLocalDestinationSafety:
         sftp = _make_sftp(tree, get_calls=get_calls, payload=b"fresh")
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["OUT"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["OUT"])
 
         assert transient_errors == []
         assert [path for path, _ in permanent_errors] == ["OUT/run.log"]
@@ -400,9 +388,7 @@ class TestLocalDestinationSafety:
         sftp = _make_sftp(tree, get_calls=get_calls)
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["OUT"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["OUT"])
 
         assert transient_errors == []
         assert [path for path, _ in permanent_errors] == ["OUT/run.log"]
@@ -425,9 +411,7 @@ class TestLocalDestinationSafety:
         sftp = _make_sftp(tree, get_calls=get_calls)
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["OUT"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["OUT"])
 
         assert transient_errors == []
         assert [path for path, _ in permanent_errors] == ["OUT"]
@@ -452,7 +436,7 @@ class TestDownloadFailureClassification:
         sftp = _make_sftp(tree, get_calls=get_calls, payload=b"good")
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
+        transient_errors, permanent_errors = await _download(
             session, tmp_path, ["GOOD", "missing/*.orb"]
         )
 
@@ -483,7 +467,7 @@ class TestDownloadFailureClassification:
         )
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
+        transient_errors, permanent_errors = await _download(
             session, tmp_path, ["BAD/x", "GOOD"]
         )
 
@@ -510,14 +494,10 @@ class TestDownloadFailureClassification:
         session._conn.start_sftp_client = broken_sftp  # type: ignore[method-assign,misc]
 
         (
-            local_folder,
-            remote_folder,
             transient_errors,
             permanent_errors,
         ) = await _download(session, tmp_path, ["f1.out", "f2.out"], task_id=TaskId(42))
 
-        assert local_folder == str(tmp_path)
-        assert remote_folder == REMOTE_DIR
         assert permanent_errors == []
         assert len(transient_errors) == 1
         path, err = transient_errors[0]
@@ -562,7 +542,7 @@ class TestDownloadFailureClassification:
 
         session = _make_session_with_factory(fresh_sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
+        transient_errors, permanent_errors = await _download(
             session, tmp_path, ["f1", "f2", "f3"], task_id=TaskId(7)
         )
 
@@ -604,7 +584,7 @@ class TestDownloadFailureClassification:
 
         monkeypatch.setattr(download_module, "_prepare_local_entry", failing_prepare)
 
-        _, _, transient_errors, permanent_errors = await _download(
+        transient_errors, permanent_errors = await _download(
             session, tmp_path, ["bad", "good"]
         )
 
@@ -622,9 +602,7 @@ class TestDownloadFailureClassification:
         sftp = _make_sftp(tree)
         session = _make_session_with_sftp(sftp)
 
-        _, _, transient_errors, permanent_errors = await _download(
-            session, tmp_path, ["f1"]
-        )
+        transient_errors, permanent_errors = await _download(session, tmp_path, ["f1"])
 
         assert transient_errors == []
         assert permanent_errors == []
@@ -663,7 +641,7 @@ class TestStructuredRecords:
         session = _make_session_with_sftp(sftp)
 
         with caplog.at_level(logging.DEBUG, logger=DOWNLOAD_LOGGER):
-            _, _, transient_errors, permanent_errors = await _download(
+            transient_errors, permanent_errors = await _download(
                 session, tmp_path, ["OUT"], task_id=TaskId(42)
             )
 
@@ -715,7 +693,7 @@ class TestStructuredRecords:
         session = _make_session_with_sftp(sftp)
 
         with caplog.at_level(logging.DEBUG, logger=DOWNLOAD_LOGGER):
-            _, _, transient_errors, permanent_errors = await _download(
+            transient_errors, permanent_errors = await _download(
                 session, tmp_path, ["secret.bin"], task_id=TaskId(42)
             )
 

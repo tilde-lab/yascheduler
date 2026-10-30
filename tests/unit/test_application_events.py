@@ -245,7 +245,7 @@ class TestConsumeTaskEvents:
     @pytest.fixture
     def mock_output_downloader(self) -> MagicMock:
         output_downloader = MagicMock()
-        output_downloader.download_outputs = AsyncMock(return_value=("", "", [], []))
+        output_downloader.download_outputs = AsyncMock(return_value=([], []))
         output_downloader.cleanup_remote = AsyncMock(return_value=None)
         return output_downloader
 
@@ -311,8 +311,6 @@ class TestConsumeTaskEvents:
     ) -> None:
         mock_output_downloader.download_outputs = AsyncMock(
             return_value=(
-                "",
-                "",
                 [],
                 [("/remote/file", OSError("Connection refused"))],
             ),

@@ -173,8 +173,8 @@ class OutputDownloader:
     that path and nothing is written through it. Downloads never remove the
     remote tree — `cleanup_remote` is the only deletion path and must be
     called only after the task outcome is finalised. Stateless: takes (log)
-    at construction, (session, ...) per call. Returns a 4-tuple
-    (local_folder, remote_folder, transient_errors, permanent_errors).
+    at construction, (session, ...) per call. Returns (transient_errors,
+    permanent_errors).
     """
 
     # region METHOD_download_outputs
@@ -188,15 +188,11 @@ class OutputDownloader:
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
         """Resolve output selections and download their tree into ``local_dir``."""
         # region BLOCK_download_outputs
-        local_folder = str(local_dir)
-        remote_folder = remote_dir
         transient_errors: list[tuple[str | None, Exception]] = []
         permanent_errors: list[tuple[str | None, Exception]] = []
         remote_root = session.path(remote_dir)
@@ -225,7 +221,7 @@ class OutputDownloader:
                 err,
             )
             transient_errors.append((remote_dir, err))
-            return local_folder, remote_folder, transient_errors, permanent_errors
+            return transient_errors, permanent_errors
 
         for path, err in resolution_errors:
             _record_retrieval_error(path, err, transient_errors, permanent_errors)
@@ -301,7 +297,7 @@ class OutputDownloader:
                 "permanent": len(permanent_errors),
             },
         )
-        return local_folder, remote_folder, transient_errors, permanent_errors
+        return transient_errors, permanent_errors
         # endregion BLOCK_download_outputs
 
     # endregion METHOD_download_outputs

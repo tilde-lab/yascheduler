@@ -220,12 +220,7 @@ async def consume_task(
     # endregion BLOCK_resolve_output_selections
 
     # region BLOCK_download
-    (
-        _local_folder,
-        _remote_folder,
-        transient_errors,
-        permanent_errors,
-    ) = await output_downloader.download_outputs(
+    transient_errors, permanent_errors = await output_downloader.download_outputs(
         session=session,
         remote_dir=task_remote_folder,
         local_dir=store_folder,

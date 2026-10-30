@@ -329,8 +329,6 @@ async def test_retrieves_nested_tree_with_directory_and_overlapping_glob(
 
         caplog.set_level(logging.DEBUG)
         (
-            local_folder,
-            remote_folder,
             transient_errors,
             permanent_errors,
         ) = await OutputDownloader().download_outputs(
@@ -345,8 +343,6 @@ async def test_retrieves_nested_tree_with_directory_and_overlapping_glob(
             task_id=TaskId(1),
         )
 
-        assert local_folder == str(result_root)
-        assert remote_folder == str(remote_root)
         assert transient_errors == []
         assert permanent_errors == []
 
@@ -407,8 +403,6 @@ async def test_remote_symlinks_and_unsupported_entries_are_permanent(
         await _make_remote_fifo(session, remote_root / "tree" / "pipe.fifo")
 
         (
-            _local_folder,
-            _remote_folder,
             transient_errors,
             permanent_errors,
         ) = await OutputDownloader().download_outputs(
@@ -476,8 +470,6 @@ async def test_unmatched_glob_is_permanent_while_explicit_file_lands(
         )
 
         (
-            _local_folder,
-            _remote_folder,
             transient_errors,
             permanent_errors,
         ) = await OutputDownloader().download_outputs(
@@ -536,8 +528,6 @@ async def test_unsafe_local_destinations_are_permanent_and_untouched(
         (result_root / "blocked-file").mkdir()
 
         (
-            _local_folder,
-            _remote_folder,
             transient_errors,
             permanent_errors,
         ) = await OutputDownloader().download_outputs(
@@ -610,15 +600,18 @@ async def test_second_pass_replaces_selected_files_and_keeps_unrelated_entry(
             },
         )
 
-        first = await OutputDownloader().download_outputs(
+        (
+            first_transient_errors,
+            first_permanent_errors,
+        ) = await OutputDownloader().download_outputs(
             session,
             remote_dir=str(remote_root),
             local_dir=result_root,
             selections=["OUT"],
             task_id=TaskId(1),
         )
-        assert first[2] == []
-        assert first[3] == []
+        assert first_transient_errors == []
+        assert first_permanent_errors == []
         assert (result_root / "OUT" / "result.txt").read_bytes() == (FRESH_OUTPUT_BYTES)
 
         # Simulate a stale selected file and an unrelated local result that no
@@ -627,15 +620,18 @@ async def test_second_pass_replaces_selected_files_and_keeps_unrelated_entry(
         unrelated = result_root / "unrelated.log"
         unrelated.write_bytes(UNRELATED_LOCAL_BYTES)
 
-        second = await OutputDownloader().download_outputs(
+        (
+            second_transient_errors,
+            second_permanent_errors,
+        ) = await OutputDownloader().download_outputs(
             session,
             remote_dir=str(remote_root),
             local_dir=result_root,
             selections=["OUT"],
             task_id=TaskId(1),
         )
-        assert second[2] == []
-        assert second[3] == []
+        assert second_transient_errors == []
+        assert second_permanent_errors == []
 
         assert _local_tree(result_root) == {
             "OUT": "directory",
@@ -709,8 +705,6 @@ async def test_download_outputs_keeps_the_remote_tree(
             assert await _remote_tree(sftp, remote_root) == expected_remote_layout
 
         (
-            _local_folder,
-            _remote_folder,
             transient_errors,
             permanent_errors,
         ) = await OutputDownloader().download_outputs(

@@ -218,8 +218,6 @@ async def test_consume_retry_then_success(
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
@@ -230,8 +228,6 @@ async def test_consume_retry_then_success(
             if call_count == 1:
                 first_pass_seen.set()
                 return (
-                    "",
-                    "",
                     [("1.input.out", SFTPFailure("transient blip"))],
                     [],
                 )
@@ -326,8 +322,6 @@ async def test_consume_permanent_marks_done_with_error(
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
@@ -404,16 +398,12 @@ async def test_consume_transient_preserves_remote_dir_regression(
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
         remote_dirs.append(remote_dir)
         first_pass_seen.set()
         return (
-            "",
-            "",
             [("1.input.out", SFTPFailure("transient"))],
             [],
         )
@@ -480,8 +470,6 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
@@ -495,8 +483,6 @@ async def test_consume_mixed_errors_defer_then_finalise_on_last_pass_errors(
                 stale_selections.append(stale_selection)
                 first_pass_seen.set()
                 return (
-                    "",
-                    "",
                     [("1.input.out", SFTPFailure("transient blip"))],
                     [
                         (missing_selection, FileNotFoundError("No such file")),
@@ -597,16 +583,12 @@ async def test_consume_restart_after_defer_redownloads_and_succeeds(
         selections: Sequence[str],
         task_id: TaskId | None = None,
     ) -> tuple[
-        str,
-        str,
         list[tuple[str | None, Exception]],
         list[tuple[str | None, Exception]],
     ]:
         first_remote_dirs.append(remote_dir)
         first_pass_seen.set()
         return (
-            "",
-            "",
             [("1.input.out", SFTPFailure("daemon restart blip"))],
             [],
         )
@@ -641,8 +623,6 @@ async def test_consume_restart_after_defer_redownloads_and_succeeds(
             selections: Sequence[str],
             task_id: TaskId | None = None,
         ) -> tuple[
-            str,
-            str,
             list[tuple[str | None, Exception]],
             list[tuple[str | None, Exception]],
         ]:

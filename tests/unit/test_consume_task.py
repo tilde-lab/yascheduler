@@ -43,7 +43,7 @@ CONSUME_LOGGER = "yascheduler.application.consume_task"
 @pytest.fixture
 def mock_output_downloader() -> MagicMock:
     downloader = MagicMock()
-    downloader.download_outputs = AsyncMock(return_value=("", "", [], []))
+    downloader.download_outputs = AsyncMock(return_value=([], []))
     downloader.cleanup_remote = AsyncMock(return_value=None)
     return downloader
 
@@ -378,7 +378,7 @@ class TestConsumeTask:
             (recorded_selection, FileNotFoundError("selection matched no entries"))
         ]
         mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", [], permanent)
+            return_value=([], permanent)
         )
         uow = _make_uow(task)
         tracker = _make_tracker()
@@ -440,7 +440,7 @@ class TestConsumeTask:
         """A transient directory-path failure leaves the task RUNNING without side effects."""
         transient = [("OUT/empty", SFTPFailure("directory creation failed"))]
         mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", transient, [])
+            return_value=(transient, [])
         )
         uow = _make_uow(running_task)
         tracker = _make_tracker()
@@ -494,7 +494,7 @@ class TestConsumeTask:
             ("OUT/run.log", UnsafeTaskPathError("OUT/run.log", "symbolic link")),
         ]
         mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", transient, permanent)
+            return_value=(transient, permanent)
         )
         uow = _make_uow(running_task)
         tracker = _make_tracker()
@@ -536,7 +536,7 @@ class TestConsumeTask:
     ) -> None:
         """Permanent-only errors -> failed DONE task with the formatted download reason."""
         mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", [], [(OUTPUT_PATH, OSError("disk full"))])
+            return_value=([], [(OUTPUT_PATH, OSError("disk full"))])
         )
         uow = _make_uow(running_task)
         tracker = _make_tracker()
@@ -593,7 +593,7 @@ class TestConsumeTask:
         """Transient-only errors -> False with no save, commit, discard, or cleanup."""
         transient = [(OUTPUT_PATH, SFTPFailure("connection lost"))]
         mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", transient, [])
+            return_value=(transient, [])
         )
         uow = _make_uow(running_task)
         tracker = _make_tracker()
@@ -636,7 +636,7 @@ class TestConsumeTask:
         transient = [(OUTPUT_PATH, SFTPFailure("connection lost"))]
         permanent = [(f"{REMOTE_FOLDER}/OTHER", OSError("permission denied"))]
         mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", transient, permanent)
+            return_value=(transient, permanent)
         )
         uow = _make_uow(running_task)
         tracker = _make_tracker()
