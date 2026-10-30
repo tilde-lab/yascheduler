@@ -11,7 +11,8 @@
   write code inside the contracted regions.
 - Public interface stability: CLI commands, public API, INI config format, DB
   schema. Schema changes MUST include migrations.
-- NEVER modify `pyproject.toml` version; release automation owns it.
+- Do not change `pyproject.toml` version outside a release commit; there,
+  `uv version X.Y.Z --no-sync` moves it together with `uv.lock`.
 - Target Python `>=3.9`.
 - To add new dependencies: FIRST declare them in an OpenSpec change proposal
   with rationale.
