@@ -455,26 +455,33 @@ def test_engine_empty_input_files() -> None:
         parse_engine_section(cfg["engine.test"], PurePath())
 
 
-def test_engine_repository_filter() -> None:
+_ENGINE_A = Engine(
+    name="a",
+    spawn="{task_path}",
+    check_cmd="echo ok",
+    check_pname=None,
+    input_files=("f",),
+    output_files=("o",),
+)
+_ENGINE_B = Engine(
+    name="b",
+    spawn="{task_path}",
+    check_cmd="echo ok",
+    check_pname=None,
+    input_files=("f",),
+    output_files=("o",),
+)
+
+
+@pytest.fixture
+def engine_repo() -> EngineRepository:
+    """Repository holding engines a and b; both are frozen, so sharing is safe."""
+    return EngineRepository(data={"a": _ENGINE_A, "b": _ENGINE_B})
+
+
+def test_engine_repository_filter(engine_repo: EngineRepository) -> None:
     """Filter returns new repo with matching engines only"""
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    e2 = Engine(
-        name="b",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1, "b": e2})
-    filtered = repo.filter(lambda e: e.name == "a")
+    filtered = engine_repo.filter(lambda e: e.name == "a")
     assert "a" in filtered
     assert "b" not in filtered
     assert isinstance(filtered, EngineRepository)
@@ -508,103 +515,36 @@ def test_engine_repository_filter_platforms() -> None:
 
 def test_engine_repository_immutable() -> None:
     """__setitem__ and __delitem__ raise TypeError"""
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1})
+    repo = EngineRepository(data={"a": _ENGINE_A})
     with pytest.raises(TypeError):
-        repo["b"] = e1  # type: ignore[index]  # intentional mutation of frozen dataclass
+        repo["b"] = _ENGINE_A  # type: ignore[index]  # intentional mutation of frozen dataclass
     with pytest.raises(TypeError):
         del repo["a"]  # type: ignore[attr-defined]  # intentional mutation of frozen dataclass
 
 
-def test_engine_repository_keys() -> None:
+def test_engine_repository_keys(engine_repo: EngineRepository) -> None:
     """keys() returns list[str] of engine names"""
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    e2 = Engine(
-        name="b",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1, "b": e2})
-    result = repo.keys()
+    result = engine_repo.keys()
     assert isinstance(result, list)
     assert set(result) == {"a", "b"}
 
 
-def test_engine_repository_items() -> None:
+def test_engine_repository_items(engine_repo: EngineRepository) -> None:
     """items() returns list of (name, engine) tuples"""
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    e2 = Engine(
-        name="b",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1, "b": e2})
-    result = repo.items()
+    result = engine_repo.items()
     assert isinstance(result, list)
-    assert dict(result) == {"a": e1, "b": e2}
+    assert dict(result) == {"a": _ENGINE_A, "b": _ENGINE_B}
 
 
-def test_engine_repository_iter() -> None:
+def test_engine_repository_iter(engine_repo: EngineRepository) -> None:
     """__iter__ yields engine names (str)"""
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    e2 = Engine(
-        name="b",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1, "b": e2})
-    names = list(repo)
+    names = list(engine_repo)
     assert set(names) == {"a", "b"}
 
 
 def test_engine_repository_len() -> None:
     """__len__ returns the number of engines"""
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1})
+    repo = EngineRepository(data={"a": _ENGINE_A})
     assert len(repo) == 1
     assert len(EngineRepository()) == 0
 
@@ -613,15 +553,7 @@ def test_engine_repository_is_mapping() -> None:
     """EngineRepository is registered as a Mapping virtual subclass"""
     from collections.abc import Mapping
 
-    e1 = Engine(
-        name="a",
-        spawn="{task_path}",
-        check_cmd="echo ok",
-        check_pname=None,
-        input_files=("f",),
-        output_files=("o",),
-    )
-    repo = EngineRepository(data={"a": e1})
+    repo = EngineRepository(data={"a": _ENGINE_A})
     assert isinstance(repo, Mapping)
 
 
