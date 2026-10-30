@@ -3,23 +3,21 @@
 # PURPOSE: Turn engine input selections plus a local submission root into the one immutable task-owned snapshot (exact bytes, explicit directories) so submission accepts work independent of the source filesystem.
 # SCOPE:
 # - capture_input_snapshot(root, selections): validate selections, scan only the branches they need, expand matched directories to complete subtrees, read file bytes, and return the normalized snapshot.
-# - Non-following directory scans, symlink/unsupported-type rejection, required-selection enforcement, and read-time source rechecks.
-# - NOT: task writes, submission-boundary legacy normalization, SQL storage, or SFTP deployment.
+# - Non-following directory scans, symlink and unsupported-type rejection, required-selection enforcement.
+# - NOT: task writes, submission-boundary legacy normalization, SQL storage, SFTP deployment, or defence against a source tree rewritten while capture runs.
 # INVARIANTS:
 # - Never follows or preserves symbolic links: a selected, matched, or in-subtree link fails with TaskInputCaptureError; unsupported entry types fail the same way when selected.
 # - Files are read as raw bytes with no decoding or newline normalization; file contents never enter logs or exceptions.
 # - Capture start/completion/failure records carry counts and selection/path context, never source bytes or arbitrary exception text.
-# - Traversal only joins validated components onto the root, and every traversed ancestor is rechecked as a real non-link directory before each scan and read, so enumeration cannot escape the task root.
+# - Traversal only joins validated components onto the root.
 # - Every selection is required: a missing explicit path or a glob with no matches fails the whole capture, naming the selection.
 # RATIONALE:
 # - Q: Why does traversal ask the domain instead of keeping its own component matcher?
 #   A: The domain pins the glob semantics; capture must agree exactly. Capture owns listing, classification, and error policy, and asks the domain the three questions a walk needs — does this entry match, can anything still match below this directory, does a component name this entry — so pruning stays exact and no part of the language lives here.
 # - Q: Why are unselected symlinks under a `**` branch skipped, but selected ones rejected?
 #   A: `**` consumes directory levels only; a link is not a directory, so it is not consumable and not selected — rejecting every unrelated link would invalidate otherwise valid selections. A link matched by a name pattern, or living inside a matched directory's subtree, is selected and therefore rejected explicitly.
-# - Q: Why lstat-then-O_NOFOLLOW-open-then-fstat identity checks?
-#   A: Capture is not a filesystem transaction; callers keep sources stable (documented contract). These checks abort capture on the changes that are detectable without one: disappearance, replacement, and type swaps.
-# - Q: Why recheck ancestor components before every scan and read?
-#   A: O_NOFOLLOW and DirEntry classification guard only the final component; a directory recorded as real can be swapped to a symbolic link before its subtree is scanned or its files are read, redirecting traversal outside the root. Rechecking each ancestor with lstat (whose final component is never followed) rejects that swap; the documented caller stability contract covers the residual check-to-use race.
+# - Q: Why is capture not defended against the source changing mid-read?
+#   A: Callers keep the source tree stable until capture returns, and a writer racing the capture is outside the model: whoever can rewrite the submission directory can submit their own task instead, so no check would move the trust boundary — it would only build the appearance of one. O_NOFOLLOW plus a regular-file check keep the open itself honest (a replaced entry fails cleanly instead of blocking), and nothing beyond that is claimed.
 # KEYWORDS: task inputs, capture, snapshot, local filesystem, submission root, glob, symbolic links
 # endregion MODULE_CONTRACT
 
@@ -49,20 +47,22 @@ from yascheduler.domain import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from yascheduler.shared import TypeAlias
-
 __all__ = ["capture_input_snapshot"]
 
 logger = logging.getLogger(__name__)
 
+# O_NONBLOCK keeps an open on a non-regular entry, a FIFO above all, from
+# blocking the capture forever; the regular-file check after the open rejects
+# it instead of waiting for a writer.
 _OPEN_FLAGS: int = (
-    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    os.O_RDONLY
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_BINARY", 0)
 )
 _READ_CHUNK_BYTES: int = 1 << 20
 # Diagnostic path for the implicit task root itself (it has no stored entry).
 _IMPLICIT_ROOT_PATH: str = "."
-# File identity: (st_dev, st_ino) captured at scan time and rechecked at read time.
-_Identity: TypeAlias = "tuple[int, int]"
 
 
 # region FUNC_capture_input_snapshot
@@ -84,9 +84,9 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
     types.
 
     Capture is not a filesystem transaction: callers must keep the sources
-    stable until submission returns. Detectable changes (disappearance,
-    replacement, type swaps, unreadable sources) abort capture; simultaneous
-    modification by another process is not observable and is not promised.
+    stable until capture returns. A missing or unreadable source fails the
+    capture with its path; a source rewritten by another process underneath
+    the capture is not detected and is not promised to be.
     """
     root = Path(root)
     logger.debug(
@@ -98,15 +98,12 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
         },
     )
     matches: dict[str, TaskInputKind] = {}
-    identities: dict[str, _Identity] = {}
     raw: str | None = None
     try:
         validated = [validate_selection(selection) for selection in selections]
         _require_root_directory(root)
         for raw, selection in zip(selections, validated):
-            if not _select_matches(
-                root, selection, (), matches=matches, identities=identities
-            ):
+            if not _select_matches(root, selection, (), matches=matches):
                 reason = (
                     "glob selection matched no entries"
                     if is_glob_pattern(selection)
@@ -116,8 +113,8 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
                 raise TaskInputCaptureError(raw, reason)  # noqa: TRY301
         # Expansion and reads operate on the merged tree, not the last selection.
         raw = None
-        _expand_matched_directories(root, matches, identities)
-        contents = _read_files(root, identities)
+        _expand_matched_directories(root, matches)
+        contents = _read_files(root, matches)
         entries = [
             (
                 TaskInputFile(path=path, content=contents[path])
@@ -174,7 +171,7 @@ def _require_root_directory(root: Path) -> None:
 
 # region FUNC__select_matches
 # PURPOSE: Apply one validated selection to the filesystem, recording the entries it selects and answering whether it selected anything, while scanning only the branches the selection can still cover.
-# REQUIRES: selection passed validate_selection; rel is the scanned directory's canonical components (empty tuple at the root); matches/identities accumulate across selections (overlaps deduplicate by path).
+# REQUIRES: selection passed validate_selection; rel is the scanned directory's canonical components (empty tuple at the root); matches accumulates across selections (overlaps deduplicate by path).
 # ENSURES: The scanned directory itself is recorded when the selection selects it, never at the implicit root; an entry is recorded exactly when the selection selects it; an untransferable entry the selection names, or one inside a selected directory, fails explicitly; a directory is descended into only while the selection can still match below it.
 def _select_matches(
     root: Path,
@@ -182,7 +179,6 @@ def _select_matches(
     rel: tuple[str, ...],
     *,
     matches: dict[str, TaskInputKind],
-    identities: dict[str, _Identity],
 ) -> bool:
     """Scan one directory for ``selection``; True when it selected anything."""
     directory = "/".join(rel)
@@ -190,11 +186,9 @@ def _select_matches(
     # A selection covering this directory selects it; the implicit root is
     # never a task entry.
     if directory and selection_matches(selection, directory, TaskInputKind.DIRECTORY):
-        _record_match(
-            rel, TaskInputKind.DIRECTORY, matches=matches, identities=identities
-        )
+        matches.setdefault(directory, TaskInputKind.DIRECTORY)
         matched = True
-    for name, kind, what, identity in _scan_directory(root, rel):
+    for name, kind, what in _scan_directory(root, rel):
         child = (*rel, name)
         path = "/".join(child)
         if kind is None:
@@ -208,20 +202,11 @@ def _select_matches(
                 )
             continue
         if selection_matches(selection, path, kind):
-            _record_match(
-                child,
-                kind,
-                identity=identity,
-                matches=matches,
-                identities=identities,
-            )
+            matches.setdefault(path, kind)
             matched = True
         if kind is TaskInputKind.DIRECTORY and selection_reaches(selection, path):
             matched = (
-                _select_matches(
-                    root, selection, child, matches=matches, identities=identities
-                )
-                or matched
+                _select_matches(root, selection, child, matches=matches) or matched
             )
     return matched
 
@@ -232,21 +217,13 @@ def _select_matches(
 # region FUNC__expand_matched_directories
 # PURPOSE: Expand every matched directory to its complete subtree — hidden entries and empty directories included — so selecting a directory transfers everything below it.
 # INVARIANTS: Any symlink or unsupported entry inside a matched subtree fails explicitly; an `expanded` guard keeps overlapping selections and nested matches single-visit.
-def _expand_matched_directories(
-    root: Path,
-    matches: dict[str, TaskInputKind],
-    identities: dict[str, _Identity],
-) -> None:
+def _expand_matched_directories(root: Path, matches: dict[str, TaskInputKind]) -> None:
     """Add every descendant of each matched directory to ``matches``."""
     expanded: set[str] = set()
     for path, kind in list(matches.items()):
         if kind is TaskInputKind.DIRECTORY and path not in expanded:
             _expand_directory(
-                root,
-                tuple(path.split("/")),
-                matches=matches,
-                identities=identities,
-                expanded=expanded,
+                root, tuple(path.split("/")), matches=matches, expanded=expanded
             )
 
 
@@ -255,68 +232,55 @@ def _expand_directory(
     rel: tuple[str, ...],
     *,
     matches: dict[str, TaskInputKind],
-    identities: dict[str, _Identity],
     expanded: set[str],
 ) -> None:
     """Recursively record the complete subtree of one matched directory."""
     expanded.add("/".join(rel))
-    for name, kind, what, identity in _scan_directory(root, rel):
+    for name, kind, what in _scan_directory(root, rel):
         child = (*rel, name)
-        child_path = "/".join(child)
         if kind is None:
             raise TaskInputCaptureError(
-                child_path,
+                "/".join(child),
                 f"path inside a selected directory is a {what}; "
                 "only ordinary files and directories are supported",
             )
-        if kind is TaskInputKind.FILE:
-            identities.setdefault(child_path, identity)
-            matches.setdefault(child_path, TaskInputKind.FILE)
-        else:
-            matches.setdefault(child_path, TaskInputKind.DIRECTORY)
-            _expand_directory(
-                root, child, matches=matches, identities=identities, expanded=expanded
-            )
+        matches.setdefault("/".join(child), kind)
+        if kind is TaskInputKind.DIRECTORY:
+            _expand_directory(root, child, matches=matches, expanded=expanded)
 
 
 # endregion FUNC__expand_matched_directories
 
 
 # region FUNC__read_files
-# PURPOSE: Read every captured file exactly once as raw bytes, rechecking each source against its scan-time identity so detectable mid-capture changes abort the capture.
-# INVARIANTS: lstat → O_NOFOLLOW open → fstat; identity (dev, ino) must match both the scan-time value and the read-time lstat; non-regular or swapped sources fail with the path; contents never appear in exceptions or logs.
-def _read_files(root: Path, identities: dict[str, _Identity]) -> dict[str, bytes]:
+# PURPOSE: Read every captured file exactly once as raw bytes.
+# INVARIANTS: One O_NOFOLLOW open per file, a regular-file check before reading; a missing, linked, non-regular, or unreadable source fails with its path; contents never appear in exceptions or logs.
+def _read_files(root: Path, matches: dict[str, TaskInputKind]) -> dict[str, bytes]:
     """Return ``{path: bytes}`` for every captured file."""
     return {
-        path: _read_file(root, tuple(path.split("/")), identity)
-        for path, identity in identities.items()
+        path: _read_file(root, tuple(path.split("/")))
+        for path, kind in matches.items()
+        if kind is TaskInputKind.FILE
     }
 
 
-def _read_file(root: Path, rel: tuple[str, ...], expected: _Identity) -> bytes:
-    """Read one captured file as bytes, rejecting detectable source changes."""
-    _recheck_traversed_ancestors(root, rel[:-1])
+def _read_file(root: Path, rel: tuple[str, ...]) -> bytes:
+    """Read one captured file as bytes without following a symbolic link."""
     target = root.joinpath(*rel)
     path = "/".join(rel)
     try:
-        before = os.lstat(target)
         fd = os.open(target, _OPEN_FLAGS)
     except OSError as err:
         if err.errno == errno.ENOENT:
-            reason = "source disappeared during capture"
+            reason = "source is missing"
         elif err.errno == errno.ELOOP:
-            reason = "source became a symbolic link during capture"
+            reason = "source is a symbolic link"
         else:
             reason = f"cannot open source: {err}"
         raise TaskInputCaptureError(path, reason) from err
     try:
-        after = os.fstat(fd)
-        if not stat.S_ISREG(after.st_mode):
-            raise TaskInputCaptureError(path, "source changed type during capture")
-        if (after.st_dev, after.st_ino) != expected:
-            raise TaskInputCaptureError(path, "source was replaced during capture")
-        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
-            raise TaskInputCaptureError(path, "source was replaced during capture")
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise TaskInputCaptureError(path, "source is not a regular file")
         return _read_all_bytes(fd, path)
     finally:
         os.close(fd)
@@ -338,47 +302,17 @@ def _read_all_bytes(fd: int, path: str) -> bytes:
 # endregion FUNC__read_files
 
 
-# region FUNC__recheck_traversed_ancestors
-# PURPOSE: Recheck every traversed ancestor as a real non-link directory before a scan or read, so a component swapped to a symbolic link after its own scan cannot redirect traversal outside the submission root.
-# INVARIANTS: Component-by-component lstat — each check's final component is unfollowed and every earlier component was just verified as a real directory, so no symbolic link is ever followed; failures raise TaskInputCaptureError naming the offending ancestor.
-def _recheck_traversed_ancestors(root: Path, rel: tuple[str, ...]) -> None:
-    """Reject traversal whose ancestor chain is no longer real directories."""
-    current = root
-    for index, name in enumerate(rel):
-        current = current / name
-        prefix = "/".join(rel[: index + 1])
-        try:
-            info = os.lstat(current)
-        except OSError as err:
-            raise TaskInputCaptureError(
-                prefix, f"cannot inspect ancestor directory: {err}"
-            ) from err
-        if stat.S_ISLNK(info.st_mode):
-            raise TaskInputCaptureError(
-                prefix, "ancestor directory became a symbolic link during capture"
-            )
-        if not stat.S_ISDIR(info.st_mode):
-            raise TaskInputCaptureError(
-                prefix, "ancestor is no longer a directory during capture"
-            )
-
-
-# endregion FUNC__recheck_traversed_ancestors
-
-
 # region FUNC__scan_directory
-# PURPOSE: Enumerate one real directory non-following and deterministically (sorted by name), classifying each entry for selection and expansion.
-# INVARIANTS: Classification uses DirEntry symlink/`follow_symlinks=False` checks, so links are never followed and hidden entries are yielded like any other; files carry their scan-time identity for the read-time recheck.
+# PURPOSE: Enumerate one directory non-following and deterministically (sorted by name), classifying each entry for selection and expansion.
+# INVARIANTS: Classification uses DirEntry symlink/`follow_symlinks=False` checks, so links are never followed and hidden entries are yielded like any other.
 def _scan_directory(
     root: Path, rel: tuple[str, ...]
-) -> Iterator[tuple[str, TaskInputKind | None, str, _Identity]]:
-    """Yield ``(name, kind, what, identity)`` for each entry of one directory.
+) -> Iterator[tuple[str, TaskInputKind | None, str]]:
+    """Yield ``(name, kind, what)`` for each entry of one directory.
 
     ``kind`` is None for entries that cannot be transferred; ``what`` names
-    what they are ("symbolic link" or "unsupported filesystem entry type").
-    File identity is ``(0, 0)`` for non-file entries.
+    what they are ("symbolic link" or "special filesystem entry").
     """
-    _recheck_traversed_ancestors(root, rel)
     directory = root.joinpath(*rel)
     try:
         with os.scandir(directory) as iterator:
@@ -389,16 +323,7 @@ def _scan_directory(
         ) from err
     for entry in dir_entries:
         kind, what = _classify_entry(entry)
-        identity: _Identity = (0, 0)
-        if kind is TaskInputKind.FILE:
-            try:
-                entry_stat = entry.stat(follow_symlinks=False)
-            except OSError as err:
-                raise TaskInputCaptureError(
-                    "/".join((*rel, entry.name)), f"cannot inspect source: {err}"
-                ) from err
-            identity = entry_stat.st_dev, entry_stat.st_ino
-        yield entry.name, kind, what, identity
+        yield entry.name, kind, what
 
 
 def _classify_entry(entry: os.DirEntry) -> tuple[TaskInputKind | None, str]:
@@ -413,24 +338,3 @@ def _classify_entry(entry: os.DirEntry) -> tuple[TaskInputKind | None, str]:
 
 
 # endregion FUNC__scan_directory
-
-
-# region FUNC__record_match
-# PURPOSE: Record one matched entry, keeping the first classification per path so overlapping selections transfer each path once.
-# INVARIANTS: Pure dict bookkeeping; a match always counts toward the selection's required-match outcome even when the path was already recorded.
-def _record_match(
-    rel: tuple[str, ...],
-    kind: TaskInputKind,
-    *,
-    identity: _Identity = (0, 0),
-    matches: dict[str, TaskInputKind],
-    identities: dict[str, _Identity],
-) -> None:
-    """Add one matched entry path to the capture accumulators."""
-    path = "/".join(rel)
-    if kind is TaskInputKind.FILE:
-        identities.setdefault(path, identity)
-    matches.setdefault(path, kind)
-
-
-# endregion FUNC__record_match

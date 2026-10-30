@@ -97,6 +97,17 @@
   domain state machine; local capture asks them instead of re-deriving the
   pattern while it scans, so no component matching lives outside the domain.
   Matching, error messages, and the accepted snapshot are unchanged.
+- **inputs**: local input capture no longer defends against the source tree
+  being rewritten while it is read. The scan-time file identities, the
+  read-time `lstat`/`open`/`fstat` comparison, and the per-ancestor rechecks
+  are gone: a writer racing a capture could submit its own task instead, so
+  the checks never moved the trust boundary, and they caught only part of the
+  concurrent writes they appeared to cover. Capture still opens each file
+  without following links and rejects a non-regular entry before reading, so a
+  missing, linked, or special source fails with its path, and a non-regular
+  entry can no longer block a capture indefinitely. A source replaced by a
+  different ordinary file between the listing and the read is now read
+  silently.
 
 ## v2.0.2 (2026-10-08)
 
