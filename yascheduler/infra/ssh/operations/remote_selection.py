@@ -93,7 +93,6 @@ async def resolve_output_selections(
             errors.append((raw, err))
             continue
         errors_before = len(errors)
-        failed = False
         try:
             matched = await _resolve_selection(
                 read_dir, remote_root, selection, entries, errors
@@ -103,9 +102,8 @@ async def resolve_output_selections(
             # the remaining selections are still resolved. Classification is
             # the downloader's transient/permanent decision.
             errors.append((raw, err))
-            failed = True
             matched = False
-        if not matched and not failed and len(errors) == errors_before:
+        if not matched and len(errors) == errors_before:
             errors.append((raw, FileNotFoundError(_UNMATCHED)))
     errors = _deduplicate_errors(errors)
     resolved = sorted(
