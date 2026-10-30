@@ -925,7 +925,7 @@ class TestFixC:
         assert result is True
         # Both sessions were attempted; the first failed but the loop continued.
         assert call_log == ["10.0.0.1", "10.0.0.2"]
-        # Fix C's except block must NOT disconnect (per design D3) — only the
+        # Fix C's except block must NOT disconnect — only the
         # monitor owns session lifecycle. Regression-guards a stray disconnect.
         assert repo.disconnect_calls == []
 

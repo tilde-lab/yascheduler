@@ -306,13 +306,12 @@ class TestConnectMachineProducerYieldsStaticNodes:
     """The connect-machine producer yields static (cloud=None) nodes; static
     node failures are retried without abandon.
 
-    Coverage for fix-static-node-connect-exclusion: the v6.2.1 producer filter
-    (`n.cloud is not None`) was over-broad — it excluded static nodes from the
-    connect path entirely, breaking the yasetnode → daemon handoff (tasks
-    stuck in TO_DO). The filter is removed; a consumer-side guard before the
-    grace-check now retries static nodes indefinitely without ever calling
-    abandon_node, preserving the task 4.7 intent (static nodes never
-    auto-removed) with a narrower mechanism.
+    The v6.2.1 producer filter (`n.cloud is not None`) was over-broad — it
+    excluded static nodes from the connect path entirely, breaking the
+    yasetnode → daemon handoff (tasks stuck in TO_DO). The filter is removed;
+    a consumer-side guard before the grace-check now retries static nodes
+    indefinitely without ever calling abandon_node, preserving the intent
+    (static nodes are never auto-removed) with a narrower mechanism.
     """
 
     @pytest.mark.asyncio

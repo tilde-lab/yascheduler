@@ -63,7 +63,7 @@ def _stub_apply_migrations(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 class TestInitFlags:
-    """Flag parsing and dispatch (tasks 9.3-9.8)."""
+    """Flag parsing and dispatch."""
 
     def test_no_flags_runs_both(
         self,
@@ -196,7 +196,7 @@ class TestInitFlags:
 
 
 class TestInitErrors:
-    """Exit-code contract on DatabaseError and OSError (tasks 9.9-9.10, 9.13)."""
+    """Exit-code contract on DatabaseError and OSError."""
 
     def test_database_error_exits_one(
         self,
@@ -241,7 +241,7 @@ class TestInitErrors:
 
 
 class TestServiceInstall:
-    """Service file overwrite, missing parent, and detection (tasks 9.11-9.15)."""
+    """Service file overwrite, missing parent, and detection."""
 
     def test_overwrites_existing_systemd_unit(
         self,
@@ -481,7 +481,7 @@ class TestInitConfigLogLevel:
 
 
 class TestInitSchemaEngineInputs:
-    """_init_schema forwards engine input declarations to migrations (task 3.2)."""
+    """_init_schema forwards engine input declarations to migrations."""
 
     def test_passes_engine_inputs_from_parsed_config(
         self,

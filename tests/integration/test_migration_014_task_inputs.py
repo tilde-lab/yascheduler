@@ -360,7 +360,7 @@ def _expected_remaining_metadata(task_marker: str) -> dict[str, object]:
 
 
 # region FUNC__failure_cases
-# PURPOSE: Build the five broken/repaired migration fixtures required by task 3.4 while keeping each failure isolated to the later task and reusing the existing rich success payload.
+# PURPOSE: Build the five broken/repaired migration fixtures , keeping each failure isolated and reusing the existing rich success payload.
 def _failure_cases() -> tuple[_FailureCase, ...]:
     marker = "rollback-broken"
     full_payload = _payload(marker)

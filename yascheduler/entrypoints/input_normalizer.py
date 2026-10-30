@@ -11,7 +11,7 @@
 # - Explicit entries together with metadata keys the engine declarations would claim are ambiguous and rejected (an explicit empty sequence is a valid empty snapshot, not a fallback to metadata).
 # - Typed metadata fields (TYPED_METADATA_KEYS) are never consumed as input payload by any declaration.
 # - Legality of a legacy value is the shared conversion's: a flat payload key is one name, never a directory, and values keep their recorded UTF-8/`fort.9` meanings.
-# - TRANSITION: legacy mode strips the claimed keys from the returned metadata — they live in the typed snapshot, and keeping them in `extra` would store a second input representation (design: single storage source). Deployment reads only the snapshot (task 4.1 flipped it), and queries derive the legacy filename/value metadata view from the snapshot, so legacy consumers are unaffected. Pre-migration rows may still carry legacy extra copies; the query projection keeps their precedence until the forward migration (task 3.3) converts and strips them. Explicit mode never writes input keys into metadata.
+# - TRANSITION: legacy mode strips the claimed keys from the returned metadata — they live in the typed snapshot, and keeping them in `extra` would store a second input representation (design: single storage source). Deployment reads only the snapshot, and queries derive the legacy filename/value metadata view from the snapshot, so legacy consumers are unaffected. Pre-migration rows may still carry legacy extra copies; the query projection keeps their precedence until the forward migration converts and strips them. Explicit mode never writes input keys into metadata.
 # RATIONALE:
 # - Q: Why does normalization live in entrypoints instead of the application use case?
 #   A: Legacy payload interpretation is a public-boundary encoding concern; the use case receives typed entries only, so one boundary seam converts and every downstream layer stays legacy-free.
@@ -20,7 +20,7 @@
 # - Q: Why does the ambiguity check reject instead of merging?
 #   A: A key claimed by declarations while explicit entries are supplied has two competing owners; rejecting with the offending key named is the only non-lossy answer, and the empty explicit sequence keeps a deliberate meaning (empty snapshot).
 # - Q: Why are claimed legacy keys stripped from the metadata instead of kept as a transitional copy?
-#   A: Deployment already reads only the typed snapshot (task 4.1), and the query projection derives the legacy filename/value view from the snapshot, so stored copies serve no consumer — they would only be a second input representation that can drift. The forward migration strips converted keys from stored rows the same way.
+#   A: Deployment already reads only the typed snapshot, and the query projection derives the legacy filename/value view from the snapshot, so stored copies serve no consumer — they would only be a second input representation that can drift. The forward migration strips converted keys from stored rows the same way.
 # KEYWORDS: task inputs, submission, normalization, legacy metadata, base64, fort.9, boundary
 # endregion MODULE_CONTRACT
 

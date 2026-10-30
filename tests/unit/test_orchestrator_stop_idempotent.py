@@ -1,6 +1,6 @@
 """Unit tests for Orchestrator.stop() idempotency and exception safety."""
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for Orchestrator.stop() idempotency and exception safety (fix-daemon-resource-leak-on-start-return).
+# PURPOSE: Unit tests for Orchestrator.stop() idempotency and exception safety.
 # SCOPE: _stopped guard single-execution across sequential/interleaved/repeated callers; dead-bg-job tolerance via except Exception; CancelledError still reaches the graceful-drain path; per-step try/except isolation (clouds.stop/gateway.disconnect_all/http_session.close); http_session nulled after close; stop() before start() is a safe no-op.
 # KEYWORDS: Orchestrator.stop, idempotency, exception safety, graceful-drain
 # endregion MODULE_CONTRACT

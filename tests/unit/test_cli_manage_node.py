@@ -116,7 +116,7 @@ def _run(argv: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _parse_host_spec grammar (task 6.1)
+# _parse_host_spec grammar
 # ---------------------------------------------------------------------------
 
 
@@ -253,7 +253,7 @@ class TestHostSpecParsing:
 
 
 # ---------------------------------------------------------------------------
-# argparse behavior (task 6.2)
+# argparse behavior
 # ---------------------------------------------------------------------------
 
 
@@ -351,7 +351,7 @@ class TestManageNodeArgparse:
 
 
 # ---------------------------------------------------------------------------
-# Add path (task 6.3)
+# Add path
 # ---------------------------------------------------------------------------
 
 
@@ -534,7 +534,7 @@ class TestManageNodeAddPath:
         capsys: pytest.CaptureFixture[str],
         stub_env: tuple[MagicMock, AsyncMock, MagicMock, AsyncMock],
     ) -> None:
-        """Task 6.7: when config.remote.jump_host is None, NewNode.jump_host is None."""
+        """When config.remote.jump_host is None, NewNode.jump_host is None."""
         config, uow, _deps, _repo = stub_env
         config.remote.jump_host = None
         config.remote.jump_username = None
@@ -683,7 +683,7 @@ class TestManageNodeAddPath:
 
 
 # ---------------------------------------------------------------------------
-# Remove path (task 6.4)
+# Remove path
 # ---------------------------------------------------------------------------
 
 
@@ -897,7 +897,7 @@ class TestManageNodeRemovePath:
 
 
 # ---------------------------------------------------------------------------
-# Exit codes and output channels (task 6.5)
+# Exit codes and output channels
 # ---------------------------------------------------------------------------
 
 

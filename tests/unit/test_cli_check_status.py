@@ -196,7 +196,7 @@ def _run(argv: list[str]) -> None:
     check_status_mod.check_status(argv)
 
 
-# Parsing / exit codes (task 9.4)
+# Parsing / exit codes
 
 
 class TestCheckStatusParsing:
@@ -247,7 +247,7 @@ class TestCheckStatusParsing:
         assert args.convergence is True
 
 
-# AiiDA-contract golden regression (task 9.5, design D9)
+# AiiDA-contract golden regression
 
 
 class TestCheckStatusAiiDAContract:
@@ -270,7 +270,7 @@ class TestCheckStatusAiiDAContract:
         assert parsed == {"1": "TO_DO", "2": "RUNNING", "3": "DONE"}
 
 
-# Default renderer + -j filter (task 9.6)
+# Default renderer + -j filter
 
 
 class TestCheckStatusDefault:
@@ -325,7 +325,7 @@ class TestCheckStatusDefault:
         assert "1   RUNNING" in out
 
 
-# Info renderer (task 9.7)
+# Info renderer
 
 
 class TestCheckStatusInfo:
@@ -356,7 +356,7 @@ class TestCheckStatusInfo:
         assert "\t" in out
 
 
-# JSON renderer (task 9.8)
+# JSON renderer
 
 
 class TestCheckStatusJson:
@@ -516,7 +516,7 @@ class TestCheckStatusJson:
         assert _json.loads(out)
 
 
-# Exit codes (task 9.9)
+# Exit codes
 
 
 class TestCheckStatusExitCodes:
@@ -577,7 +577,7 @@ class TestCheckStatusExitCodes:
         assert "Error:" in err
 
 
-# argv injection (task 9.10)
+# argv injection
 
 
 class TestCheckStatusArgvInjection:
@@ -595,7 +595,7 @@ class TestCheckStatusArgvInjection:
         assert _json.loads(out) == []
 
 
-# View mode happy path + lazy nodes lookup (task 9.12)
+# View mode happy path + lazy nodes lookup
 
 
 class TestCheckStatusViewAcceptance:
@@ -927,7 +927,7 @@ class TestCheckStatusViewOutputSelections:
         assert "PATTERN" in out
 
 
-# Query/render separation (task 9.13)
+# Query/render separation
 
 
 class TestCheckStatusQueryRenderSeparation:

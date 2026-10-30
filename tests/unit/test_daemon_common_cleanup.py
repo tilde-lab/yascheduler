@@ -1,6 +1,6 @@
 """Unit tests for run_daemon's try/finally cleanup guarantee."""
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for run_daemon's try/finally cleanup guarantee (fix-daemon-resource-leak-on-start-return).
+# PURPOSE: Unit tests for run_daemon's try/finally cleanup guarantee.
 # SCOPE: orch.stop() runs on every exit path — normal start() return, start() raising, signal-then-finally no-op, and make_daemon success + start() raising still cleans up early bg jobs. make_daemon is mocked.
 # KEYWORDS: run_daemon, try/finally, orch.stop, cleanup guarantee
 # endregion MODULE_CONTRACT

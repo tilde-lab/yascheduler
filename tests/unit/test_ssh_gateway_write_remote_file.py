@@ -1,5 +1,5 @@
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for _write_remote_file exception contract (fix-write-remote-file-swallow) and _exec_spawn_command SPAWN log contract under the task 4.3 content-free logging rule.
+# PURPOSE: Unit tests for the _write_remote_file exception contract and the _exec_spawn_command SPAWN log contract under the content-free logging rule.
 # SCOPE: Non-SFTP exception propagates (not swallowed); asyncssh.misc.Error logs the SFTPError marker with path/code/failure class but no reason or traceback, then re-raises; start_task_on_machine records UPLOAD_INPUTS_FAILED and aborts spawn on upload failure; successful write returns normally and the stored snapshot upload loop writes every file and materializes directory entries; _exec_spawn_command emits SPAWN debug log with hostname/task_id/cmd/cwd.
 # KEYWORDS: _write_remote_file, exception contract, spawn abort, spawn log
 # endregion MODULE_CONTRACT

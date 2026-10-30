@@ -7,7 +7,7 @@ consumer and the unbounded ``join()`` hangs until the process receives
 SIGKILL. The drain is now bounded by ``_DRAIN_TIMEOUT``.
 """
 # region MODULE_CONTRACT
-# PURPOSE: Unit test for the bounded graceful-drain in _create_producer_consumers (fix-shutdown-hang-on-drain-without-consumers).
+# PURPOSE: Unit test for the bounded graceful-drain in _create_producer_consumers.
 # SCOPE: drain join is bounded — stop() returns within _DRAIN_TIMEOUT and warns when queued items have no consumer (workers cancelled before the join).
 # KEYWORDS: shutdown, drain, queue.join, wait_for, _DRAIN_TIMEOUT, stop, CancelledError
 # endregion MODULE_CONTRACT
