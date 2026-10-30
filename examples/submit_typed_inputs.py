@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import base64
-from time import sleep
+import sys
+from time import monotonic, sleep
 
 from yascheduler import Yascheduler
 from yascheduler.domain import TaskInputDirectory, TaskInputFile
@@ -15,6 +16,7 @@ from yascheduler.domain import TaskInputDirectory, TaskInputFile
 TEXT = "Hello from a text input.\n"
 BINARY = bytes(range(256))
 NESTED = b"\x00\x01nested binary payload\n"
+TASK_TIMEOUT = 300
 
 yac = Yascheduler()
 task_id = yac.queue_submit_task(
@@ -30,13 +32,21 @@ task_id = yac.queue_submit_task(
     ],
 )
 
-while True:
+task = None
+deadline = monotonic() + TASK_TIMEOUT
+while monotonic() < deadline:
     task = yac.queue_get_task(task_id)
-    if task and task.get("status") == yac.STATUS_DONE:
+    if task and task["status"] == yac.STATUS_DONE:
         break
     sleep(1)
 
-assert task is not None
+if task is None or task["status"] != yac.STATUS_DONE:
+    sys.exit(f"task {task_id} did not finish within {TASK_TIMEOUT}s")
+# A failed task also ends as DONE, with the reason in metadata["error"]. The
+# input snapshot below is present either way, so the outcome is checked first.
+if task["metadata"].get("error"):
+    sys.exit(f"task {task_id} failed: {task['metadata']['error']}")
+
 # metadata keeps the legacy filename/value view: text as str, binary as base64.
 assert task["metadata"]["1.input"] == TEXT
 assert task["metadata"]["2.input"] == base64.b64encode(BINARY).decode("ascii")
