@@ -103,6 +103,7 @@ class TestCLIDeps:
             "g09",
             engines,
             uow_factory,
+            output_selections=None,
         )
 
     @pytest.mark.asyncio
@@ -134,6 +135,7 @@ class TestCLIDeps:
             engines,
             uow_factory,
             input_snapshot=(TaskInputFile(path="INPUT", content=b"legacy-body"),),
+            output_selections=None,
         )
 
     @pytest.mark.asyncio
@@ -164,6 +166,7 @@ class TestCLIDeps:
                 TaskInputDirectory(path="basis"),
                 TaskInputFile(path="basis/x", content=b"x"),
             ),
+            output_selections=None,
         )
 
     @pytest.mark.asyncio
@@ -175,6 +178,7 @@ class TestCLIDeps:
         uow_factory = MagicMock()
         deps = CLIDeps(engines=engines, uow_factory=uow_factory)
         metadata: dict[str, object] = {"INPUT": "legacy-body"}
+        selections = ["result.dat", "OUT/**/*"]
 
         with (
             patch(
@@ -183,14 +187,55 @@ class TestCLIDeps:
             ) as mock_submit,
             pytest.raises(UnsupportedEngineError),
         ):
-            await deps.submit("my-label", metadata, "missing-engine")
+            await deps.submit(
+                "my-label",
+                metadata,
+                "missing-engine",
+                output_selections=selections,
+            )
 
         mock_submit.assert_awaited_once_with(
-            "my-label", metadata, "missing-engine", engines, uow_factory
+            "my-label",
+            metadata,
+            "missing-engine",
+            engines,
+            uow_factory,
+            output_selections=selections,
         )
         await_args = mock_submit.await_args
         assert await_args is not None
         assert "input_snapshot" not in await_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_submit_forwards_supplied_output_selections(self) -> None:
+        """Known-engine submissions forward supplied output selections verbatim."""
+        engine = Engine(name="g09", spawn="run")
+        engines = EngineRepository(data={"g09": engine})
+        uow_factory = MagicMock()
+        deps = CLIDeps(engines=engines, uow_factory=uow_factory)
+        selections = ["result.dat", "OUT/**/*"]
+
+        with patch(
+            "yascheduler.entrypoints.di.submit_task",
+            new=AsyncMock(return_value=TaskId(42)),
+        ) as mock_submit:
+            result = await deps.submit(
+                "my-label",
+                {"unrelated": 42},
+                "g09",
+                output_selections=selections,
+            )
+
+        assert result == TaskId(42)
+        mock_submit.assert_awaited_once_with(
+            "my-label",
+            {"unrelated": 42},
+            "g09",
+            engines,
+            uow_factory,
+            input_snapshot=(),
+            output_selections=selections,
+        )
 
     @pytest.mark.asyncio
     async def test_submit_ambiguous_explicit_payload_fails_before_use_case(

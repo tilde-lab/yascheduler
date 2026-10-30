@@ -246,21 +246,72 @@ class TestConsumeTask:
             task_id=TaskId(1),
         )
 
-    async def test_unmatched_pattern_is_permanent_and_names_the_selection(
+    async def test_recorded_selections_win_over_changed_engine_config(
         self,
         mock_output_downloader: MagicMock,
         running_task: Task,
         mock_engine_repo: MagicMock,
+        engine,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """An unmatched selection fails the task with the selection and reason."""
-        permanent = [
-            ("missing/*.orb", FileNotFoundError("selection matched no entries"))
-        ]
-        mock_output_downloader.download_outputs = AsyncMock(
-            return_value=("", "", [], permanent)
+        """Retrieval uses the accepted task's record, never the changed live config."""
+        recorded = ("recorded/*.dat", "recorded.dat")
+        task = replace(running_task, output_selections=recorded)
+        mock_engine_repo.get.return_value = replace(
+            engine, output_files=("config-after-submission.dat",)
         )
+        uow = _make_uow(task)
+        tracker = _make_tracker()
+        session = SimpleNamespace()
+
+        with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
+            result = await _run_consume(
+                task_id=task.task_id,
+                session=session,
+                uow_factory=MagicMock(return_value=uow),
+                output_downloader=mock_output_downloader,
+                engines=mock_engine_repo,
+                local_tasks_dir=tmp_path,
+                tracker=tracker,
+            )
+
+        assert result is True
+        mock_output_downloader.download_outputs.assert_awaited_once_with(
+            session=session,
+            remote_dir=REMOTE_FOLDER,
+            local_dir=tmp_path / "20250101_120000_42",
+            selections=list(recorded),
+            task_id=TaskId(1),
+        )
+        assert _marker_fields(caplog, "OUTPUT_SELECTIONS_RESOLVED") == {
+            "task_id": 1,
+            "output_selections": list(recorded),
+            "source": "task",
+        }
+        assert not any(
+            "has no recorded output selections" in record.getMessage()
+            for record in caplog.records
+        )
+        saved_task = uow.tasks.save.call_args.args[0]
+        assert saved_task.status is TaskStatus.DONE
+        assert saved_task.state.error is None
+        assert saved_task.output_selections == recorded
+        assert isinstance(saved_task.events[-1], TaskCompleted)
+
+    async def test_task_without_record_uses_config_and_warns_with_identity(
+        self,
+        mock_output_downloader: MagicMock,
+        running_task: Task,
+        mock_engine_repo: MagicMock,
+        engine,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Legacy fallback is visible in the message and structured task identity."""
+        configured = ("CONFIG/OUT.dat", "fallback.dat")
+        mock_engine_repo.get.return_value = replace(engine, output_files=configured)
+        assert running_task.output_selections == ()
         uow = _make_uow(running_task)
         tracker = _make_tracker()
         session = SimpleNamespace()
@@ -276,8 +327,85 @@ class TestConsumeTask:
                 tracker=tracker,
             )
 
-        expected_error = "Download error: missing/*.orb: selection matched no entries"
         assert result is True
+        mock_output_downloader.download_outputs.assert_awaited_once_with(
+            session=session,
+            remote_dir=REMOTE_FOLDER,
+            local_dir=tmp_path / "20250101_120000_42",
+            selections=list(configured),
+            task_id=TaskId(1),
+        )
+        fallback_records = [
+            record
+            for record in caplog.records
+            if "has no recorded output selections" in record.getMessage()
+        ]
+        assert len(fallback_records) == 1
+        message = fallback_records[0].getMessage()
+        assert "task_id=1" in message
+        assert "engine 'test_engine'" in message
+        assert message == (
+            "task_id=1 has no recorded output selections; "
+            "using engine 'test_engine' configuration"
+        )
+        fallback_fields = extra_fields(fallback_records[0])
+        fallback_fields.pop("message", None)
+        assert fallback_fields == {
+            "task_id": 1,
+            "engine": "test_engine",
+        }
+        assert _marker_fields(caplog, "OUTPUT_SELECTIONS_RESOLVED") == {
+            "task_id": 1,
+            "output_selections": list(configured),
+            "source": "engine",
+        }
+        saved_task = uow.tasks.save.call_args.args[0]
+        assert saved_task.status is TaskStatus.DONE
+        assert saved_task.state.error is None
+
+    async def test_unmatched_pattern_is_permanent_and_names_the_selection(
+        self,
+        mock_output_downloader: MagicMock,
+        running_task: Task,
+        mock_engine_repo: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A recorded unmatched selection remains a permanent error naming itself."""
+        recorded_selection = "recorded/missing/*.orb"
+        task = replace(running_task, output_selections=(recorded_selection,))
+        permanent = [
+            (recorded_selection, FileNotFoundError("selection matched no entries"))
+        ]
+        mock_output_downloader.download_outputs = AsyncMock(
+            return_value=("", "", [], permanent)
+        )
+        uow = _make_uow(task)
+        tracker = _make_tracker()
+        session = SimpleNamespace()
+
+        with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
+            result = await _run_consume(
+                task_id=task.task_id,
+                session=session,
+                uow_factory=MagicMock(return_value=uow),
+                output_downloader=mock_output_downloader,
+                engines=mock_engine_repo,
+                local_tasks_dir=tmp_path,
+                tracker=tracker,
+            )
+
+        expected_error = (
+            f"Download error: {recorded_selection}: selection matched no entries"
+        )
+        assert result is True
+        mock_output_downloader.download_outputs.assert_awaited_once_with(
+            session=session,
+            remote_dir=REMOTE_FOLDER,
+            local_dir=tmp_path / "20250101_120000_42",
+            selections=[recorded_selection],
+            task_id=TaskId(1),
+        )
         saved_task = uow.tasks.save.call_args.args[0]
         assert saved_task.status is TaskStatus.DONE
         assert saved_task.state.error == expected_error
@@ -298,7 +426,7 @@ class TestConsumeTask:
         assert _marker_fields(caplog, "RETRIEVAL_ENTRIES") == {
             "task_id": 1,
             "transient": [],
-            "permanent": ["missing/*.orb"],
+            "permanent": [recorded_selection],
         }
 
     async def test_directory_creation_failure_is_transient_and_defers(
@@ -547,15 +675,16 @@ class TestConsumeTask:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Removed engine -> failed task with engine-specific reason and best-effort cleanup."""
+        """A recorded task still fails when its engine is removed from config."""
         mock_engine_repo.get.return_value = None
-        uow = _make_uow(running_task)
+        task = replace(running_task, output_selections=("recorded.dat",))
+        uow = _make_uow(task)
         tracker = _make_tracker()
         session = SimpleNamespace()
 
         with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
             result = await _run_consume(
-                task_id=running_task.task_id,
+                task_id=task.task_id,
                 session=session,
                 uow_factory=MagicMock(return_value=uow),
                 output_downloader=mock_output_downloader,
@@ -564,7 +693,7 @@ class TestConsumeTask:
                 tracker=tracker,
             )
 
-        expected_error = f"engine '{running_task.engine}' no longer in config"
+        expected_error = f"engine '{task.engine}' no longer in config"
         assert result is True
         mock_output_downloader.download_outputs.assert_not_awaited()
         saved_task = uow.tasks.save.call_args.args[0]

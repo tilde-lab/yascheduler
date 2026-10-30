@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import json as _json
+import logging
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Callable
@@ -15,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.log_assertions import extra_fields
 from yascheduler.domain import Engine, EngineRepository
 from yascheduler.domain.model import (
     Done,
@@ -110,6 +112,7 @@ def make_task(
     label: str = "test",
     engine: str = "g09",
     allocated_node_id: NodeId | None = None,
+    output_selections: tuple[str, ...] = (),
 ) -> Task:
     """Return a Task domain object with sensible defaults."""
     from datetime import datetime
@@ -136,6 +139,7 @@ def make_task(
         webhook_url=None,
         webhook_custom_params={},
         extra={},
+        output_selections=output_selections,
         created_at=datetime(2025, 1, 1),
         updated_at=datetime(2025, 1, 1),
     )
@@ -799,6 +803,128 @@ class TestCheckStatusViewHappyPath:
         )
         _run(["-i"])
         uow.nodes.get_by_ids.assert_not_called()
+
+
+class TestCheckStatusViewOutputSelections:
+    """View tails the task-owned selection, with a logged engine fallback for legacy tasks."""
+
+    def test_view_tails_recorded_selection_over_engine_config(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        uow.tasks.list_by_status = AsyncMock(
+            return_value=[
+                make_task(
+                    task_id=1,
+                    status=TaskStatus.RUNNING,
+                    allocated_node_id=NodeId(1),
+                    output_selections=("recorded.out",),
+                ),
+            ],
+        )
+        uow.nodes.get_by_ids = AsyncMock(
+            return_value={
+                NodeId(1): Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4),
+            },
+        )
+        repo = make_mock_repository(stdout="RECORDED TAIL")
+        monkeypatch.setattr(
+            check_status_mod,
+            "SSHMachineRepository",
+            MagicMock(return_value=repo),
+        )
+        _run(["-v"])
+        session = repo.connect.return_value
+        command = session.run_full.await_args.args[0]
+        assert "recorded.out" in command
+        assert "OUTPUT" not in command
+        out, _ = capsys.readouterr()
+        assert "RECORDED TAIL" in out
+
+    def test_view_legacy_task_uses_engine_fallback_and_warns(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        uow.tasks.list_by_status = AsyncMock(
+            return_value=[
+                make_task(
+                    task_id=7,
+                    status=TaskStatus.RUNNING,
+                    allocated_node_id=NodeId(1),
+                ),
+            ],
+        )
+        uow.nodes.get_by_ids = AsyncMock(
+            return_value={
+                NodeId(1): Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4),
+            },
+        )
+        repo = make_mock_repository(stdout="FALLBACK TAIL")
+        monkeypatch.setattr(
+            check_status_mod,
+            "SSHMachineRepository",
+            MagicMock(return_value=repo),
+        )
+        with caplog.at_level(logging.WARNING, logger=check_status_mod.__name__):
+            _run(["-v"])
+        session = repo.connect.return_value
+        command = session.run_full.await_args.args[0]
+        assert "OUTPUT" in command
+        out, _ = capsys.readouterr()
+        assert "FALLBACK TAIL" in out
+        warnings = [
+            record for record in caplog.records if record.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "task_id=7" in message
+        assert "engine 'g09'" in message
+        fields = extra_fields(warnings[0])
+        fields.pop("message", None)
+        assert fields == {"task_id": 7, "engine": "g09"}
+
+    def test_view_pattern_selection_is_named_without_ssh(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        pattern = "results/**/*.dat"
+        uow.tasks.list_by_status = AsyncMock(
+            return_value=[
+                make_task(
+                    task_id=1,
+                    status=TaskStatus.RUNNING,
+                    allocated_node_id=NodeId(1),
+                    output_selections=(pattern,),
+                ),
+            ],
+        )
+        uow.nodes.get_by_ids = AsyncMock(
+            return_value={
+                NodeId(1): Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4),
+            },
+        )
+        repo = make_mock_repository()
+        monkeypatch.setattr(
+            check_status_mod,
+            "SSHMachineRepository",
+            MagicMock(return_value=repo),
+        )
+        _run(["-v"])
+        repo.connect.assert_not_called()
+        repo.connect.return_value.run_full.assert_not_called()
+        out, _ = capsys.readouterr()
+        assert pattern in out
+        assert "PATTERN" in out
 
 
 # Query/render separation (task 9.13)

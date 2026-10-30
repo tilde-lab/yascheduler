@@ -1,8 +1,8 @@
 """Integration tests for migration 014 task-input snapshot conversion."""
 # region MODULE_CONTRACT
-# PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap seeds the latest prefix without engine context, 013 databases convert every task status into equivalent binary snapshot entries, legacy databases upgrade without losing task identity, timestamps, state, bindings, or unrelated metadata, and failed conversion retries atomically after fixture repair.
-# SCOPE: Fresh/current/legacy migration cohorts, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, tracker/snapshot idempotency on rerun, and qualified-runner structured failure logs with payload redaction.
-# DEPENDENCIES: USES API: apply_schema, apply_migrations, check_migration_status, pg8000.native, testcontainers.PostgresContainer
+# PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap exposes the task-input storage contract without engine context, 013 databases convert every task status into equivalent binary snapshot entries, legacy databases upgrade through 014 without losing task identity, timestamps, state, bindings, or unrelated metadata, and failed conversion retries atomically after fixture repair.
+# SCOPE: Fresh input-storage contract and current/legacy cohorts through migration 014, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, tracker/snapshot idempotency on rerun, and qualified-runner structured failure logs with payload redaction.
+# DEPENDENCIES: USES API: apply_schema, apply_migrations, pg8000.native, testcontainers.PostgresContainer
 # READS: PostgreSQL container (postgres:16-alpine)
 # KEYWORDS: migration 014, task inputs, snapshots, postgres, base64, legacy upgrade, rollback, retry, idempotency
 # endregion MODULE_CONTRACT
@@ -22,10 +22,8 @@ from testcontainers.postgres import PostgresContainer
 
 from tests.log_assertions import extra_fields
 from yascheduler.infra.persistence import (
-    MigrationState,
     PostgresDbConfig,
     apply_migrations,
-    check_migration_status,
 )
 from yascheduler.infra.persistence.postgres_schema import apply_schema
 from yascheduler.shared.log import LogFormatter
@@ -629,31 +627,27 @@ def _legacy_metadata(
     }
 
 
-def test_fresh_bootstrap_seeds_014_without_engine_context() -> None:
+def test_fresh_bootstrap_exposes_migration_014_input_storage_without_engine_context() -> (
+    None
+):
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
         config = _make_config(pg)
         apply_schema(config)
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014"]
             assert _table_exists(conn)
             _assert_input_contract(conn)
         finally:
             conn.close()
 
-        status = check_migration_status(config)
-        assert status.state is MigrationState.CURRENT
-        assert status.applied == "014"
-        assert status.required == "014"
-
-        # There is no pending 014 conversion and therefore no engine context
-        # is needed on a fresh bootstrap.
-        apply_migrations(config)
+        # The fresh snapshot already carries migration 014 input storage;
+        # the capped runner call must not need engine context.
+        apply_migrations(config, upto="014")
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014"]
+            assert _table_exists(conn)
             _assert_input_contract(conn)
         finally:
             conn.close()
@@ -765,7 +759,7 @@ def test_modern_013_tolerates_bootstrap_precreated_input_table() -> None:
             conn.close()
 
 
-def test_legacy_db_without_tracker_upgrades_all_migrations_and_inputs() -> None:
+def test_legacy_db_without_tracker_upgrades_through_014_and_inputs() -> None:
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
         config = _make_config(pg)
 
@@ -830,7 +824,11 @@ def test_legacy_db_without_tracker_upgrades_all_migrations_and_inputs() -> None:
         finally:
             conn.close()
 
-        apply_migrations(config, engine_inputs={ENGINE: DECLARATIONS})
+        apply_migrations(
+            config,
+            engine_inputs={ENGINE: DECLARATIONS},
+            upto="014",
+        )
 
         conn = _connect(config)
         try:
@@ -1183,7 +1181,7 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
 
         # No 014 is pending after success. Running without engine context must
         # be a no-op; if conversion reran, the missing context would fail.
-        apply_migrations(config)
+        apply_migrations(config, upto="014")
 
         conn = _connect(config)
         try:

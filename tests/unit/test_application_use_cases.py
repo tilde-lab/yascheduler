@@ -43,7 +43,9 @@ from yascheduler.domain.exceptions import (
     CloudAllocateError,
     InvalidTaskSnapshotError,
     MissingInputFileError,
+    UnsafeTaskPathError,
     UnsupportedEngineError,
+    ValidationError,
 )
 from yascheduler.domain.model import (
     NewNode,
@@ -92,7 +94,7 @@ class TestSubmitTask:
         mock_uow_factory: MagicMock,
     ) -> None:
         """An engine without input declarations accepts an empty snapshot."""
-        engine = Engine(name="no_inputs", spawn="run")
+        engine = Engine(name="no_inputs", spawn="run", output_files=("OUTPUT",))
         engines = EngineRepository(data={"no_inputs": engine})
         uow = mock_uow_factory.return_value
         uow.tasks.insert = AsyncMock(
@@ -157,6 +159,8 @@ class TestSubmitTask:
                 webhook_url=new_task.webhook_url,
                 webhook_custom_params=new_task.webhook_custom_params,
                 extra=new_task.extra,
+                input_entries=new_task.input_entries,
+                output_selections=new_task.output_selections,
                 created_at=datetime(2025, 1, 1),
                 updated_at=datetime(2025, 1, 1),
             )
@@ -319,6 +323,7 @@ class TestSubmitTask:
             name="glob_engine",
             spawn="run",
             input_files=("basis/**/*.orb",),
+            output_files=("OUTPUT",),
         )
         engines = EngineRepository(data={"glob_engine": engine})
         uow = mock_uow_factory.return_value
@@ -354,6 +359,7 @@ class TestSubmitTask:
             name="glob_engine",
             spawn="run",
             input_files=("basis/**/*.orb",),
+            output_files=("OUTPUT",),
         )
         engines = EngineRepository(data={"glob_engine": engine})
 
@@ -375,7 +381,12 @@ class TestSubmitTask:
         mock_uow_factory: MagicMock,
     ) -> None:
         """A literal directory declaration matches an explicit directory entry."""
-        engine = Engine(name="dir_engine", spawn="run", input_files=("basis",))
+        engine = Engine(
+            name="dir_engine",
+            spawn="run",
+            input_files=("basis",),
+            output_files=("OUTPUT",),
+        )
         engines = EngineRepository(data={"dir_engine": engine})
         uow = mock_uow_factory.return_value
         uow.tasks.insert = AsyncMock(
@@ -452,6 +463,103 @@ class TestSubmitTask:
         assert inserted_arg.input_entries == (TaskInputFile(path="inp", content=b"x"),)
         source.append(TaskInputFile(path="other", content=b"y"))
         assert inserted_arg.input_entries == (TaskInputFile(path="inp", content=b"x"),)
+
+    async def test_submit_task_records_engine_output_selections_by_default(
+        self,
+        engine: Engine,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Acceptance snapshots the engine's output contract into the new task."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="default-output-selections",
+            metadata={},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.output_selections == tuple(engine.output_files)
+        assert inserted_arg.output_selections == ("OUTPUT",)
+
+    async def test_submit_task_records_explicit_output_selections_verbatim(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """An explicit list keeps its order, duplicates, and spelling, and is copied."""
+        source = ["OUT//*.dat", "root.dat", "OUT//*.dat"]
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="explicit-output-selections",
+            metadata={},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+            output_selections=source,
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.output_selections == (
+            "OUT//*.dat",
+            "root.dat",
+            "OUT//*.dat",
+        )
+        assert inserted_arg.output_selections is not source
+        source.append("late.dat")
+        assert inserted_arg.output_selections == (
+            "OUT//*.dat",
+            "root.dat",
+            "OUT//*.dat",
+        )
+
+    @pytest.mark.parametrize(
+        ("output_selections", "expected_error"),
+        [
+            ([], ValidationError),
+            (["../escape.dat"], UnsafeTaskPathError),
+        ],
+    )
+    async def test_submit_task_rejects_invalid_output_selections_before_write(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+        output_selections: list[str],
+        expected_error: type[Exception],
+    ) -> None:
+        """Empty and unsafe overrides fail before opening a UoW."""
+        with pytest.raises(expected_error):
+            await submit_task(
+                label="invalid-output-selections",
+                metadata={},
+                engine_name="test_engine",
+                engines=mock_engine_repo,
+                uow_factory=mock_uow_factory,
+                input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+                output_selections=output_selections,
+            )
+
+        mock_uow_factory.assert_not_called()
 
 
 # =============================================================================

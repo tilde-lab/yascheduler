@@ -108,7 +108,7 @@ def test_fresh_db_seeds_last_and_skips_migrations() -> None:
         conn = _connect(config)
         try:
             seeded = _tracker_rows(conn)
-            assert seeded == ["014"]
+            assert seeded == ["015"]
             assert {"username", "port", "node_id"} <= set(
                 _columns(conn, "yascheduler_nodes"),
             )
@@ -119,7 +119,7 @@ def test_fresh_db_seeds_last_and_skips_migrations() -> None:
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014"]
+            assert _tracker_rows(conn) == ["015"]
         finally:
             conn.close()
 
@@ -131,14 +131,14 @@ def test_migration_status_preflight_reads_real_tracker() -> None:
         missing = check_migration_status(config)
         assert missing.state is MigrationState.MISSING
         assert missing.applied is None
-        assert missing.required == "014"
+        assert missing.required == "015"
 
         apply_schema(config)
 
         current = check_migration_status(config)
         assert current.state is MigrationState.CURRENT
-        assert current.applied == "014"
-        assert current.required == "014"
+        assert current.applied == "015"
+        assert current.required == "015"
 
 
 def test_legacy_db_runs_all_migrations() -> None:
@@ -192,6 +192,7 @@ def test_legacy_db_runs_all_migrations() -> None:
                 "012",
                 "013",
                 "014",
+                "015",
             ]
             assert {"username", "port", "node_id"} <= set(
                 _columns(conn, "yascheduler_nodes"),
@@ -254,6 +255,7 @@ def test_modern_db_skips_bootstrap_and_applies_only_pending() -> None:
                 "012",
                 "013",
                 "014",
+                "015",
             ]
             assert {"username", "port", "node_id"} <= set(
                 _columns(conn, "yascheduler_nodes"),
@@ -268,7 +270,7 @@ def test_py_migration_best_effort_reopen(
 ) -> None:
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
-    (migrations_dir / "015_reopen.py").write_text(
+    (migrations_dir / "016_reopen.py").write_text(
         "from yascheduler.infra.persistence.migration_base import Migration\n"
         "class Reopen(Migration):\n"
         "    def migrate(self) -> None:\n"
@@ -287,7 +289,7 @@ def test_py_migration_best_effort_reopen(
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014", "015"]
+            assert _tracker_rows(conn) == ["015", "016"]
             assert _table_exists(conn, "test_reopen")
         finally:
             conn.close()
@@ -299,7 +301,7 @@ def test_sql_migration_failure_rolls_back_and_not_recorded(
 ) -> None:
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
-    (migrations_dir / "015_fail.sql").write_text(
+    (migrations_dir / "016_fail.sql").write_text(
         "CREATE TABLE fail_tbl (id int); CREATE TABLE fail_tbl (id int);",
     )
     monkeypatch.setattr(
@@ -316,7 +318,7 @@ def test_sql_migration_failure_rolls_back_and_not_recorded(
 
         conn = _connect(config)
         try:
-            assert "015" not in _tracker_rows(conn)
+            assert "016" not in _tracker_rows(conn)
             assert not _table_exists(conn, "fail_tbl")
         finally:
             conn.close()
@@ -358,7 +360,7 @@ def test_py_migration_receives_supplied_engine_inputs(
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014", "901"]
+            assert _tracker_rows(conn) == ["015", "901"]
             recorded = _rows(
                 conn,
                 "SELECT engine, input_file FROM ctx_supplied",
@@ -404,7 +406,7 @@ def test_py_migration_receives_no_engine_inputs_when_absent(
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014", "902"]
+            assert _tracker_rows(conn) == ["015", "902"]
             assert _rows(
                 conn,
                 "SELECT engine_inputs_is_none FROM ctx_absent",
@@ -436,7 +438,7 @@ def test_sql_migration_still_applies_with_engine_inputs(
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014", "903"]
+            assert _tracker_rows(conn) == ["015", "903"]
             assert _rows(conn, "SELECT note FROM ctx_sql") == [
                 ["sql path unaffected"],
             ]
@@ -782,8 +784,8 @@ def test_fresh_db_full_shape() -> None:
 
         conn = _connect(config)
         try:
-            # Tracker seeds to '014'
-            assert _tracker_rows(conn) == ["014"]
+            # Tracker seeds to '015'
+            assert _tracker_rows(conn) == ["015"]
 
             cols = _columns(conn, "yascheduler_tasks")
             assert "task_id" in cols
@@ -797,6 +799,7 @@ def test_fresh_db_full_shape() -> None:
             assert "error" in cols
             assert "webhook_custom_params" in cols
             assert "extra" in cols
+            assert "output_selections" in cols
             assert "allocated_node_id" in cols
             assert "created_at" in cols
             assert "updated_at" in cols
@@ -827,12 +830,12 @@ def test_fresh_db_full_shape() -> None:
         finally:
             conn.close()
 
-        # apply_migrations finds MAX='014' and applies nothing.
+        # apply_migrations finds MAX='015' and applies nothing.
         apply_migrations(config)
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014"]
+            assert _tracker_rows(conn) == ["015"]
         finally:
             conn.close()
 

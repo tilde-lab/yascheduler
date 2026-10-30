@@ -74,7 +74,7 @@ class CLIDeps:
     uow_factory: Callable[[], AbstractUnitOfWork]
 
     # region METHOD_submit
-    # PURPOSE: Normalize the submission's input source (legacy metadata or explicit entries) exactly once and forward the typed snapshot to submit_task, so the use case never sees legacy encodings and unknown engines still fail inside the use case before any write.
+    # PURPOSE: Normalize the submission's input source (legacy metadata or explicit entries) exactly once, forward the typed snapshot and optional output selections to submit_task, so the use case never sees legacy encodings and unknown engines still fail inside the use case before any write.
     # RATIONALE:
     #   Q: Why does the DI container own normalization instead of each entry point?
     #   A: Every public submission path (CLI command, sync/async client) funnels through CLIDeps.submit — placing the seam here normalizes once per submission regardless of caller, which the design requires ("normalize legacy values once before the application use case").
@@ -85,6 +85,7 @@ class CLIDeps:
         engine_name: str,
         *,
         input_entries: Sequence[TaskInputEntry] | None = None,
+        output_selections: list[str] | None = None,
     ) -> TaskId:
         """Submit a new task via the submit_task use case."""
         if engine_name in self.engines:
@@ -98,11 +99,17 @@ class CLIDeps:
                 self.engines,
                 self.uow_factory,
                 input_snapshot=input_snapshot,
+                output_selections=output_selections,
             )
         # Unknown engine: normalization needs declarations, so let the use
         # case raise UnsupportedEngineError before any write.
         return await submit_task(
-            label, metadata, engine_name, self.engines, self.uow_factory
+            label,
+            metadata,
+            engine_name,
+            self.engines,
+            self.uow_factory,
+            output_selections=output_selections,
         )
 
     # endregion METHOD_submit

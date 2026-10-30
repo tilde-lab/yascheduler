@@ -170,7 +170,7 @@ TYPED_METADATA_KEYS: frozenset[str] = frozenset(
 
 # region CLASS_NewTask
 # PURPOSE: Carry the fields needed to insert a task before it has a database id, with no lifecycle methods — a pure data carrier.
-# INVARIANTS: No identity (task_id absent); no events, status, allocated_node_id, remote_folder, error, created_at/updated_at — these are all supplied post-insert by the DB or by Task transition methods; input_entries is the task's immutable input snapshot, empty until the task-input-snapshots change wires capture through submission.
+# INVARIANTS: No identity (task_id absent); no events, status, allocated_node_id, remote_folder, error, created_at/updated_at — these are all supplied post-insert by the DB or by Task transition methods; input_entries is the task's immutable input snapshot, empty until the task-input-snapshots change wires capture through submission; output_selections is the task-owned acceptance-time output contract, with the empty tuple meaning no record.
 @dataclass(frozen=True)
 class NewTask:
     """Pre-persistence task record — no identity yet.
@@ -179,6 +179,8 @@ class NewTask:
     It is a pure data carrier with no lifecycle methods.
     ``input_entries`` carries the task-owned input snapshot; the empty tuple
     is the not-yet-captured placeholder, replaced by the submission boundary.
+    ``output_selections`` carries the task-owned output contract recorded at
+    acceptance; the empty tuple means no record and persists as SQL NULL.
     """
 
     engine: str
@@ -188,6 +190,7 @@ class NewTask:
     webhook_custom_params: dict[str, object] = field(default_factory=dict)
     extra: dict[str, object] = field(default_factory=dict)
     input_entries: TaskInputSnapshot = ()
+    output_selections: tuple[str, ...] = ()
 
 
 # endregion CLASS_NewTask
@@ -250,7 +253,7 @@ S2 = TypeVar("S2", bound=TaskState)
 
 # region CLASS_Task
 # PURPOSE: Represent a persisted task as an immutable aggregate whose status only changes through atomic transition methods, so invariants and event emission stay centralized.
-# INVARIANTS: Every transition validates the source state via isinstance(self.state, ...), returns a new Task via the _advance retag-cast helper, and appends the matching DomainEvent to events; the state value object carries the CHECK-correlated fields; input_entries is the task-owned immutable input snapshot and survives every transition untouched via replace.
+# INVARIANTS: Every transition validates the source state via isinstance(self.state, ...), returns a new Task via the _advance retag-cast helper, and appends the matching DomainEvent to events; the state value object carries the CHECK-correlated fields; input_entries is the task-owned immutable input snapshot and output_selections is the acceptance-time output contract, both surviving every transition untouched via replace.
 @dataclass(frozen=True)
 class Task(Generic[S_co]):
     """Post-persistence task entity, parameterized by its lifecycle state.
@@ -282,6 +285,7 @@ class Task(Generic[S_co]):
     extra: dict[str, object] = field(default_factory=dict)
     input_entries: TaskInputSnapshot = ()
     events: tuple[DomainEvent, ...] = field(default=(), repr=True)
+    output_selections: tuple[str, ...] = ()
 
     @property
     def status(self) -> TaskStatus:

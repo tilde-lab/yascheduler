@@ -9,6 +9,11 @@
 - **Implemented:** 2026-10-30 — all three parts delivered: input snapshots
   and recursive upload, the retrieval lifecycle with post-finalisation
   cleanup, and recursive output selection and retrieval.
+- **Amended:** 2026-10-30 — the output direction is now task-owned:
+  [ADR-0020](ADR-0020-task-owned-output-selections.md) records the accepted
+  task's output selections. The selection language, tree layout, and
+  classification in this ADR stand; §3's "no database storage" covers output
+  content, not the selection record.
 - **Supersedes:** [ADR-0013](ADR-0013-task-metadata-typed-columns-not-jsonb.md),
   only its placement of task input files in `extra`
 - **Superseded by:**
@@ -101,7 +106,9 @@ Merge into the destination tree: replace selected ordinary files, retain
 unrelated local files, and report file/directory type conflicts or symbolic
 links in the destination path as errors. Preserve the existing output
 attribute-preservation behavior. Outputs remain filesystem results; this
-decision does not add database storage for them.
+decision adds no database storage for their content. The selections themselves
+are recorded on the task by
+[ADR-0020](ADR-0020-task-owned-output-selections.md).
 
 SFTP sessions and stateless transfer operations keep their existing roles
 from [ADR-0006](ADR-0006-ssh-machine-architecture.md). Recursive transfer is

@@ -197,7 +197,7 @@ class Yascheduler:
     # endregion METHOD___init__
 
     # region METHOD_queue_submit_task_async
-    # PURPOSE: Offload each task submission through a fresh DI container so the caller does not need to open a Unit of Work or import the use case; unwrap the TaskId result at the facade boundary so the public contract stays int.
+    # PURPOSE: Offload each task submission through a fresh DI container so the caller does not need to open a Unit of Work or import the use case; forward optional output selections and unwrap the TaskId result at the facade boundary so the public contract stays int.
     async def queue_submit_task_async(
         self,
         label: str,
@@ -206,13 +206,18 @@ class Yascheduler:
         *,
         _webhook_onsubmit: bool = False,
         input_entries: Sequence[TaskInputEntry] | None = None,
+        output_selections: list[str] | None = None,
     ) -> int:
-        """Submit new task, optionally with explicit typed input entries."""
+        """Submit new task, optionally with explicit inputs and output selections."""
         deps = self._deps_factory(self.config)
         # deps.submit (-> TaskId) → extract .value so the public contract stays int.
         return (
             await deps.submit(
-                label, dict(metadata), engine_name, input_entries=input_entries
+                label,
+                dict(metadata),
+                engine_name,
+                input_entries=input_entries,
+                output_selections=output_selections,
             )
         ).value
 
@@ -228,8 +233,9 @@ class Yascheduler:
         *,
         webhook_onsubmit: bool = False,
         input_entries: Sequence[TaskInputEntry] | None = None,
+        output_selections: list[str] | None = None,
     ) -> int:
-        """Submit new task, optionally with explicit typed input entries."""
+        """Submit new task, optionally with explicit inputs and output selections."""
         fn = to_sync(self.queue_submit_task_async)
         return fn(
             label,
@@ -237,6 +243,7 @@ class Yascheduler:
             engine_name,
             _webhook_onsubmit=webhook_onsubmit,
             input_entries=input_entries,
+            output_selections=output_selections,
         )
 
     # endregion METHOD_queue_submit_task

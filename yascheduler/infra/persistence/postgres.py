@@ -1,7 +1,7 @@
 """PostgreSQL repository implementations for tasks and nodes."""
 # region MODULE_CONTRACT
 # PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks (with their owned input snapshot entries) and nodes transactionally without coupling domain logic to pg8000 or SQL details.
-# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert and batched hydration with content-free DEBUG boundary traces.
+# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert, task-owned output-selection persistence, and batched hydration with content-free DEBUG boundary traces.
 # INVARIANTS: Every repository method is async and routes synchronous pg8000 calls through asyncio.get_running_loop().run_in_executor(self._executor, _fn).
 # DEPENDENCIES: USES API: pg8000.Connection, READS: SQL files from disk via sql_loader
 # KEYWORDS: postgres, repository, task, node, crud
@@ -164,6 +164,7 @@ class PostgresTaskRepository(_PgRepository):
             error=error_of(task),
             webhook_custom_params=task.webhook_custom_params,
             extra=task.extra,
+            output_selections=list(task.output_selections) or None,
             status=task.status.name,
             node_id=(
                 nid.value if (nid := allocated_node_id_of(task)) is not None else None
@@ -233,6 +234,7 @@ class PostgresTaskRepository(_PgRepository):
             webhook_url=new_task.webhook_url,
             webhook_custom_params=new_task.webhook_custom_params,
             extra=new_task.extra,
+            output_selections=list(new_task.output_selections) or None,
         )
         task = self._row_to_task(rows[0])
         # region BLOCK_insert_input_entries
@@ -411,6 +413,7 @@ class PostgresTaskRepository(_PgRepository):
             webhook_url=row["webhook_url"],
             webhook_custom_params=webhook_custom_params,
             local_folder=row["local_folder"],
+            output_selections=tuple(row.get("output_selections") or ()),
         )
 
         if status is TaskStatus.TO_DO:

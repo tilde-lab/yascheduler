@@ -9,12 +9,12 @@ specs/postgres-schema-apply/spec.md:
 * unallocated tasks (ip IS NULL) stay allocated_node_id = NULL
 * FK ON DELETE SET NULL nulls allocated_node_id when the node is removed
   (the task row is preserved; allocated_ip column is dropped by migration 009)
-* a fresh DB seeds yascheduler_migrations to '014' and apply_migrations skips 014
+* a fresh DB seeds yascheduler_migrations to '015' and apply_migrations skips 015
 """
 
 # region MODULE_CONTRACT
 # PURPOSE: Integration tests for migration 004 (add-allocated-node-id) and the schema.sql snapshot against real PostgreSQL via testcontainers.
-# SCOPE: migration 004 adds nullable allocated_node_id column with FK ON DELETE SET NULL; backfills existing tasks by joining ip; leaves unallocated (ip IS NULL) tasks NULL; FK nulls allocated_node_id on node delete (allocated_ip dropped by migration 009); fresh DB seeds to 014; schema.sql CREATE TABLE includes the column.
+# SCOPE: migration 004 adds nullable allocated_node_id column with FK ON DELETE SET NULL; backfills existing tasks by joining ip; leaves unallocated (ip IS NULL) tasks NULL; FK nulls allocated_node_id on node delete (allocated_ip dropped by migration 009); fresh DB seeds to 015; schema.sql CREATE TABLE includes the column.
 # KEYWORDS: migration 004, allocated_node_id, backfill, FK
 # endregion MODULE_CONTRACT
 
@@ -301,23 +301,23 @@ def test_fk_on_delete_set_null() -> None:
             conn.close()
 
 
-def test_fresh_db_seeds_to_014() -> None:
+def test_fresh_db_seeds_to_015() -> None:
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
         config = _make_config(pg)
         apply_schema(config)
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014"]
+            assert _tracker_rows(conn) == ["015"]
             assert "allocated_node_id" in _columns(conn, "yascheduler_tasks")
         finally:
             conn.close()
 
-        # apply_migrations finds MAX='014' and skips 014 (already seeded).
+        # apply_migrations finds MAX='015' and skips 015 (already seeded).
         apply_migrations(config)
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == ["014"]
+            assert _tracker_rows(conn) == ["015"]
         finally:
             conn.close()

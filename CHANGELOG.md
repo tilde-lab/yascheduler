@@ -1,3 +1,73 @@
+## Unreleased
+
+### BREAKING CHANGE
+
+- database schema change: migrations 014 (task input snapshots) and 015 (task
+  output selections) are applied by `yainit`, which must run before the new
+  daemon starts. Migration 014 converts stored legacy input payloads using the
+  engine declarations of the config it runs with and aborts, naming the
+  affected task, when a declaration or payload cannot be converted safely.
+
+### Feat
+
+- **inputs**: engine `input_files` accepts files, directories, and globs.
+  `yasubmit` captures the exact input tree from the submission working
+  directory, including nested and empty directories, hidden entries, and binary
+  files; the task keeps that snapshot, so the source files may change or
+  disappear after submission. Variable, home-directory, and brace expansion do
+  not apply; `**` matches directory levels and `*` never crosses `/`. Symbolic
+  links and unsafe paths are rejected.
+- **inputs**: the public submit methods accept optional typed `input_entries`
+  for tree and binary submissions, and legacy Python submissions keep working:
+  their filename/value metadata becomes the same typed snapshot. Queries add a
+  top-level `input_entries` list ordered by task-relative path, carrying exact
+  bytes (`content_base64`) or directory markers, while `metadata` keeps a
+  derived legacy filename/value view of that snapshot. Existing arguments,
+  integer task identities, and task statuses are unchanged.
+- **task**: accepted tasks freeze the engine's output selections; the public
+  client submit methods accept optional `output_selections` to override them
+  for one submission.
+- **retrieval**: `output_files` accepts files, directories, and globs in the
+  same selection language as `input_files`. A directory retrieves its complete
+  subtree, overlapping selections are merged and each path is transferred once,
+  and retrieved paths keep their task-relative layout under the local result
+  root, which is merged rather than cleared.
+
+### Fix
+
+- **retrieval**: a selection that matches nothing, or a selected symbolic link,
+  is a permanent error naming the failing selection while the remaining
+  selections are still attempted; a destination symbolic link or a
+  file/directory conflict is likewise a permanent error.
+- **retrieval**: a pass with any transient download failure keeps the task
+  `RUNNING` with the remote directory intact, even when permanent errors are
+  also present; only a pass without transient failures finalises the task.
+- **retrieval**: the terminal transition is committed before the remote task
+  directory is removed, so a crash during deletion can no longer make a later
+  pass re-download from a partly deleted tree. The removal runs afterwards as
+  best effort over its own SFTP channel and cannot change the task's outcome.
+- **retrieval**: directory listings, metadata reads, and the post-finalisation
+  removal are retried on transient SSH errors within the shared budget; an
+  exhausted budget records a transient error for the pass.
+- **retrieval**: a task whose engine was removed from the configuration
+  finalises as failed and has its remote directory cleaned up instead of
+  stranding it.
+- **deploy**: the upload creates the stored directories and inspects each
+  destination without following links; an unsafe destination or a failed write
+  prevents execution and reports the affected task and path.
+- **retrieval**: tasks accepted before output selections were recorded fall
+  back to the live configured selections and log a warning with the task
+  identity. Tasks with recorded selections keep them after engine configuration
+  fixes; resubmit those tasks.
+- **cli**: no command-line or flag changes; `yastatus` view follows the task's
+  recorded first selection and names a pattern instead of tailing it.
+
+### Refactor
+
+- **logging**: input capture, persistence, and deployment emit structured block
+  records with task and path identity; input-transfer diagnostics carry no file
+  payloads and no exception text.
+
 ## v2.0.2 (2026-10-08)
 
 ### Fix

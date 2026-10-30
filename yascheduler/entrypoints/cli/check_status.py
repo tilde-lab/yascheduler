@@ -22,6 +22,7 @@ from yascheduler.domain import (
     TaskId,
     TaskStatus,
     allocated_node_id_of,
+    is_glob_pattern,
     remote_folder_of,
 )
 from yascheduler.entrypoints import Config, make_cli_deps
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from yascheduler.domain import AnyTask, MachineSession, Node
 
 __all__ = ["check_status"]
+
+logger = logging.getLogger(__name__)
 
 
 # region FUNC__parse_status_args
@@ -258,17 +261,38 @@ def _parse_convergence(filepath: Path) -> str:
 
 
 # region FUNC__display_remote_output
-# PURPOSE: Connect to the remote machine and tail the last lines of the OUTPUT file so the operator can inspect running-job progress without logging into the remote host separately.
+# PURPOSE: Connect to the remote machine and tail the last lines of the task's output file so the operator can inspect running-job progress without logging into the remote host separately.
 # INVARIANTS:
 # - connects via repository.connect(node=node, ...) reading login user/port/jump-leg from the Node, never passing jump_host/jump_username separately
+# - tails the task's first recorded output selection, falling back to the engine's first configured selection for legacy tasks
+# - a pattern selection is named and skipped before any SSH connection is opened
 async def _display_remote_output(
     task: AnyTask,
     node: Node | None,
     config: Config,
 ) -> tuple[MachineSession, str, SSHMachineRepository, str] | None:
-    """Connect to machine via repository (under node.node_id), display tail of remote output file (engine.output_files[0] if defined, else 'OUTPUT')."""
+    """Tail the task's first output selection, or the configured fallback."""
     if node is None:
         sys.stdout.write("NO ALLOCATED HOSTNAME\n")
+        return None
+    selections = task.output_selections
+    if selections:
+        output_file = selections[0]
+    else:
+        logger.warning(
+            "task_id=%s has no recorded output selections; using engine '%s' configuration",
+            task.task_id,
+            task.engine,
+            extra={"task_id": task.task_id.value, "engine": task.engine},
+        )
+        engine = config.engines.get(task.engine)
+        output_file = (
+            engine.output_files[0] if engine and engine.output_files else "OUTPUT"
+        )
+    if is_glob_pattern(output_file):
+        sys.stdout.write(
+            f"OUTPUT SELECTION IS A PATTERN, SKIPPING REMOTE TAIL: {output_file}\n",
+        )
         return None
     repository = SSHMachineRepository()
     try:
@@ -287,9 +311,7 @@ async def _display_remote_output(
     if session.is_closed:
         sys.stdout.write("CAN'T CONNECT\n")
         return None
-    engine = config.engines.get(task.engine)
     # NB master output is given first
-    output_file = engine.output_files[0] if engine and engine.output_files else "OUTPUT"
     r_output = session.path(remote_folder) / output_file
     result = await session.run_full(
         f"tail -n15 {session.quote(str(r_output))}",

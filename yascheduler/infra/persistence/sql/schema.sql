@@ -5,7 +5,7 @@
 -- last_migration is the single manual edit point when a migration is added.
 DO $$
 DECLARE
-  last_migration CONSTANT TEXT := '014';
+  last_migration CONSTANT TEXT := '015';
 BEGIN
   IF to_regclass('yascheduler_migrations') IS NULL THEN
     EXECUTE 'CREATE TABLE yascheduler_migrations (
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS yascheduler_tasks (
     webhook_custom_params JSONB NOT NULL DEFAULT '{}'::JSONB,
     error TEXT,
     extra JSONB NOT NULL DEFAULT '{}'::JSONB,
+    output_selections TEXT [],
     CONSTRAINT task_status_field_invariants CHECK (
         (status = 'TO_DO' AND allocated_node_id IS NULL AND error IS NULL)
         OR (

@@ -201,6 +201,14 @@ class TestTask:
         assert done.state.allocated_node_id == NodeId(9)
         assert done.state.remote_folder == "/d"
 
+    def test_transitions_preserve_output_selections(self) -> None:
+        selections = ("OUT.aiida", "**/*.dat")
+        task = self.make_task(output_selections=selections)
+        running = task.run(NodeId(7), "/r")
+        assert running.output_selections is selections
+        done = running.complete(local_folder="/l", remote_folder="/r")
+        assert done.output_selections is selections
+
     def test_run_builds_running_state(self) -> None:
         task = self.make_task()
         running = task.run(NodeId(7), "/r")
@@ -630,6 +638,7 @@ class TestNewTask:
         assert nt.webhook_url is None
         assert nt.webhook_custom_params == {}
         assert nt.extra == {}
+        assert nt.output_selections == ()
         assert not hasattr(nt, "allocated_ip")
         assert not hasattr(nt, "created_at")
         assert not hasattr(nt, "updated_at")

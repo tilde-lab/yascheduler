@@ -47,6 +47,7 @@ def _make_task_row(**overrides: Any) -> dict[str, Any]:
         "webhook_url": None,
         "webhook_custom_params": "{}",
         "extra": "{}",
+        "output_selections": None,
         "error": None,
         "allocated_node_id": None,
         "created_at": None,
@@ -325,6 +326,22 @@ class TestPostgresTaskRepository:
         assert task.webhook_url == "https://hook.example.com"
         assert task.webhook_custom_params == {"key": "val"}
         assert task.extra == {"extra_field": "extra_val"}
+        assert task.output_selections == ()
+
+    async def test_get_maps_output_selections_to_tuple(
+        self, mocker: MockerFixture
+    ) -> None:
+        """A TEXT[] row hydrates into the task's immutable tuple record."""
+        repo = self._make_repo(mocker)
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [_make_task_row(task_id=1, output_selections=["OUT.aiida", "**/*.dat"])],
+            [],
+        ]
+
+        task = await repo.get(TaskId(1))
+
+        assert task is not None
+        assert task.output_selections == ("OUT.aiida", "**/*.dat")
 
     # -- insert ----------------------------------------------------------------
 
@@ -342,6 +359,22 @@ class TestPostgresTaskRepository:
         assert result.task_id == TaskId(99)
         assert result.label == "label"
         assert "INSERT INTO yascheduler_tasks" in repo._run.call_args[0][0]  # type: ignore[attr-defined]
+        _, kwargs = repo._run.call_args  # type: ignore[attr-defined]
+        assert kwargs["output_selections"] is None
+
+    async def test_insert_binds_recorded_output_selections(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Insert forwards a non-empty selection record to the TEXT[] column."""
+        repo = self._make_repo(mocker)
+        repo._run.return_value = [  # type: ignore[attr-defined]
+            _make_task_row(task_id=99, output_selections=["OUT"])
+        ]
+
+        await repo.insert(NewTask(engine="fleur", output_selections=("OUT",)))
+
+        _, kwargs = repo._run.call_args  # type: ignore[attr-defined]
+        assert kwargs["output_selections"] == ["OUT"]
 
     # -- save ------------------------------------------------------------------
 
@@ -375,8 +408,31 @@ class TestPostgresTaskRepository:
         assert "ip" not in kwargs
         assert kwargs["engine"] == "fleur"
         assert kwargs["remote_folder"] == "/remote"
+        assert kwargs["output_selections"] is None
         # default expected_status=None preserves the unconditional-write behavior
         assert kwargs["expected_status"] is None
+
+    async def test_save_binds_recorded_output_selections(
+        self, mocker: MockerFixture
+    ) -> None:
+        """Save forwards a non-empty selection record to the lifecycle UPDATE."""
+        repo = self._make_repo(mocker)
+        from datetime import datetime
+
+        task = Task(
+            task_id=TaskId(7),
+            label="my-job",
+            engine="fleur",
+            state=Todo(),
+            output_selections=("OUT", "**/*.dat"),
+            created_at=datetime(2025, 1, 1),
+            updated_at=datetime(2025, 1, 1),
+        )
+
+        await repo.save(task)
+
+        _, kwargs = repo._run.call_args  # type: ignore[attr-defined]
+        assert kwargs["output_selections"] == ["OUT", "**/*.dat"]
 
     async def test_save_with_expected_status_passes_guard_param(
         self, mocker: MockerFixture

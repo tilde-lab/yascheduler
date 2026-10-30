@@ -1,7 +1,7 @@
 """Consume task use case — download outputs from a remote machine and finalise or defer the task."""
 # region MODULE_CONTRACT
 # PURPOSE: Reliably retrieve remote computation results and classify errors to either close the task lifecycle or retry, so transient infra failures do not prematurely terminate valid work.
-# SCOPE: Task consumption lifecycle — output download via SFTP, transient/permanent error classification, finalise with domain transitions (complete/fail), persistence, tracker slot discard, best-effort remote cleanup after finalisation.
+# SCOPE: Task consumption lifecycle — task-owned output selections (configured fallback for legacy tasks), output download via SFTP, transient/permanent error classification, finalise with domain transitions (complete/fail), persistence, tracker slot discard, best-effort remote cleanup after finalisation.
 # KEYWORDS: consume, finalise, download, defer, retry, output, cleanup, sftp
 # endregion MODULE_CONTRACT
 
@@ -34,7 +34,7 @@ __all__ = ["consume_task"]
 
 
 # region FUNC__prepare_store_folder
-# PURPOSE: Ensure the local filesystem is ready to receive remote outputs and return the remote task root, so the download step can resolve the engine's selections against it without pre-joining paths.
+# PURPOSE: Ensure the local filesystem is ready to receive remote outputs and return the remote task root, so the download step can resolve the task's selections against it without pre-joining paths.
 async def _prepare_store_folder(
     task: RunningTask, local_tasks_dir: Path
 ) -> tuple[Path, str]:
@@ -152,8 +152,8 @@ async def _finalize_and_clean(
 
 
 # region FUNC_consume_task
-# PURPOSE: Load a RUNNING task, download its outputs from the remote machine, and finalise (DONE) or defer (stay RUNNING).
-# ENSURES: Returns True when finalised (or task gone — vacuously finalised); False when deferred.
+# PURPOSE: Load a RUNNING task, retrieve its recorded output selections, and finalise (DONE) or defer (stay RUNNING), retaining a logged configuration fallback for legacy tasks.
+# ENSURES: Returns True when finalised (or task gone — vacuously finalised); False when deferred; a removed engine still fails the task even when selections were recorded.
 async def consume_task(
     task_id: TaskId,
     session: MachineSession,
@@ -199,6 +199,26 @@ async def consume_task(
         task,
         local_tasks_dir,
     )
+    # region BLOCK_resolve_output_selections
+    selections = task.output_selections
+    if not selections:
+        selections = engine.output_files
+        logger.warning(
+            "task_id=%s has no recorded output selections; using engine '%s' configuration",
+            task.task_id,
+            task.engine,
+            extra={"task_id": task.task_id.value, "engine": task.engine},
+        )
+    logger.debug(
+        "OUTPUT_SELECTIONS_RESOLVED",
+        extra={
+            "task_id": task.task_id.value,
+            "output_selections": list(selections),
+            "source": "task" if task.output_selections else "engine",
+        },
+    )
+    # endregion BLOCK_resolve_output_selections
+
     # region BLOCK_download
     (
         _local_folder,
@@ -209,7 +229,7 @@ async def consume_task(
         session=session,
         remote_dir=task_remote_folder,
         local_dir=store_folder,
-        selections=list(engine.output_files),
+        selections=list(selections),
         task_id=task.task_id,
     )
     logger.debug(
