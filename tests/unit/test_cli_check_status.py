@@ -35,7 +35,7 @@ check_status_mod = importlib.import_module("yascheduler.entrypoints.cli.check_st
 pytestmark = pytest.mark.unit
 
 
-# Mock helpers (mirror tests/unit/test_cli_behavioral.py / test_cli_show_nodes.py)
+# Mock helpers (duplicated across the CLI test modules)
 
 
 def make_cloud(

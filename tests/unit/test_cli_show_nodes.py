@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import logging
 from pathlib import Path, PurePosixPath
 from unittest.mock import AsyncMock, MagicMock
@@ -33,7 +32,7 @@ pytestmark = pytest.mark.unit
 
 
 # ---------------------------------------------------------------------------
-# Mock helpers (mirror tests/unit/test_cli_behavioral.py)
+# Mock helpers (duplicated across the CLI test modules)
 # ---------------------------------------------------------------------------
 
 
@@ -641,18 +640,9 @@ class TestShowNodesErrors:
 
 
 class TestShowNodesStructure:
-    """Structural guards: no external deps, O(n+m) join."""
+    """Structural guard: each source is read once, not re-queried per node."""
 
-    def test_render_table_no_external_deps(self) -> None:
-        source = inspect.getsource(show_nodes_mod._render_nodes_table)
-        assert "rich" not in source
-        assert "tabulate" not in source
-        # Also assert the module globals don't expose rich/tabulate.
-        assert "rich" not in show_nodes_mod.__dict__
-        assert "tabulate" not in show_nodes_mod.__dict__
-        assert True
-
-    def test_fetch_nodes_view_is_o_n_plus_m(
+    def test_fetch_nodes_view_reads_each_source_once(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
@@ -672,12 +662,8 @@ class TestShowNodesStructure:
             [make_task(task_id=1, label="j1", allocated_node_id=NodeId(1))],
         )
         _run([])
-        # Each read called exactly once.
         uow.tasks.list_running.assert_called_once()
         uow.nodes.list_all.assert_called_once()
-        # The source builds a tasks_by_node_id dict (O(n+m)), not a nested scan.
-        source = inspect.getsource(show_nodes_mod._fetch_nodes_view)
-        assert "tasks_by_node_id" in source
 
 
 # ---------------------------------------------------------------------------

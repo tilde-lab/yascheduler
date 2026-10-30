@@ -28,7 +28,7 @@ pytestmark = pytest.mark.unit
 
 
 # ---------------------------------------------------------------------------
-# Mock helpers (mirror tests/unit/test_cli_behavioral.py)
+# Mock helpers (duplicated across the CLI test modules)
 # ---------------------------------------------------------------------------
 
 

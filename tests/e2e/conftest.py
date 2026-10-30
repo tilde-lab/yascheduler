@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
@@ -36,7 +35,6 @@ if TYPE_CHECKING:
 
 _SSH_IMAGE = "serversideup/docker-ssh"
 _SSH_USERNAME = "testuser"
-_YASCHEDULER_LOGGER = "yascheduler"
 
 
 def _container_loopback_ip(index: int) -> str:
@@ -54,15 +52,6 @@ def _container_loopback_ip(index: int) -> str:
     is unreachable from the host.
     """
     return f"127.0.0.{index + 1}"
-
-
-class LogCaptureHandler(logging.Handler):
-    def __init__(self, records: list[logging.LogRecord]) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._records = records
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(record)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -283,18 +272,3 @@ def uow_factory(
         return PostgresUnitOfWork(_db_config, _bus)
 
     return _factory
-
-
-@pytest.fixture
-def log_records() -> Generator[list[logging.LogRecord], None, None]:
-    logger = logging.getLogger(_YASCHEDULER_LOGGER)
-    records: list[logging.LogRecord] = []
-    handler = LogCaptureHandler(records)
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)

@@ -12,13 +12,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Generator
 from contextlib import AbstractContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from yascheduler.shared.log import _NATIVE_KEYS
+from tests.log_assertions import extra_fields
 
 
 def _bm_stream(items: list, exc: Exception | None = None):
@@ -53,38 +52,6 @@ def _ssh_key_stream(items: list):
             yield key
 
     return gen()
-
-
-class LogCaptureHandler(logging.Handler):
-    """Capture log records for assertion."""
-
-    def __init__(self, records: list[logging.LogRecord]) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._records = records
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(record)
-
-
-@pytest.fixture
-def log_records() -> Generator[list[logging.LogRecord], None, None]:
-    """Capture log records from the vultr provider logger."""
-    logger = logging.getLogger("yascheduler.infra.cloud.providers.vultr")
-    records: list[logging.LogRecord] = []
-    handler = LogCaptureHandler(records)
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)
-
-
-def extra_fields(record: logging.LogRecord) -> dict[str, object]:
-    """Reconstruct structured fields from a log record."""
-    return {k: getattr(record, k) for k in record.__dict__ if k not in _NATIVE_KEYS}
 
 
 def _patch_vultr_client(

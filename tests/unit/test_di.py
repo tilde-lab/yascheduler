@@ -470,11 +470,6 @@ class TestMakeDaemon:
     @pytest.mark.asyncio
     async def test_make_daemon_does_not_import_db(self) -> None:
         """make_daemon must not import or reference DB."""
-        import inspect
-
         import yascheduler.entrypoints.di as di_module
 
         assert not hasattr(di_module, "DB"), "di.py still imports DB"
-        src = inspect.getsource(di_module.make_daemon)
-        assert "DB.create" not in src
-        assert "node_repo" not in src

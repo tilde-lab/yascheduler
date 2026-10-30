@@ -30,7 +30,7 @@ manage_node_mod = importlib.import_module("yascheduler.entrypoints.cli.manage_no
 pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
-# Mock helpers (mirror tests/unit/test_cli_submit.py and test_cli_behavioral.py)
+# Mock helpers (duplicated across the CLI test modules)
 # ---------------------------------------------------------------------------
 
 

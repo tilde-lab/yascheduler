@@ -8,8 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from collections.abc import Generator
 from contextlib import AbstractContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,7 +16,6 @@ import pytest
 
 from yascheduler.infra.cloud.cloud_configs import ConfigCloudHetzner
 from yascheduler.infra.cloud.providers.hetzner import HetznerError
-from yascheduler.shared.log import _NATIVE_KEYS
 
 
 def _patch_hetzner_client(
@@ -32,38 +29,6 @@ def _patch_hetzner_client(
         "yascheduler.infra.cloud.providers.hetzner.HetznerClient",
         return_value=mock_cm,
     )
-
-
-def extra_fields(record: logging.LogRecord) -> dict[str, object]:
-    """Reconstruct structured fields from a log record."""
-    return {k: getattr(record, k) for k in record.__dict__ if k not in _NATIVE_KEYS}
-
-
-class LogCaptureHandler(logging.Handler):
-    """Capture log records for assertion."""
-
-    def __init__(self, records: list[logging.LogRecord]) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._records = records
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(record)
-
-
-@pytest.fixture
-def log_records() -> Generator[list[logging.LogRecord], None, None]:
-    """Capture log records from the hetzner provider logger."""
-    logger = logging.getLogger("yascheduler.infra.cloud.providers.hetzner")
-    records: list[logging.LogRecord] = []
-    handler = LogCaptureHandler(records)
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)
 
 
 def _make_key() -> MagicMock:

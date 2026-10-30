@@ -14,7 +14,6 @@ from yascheduler.domain import (
     TaskInputEntry,
     TaskInputFile,
     TaskInputKind,
-    TaskInputSnapshot,
     UnsafeTaskPathError,
     ValidationError,
     normalize_input_snapshot,
@@ -37,67 +36,43 @@ class _SensitiveRepr:
         return f"SENSITIVE_REPR<{self.marker}>"
 
 
-class TestTaskInputFile:
-    def test_holds_path_and_bytes(self) -> None:
-        content = b"\x00\xff binary \n\r"
-        entry = TaskInputFile(path="INPUT", content=content)
-        assert entry.path == "INPUT"
-        assert entry.content is content
-
-    def test_kind_is_file(self) -> None:
-        assert TaskInputFile(path="INPUT", content=b"x").kind is TaskInputKind.FILE
-
-    def test_kind_member_value(self) -> None:
-        assert TaskInputKind.FILE == "file"
-        assert TaskInputKind.DIRECTORY == "directory"
-
-    def test_empty_file_content(self) -> None:
-        entry = TaskInputFile(path="INPUT", content=b"")
-        assert entry.content == b""
-
-    def test_is_frozen(self) -> None:
-        entry = TaskInputFile(path="INPUT", content=b"x")
-        with pytest.raises(AttributeError):
-            entry.path = "other"  # type: ignore[misc]
+@pytest.mark.parametrize(
+    ("entry", "kind"),
+    [
+        (TaskInputFile(path="INPUT", content=b"\x00\xff"), TaskInputKind.FILE),
+        (TaskInputDirectory(path="basis"), TaskInputKind.DIRECTORY),
+    ],
+    ids=["file", "directory"],
+)
+def test_entry_is_frozen_and_kind_discriminated(
+    entry: TaskInputEntry, kind: TaskInputKind
+) -> None:
+    """Both entry kinds carry their own kind and resist mutation."""
+    assert entry.path in {"INPUT", "basis"}
+    assert entry.kind is kind
+    with pytest.raises(AttributeError):
+        entry.path = "other"  # type: ignore[misc]
 
 
-class TestTaskInputDirectory:
-    def test_holds_path_without_content(self) -> None:
-        entry = TaskInputDirectory(path="basis")
-        assert entry.path == "basis"
-
-    def test_kind_is_directory(self) -> None:
-        assert TaskInputDirectory(path="basis").kind is TaskInputKind.DIRECTORY
-
-    def test_is_frozen(self) -> None:
-        entry = TaskInputDirectory(path="basis")
-        with pytest.raises(AttributeError):
-            entry.path = "other"  # type: ignore[misc]
+def test_kind_values_are_the_persisted_wire_strings() -> None:
+    """The enum values are what the DB CHECK constraint and legacy conversion spell."""
+    assert (TaskInputKind.FILE, TaskInputKind.DIRECTORY) == ("file", "directory")
 
 
-class TestEntryUnion:
-    def test_union_covers_both_entries(self) -> None:
-        assert TaskInputFile(path="INPUT", content=b"") is not None
-        assert TaskInputDirectory(path="basis") is not None
-        assert TaskInputEntry is not None
-
-    def test_snapshot_accepts_empty_tuple(self) -> None:
-        snapshot: TaskInputSnapshot = ()
-        assert snapshot == ()
+def test_file_keeps_binary_content_verbatim() -> None:
+    """Input bytes reach the upload untouched, NUL bytes and CRLF included."""
+    content = b"\x00\xff binary \n\r"
+    assert TaskInputFile(path="INPUT", content=content).content is content
 
 
-class TestRecordContracts:
-    def test_new_task_defaults_to_empty_snapshot(self) -> None:
-        nt = NewTask(engine="cp2k")
-        assert nt.input_entries == ()
-
-    def test_new_task_carries_input_entries(self) -> None:
-        entries: tuple[TaskInputEntry, ...] = (
-            TaskInputDirectory(path="basis"),
-            TaskInputFile(path="basis/Si.orb", content=b"\x00"),
-        )
-        nt = NewTask(engine="cp2k", input_entries=entries)
-        assert nt.input_entries == entries
+def test_new_task_round_trips_input_entries() -> None:
+    """A submission record defaults to no entries and otherwise returns what it got."""
+    entries: tuple[TaskInputEntry, ...] = (
+        TaskInputDirectory(path="basis"),
+        TaskInputFile(path="basis/Si.orb", content=b"\x00"),
+    )
+    assert NewTask(engine="cp2k").input_entries == ()
+    assert NewTask(engine="cp2k", input_entries=entries).input_entries == entries
 
 
 class TestValidateTaskPath:
