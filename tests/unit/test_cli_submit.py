@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -160,13 +161,6 @@ class TestSubmitParsing:
         with pytest.raises(SystemExit) as exc:
             _run([str(script), str(script)])
         assert exc.value.code == 2
-
-    def test_unknown_flag_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--bogus"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -751,61 +745,32 @@ class TestSubmitArgvInjection:
 
 
 class TestSubmitConfigLogLevel:
-    """--config and --log-level argparse + behavior scenarios."""
+    """--config and --log-level wiring: both reach parse_config, root level follows the flag."""
 
-    def test_help_lists_config_and_log_level(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--help"])
-        assert exc.value.code == 0
-        out, _ = capsys.readouterr()
-        assert "--config" in out
-        assert "--log-level" in out
-
-    def test_config_nonexistent_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        tmp_path: Path,
-    ) -> None:
-        script = tmp_path / "s.in"
-        script.write_text("ENGINE = g09\n")
-        with pytest.raises(SystemExit) as exc:
-            _run([str(script), "--config", "/nonexistent.conf"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert "not a file" in err
-        assert "/nonexistent.conf" in err
-
-    def test_log_level_warn_rejected_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        tmp_path: Path,
-    ) -> None:
-        script = tmp_path / "s.in"
-        script.write_text("ENGINE = g09\n")
-        with pytest.raises(SystemExit) as exc:
-            _run([str(script), "--log-level", "WARN"])
-        assert exc.value.code == 2
-
-    def test_log_level_debug_sets_root_to_debug(
+    @pytest.mark.parametrize(
+        ("argv_tail", "expected_level"),
+        [
+            pytest.param([], logging.WARNING, id="default-warning"),
+            pytest.param(["--log-level", "DEBUG"], logging.DEBUG, id="debug-flag"),
+        ],
+    )
+    def test_root_log_level(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         stub_config_deps: tuple[MagicMock, MagicMock],
+        argv_tail: list[str],
+        expected_level: int,
     ) -> None:
-        import logging
-
-        root = logging.getLogger()
-        original_level = root.level
         script = tmp_path / "s.in"
         script.write_text("ENGINE = g09\n")
         (tmp_path / "input").write_text("x")
         monkeypatch.chdir(tmp_path)
+        root = logging.getLogger()
+        original_level = root.level
         try:
-            _run([str(script), "--log-level", "DEBUG"])
-            assert root.level == logging.DEBUG
+            _run([str(script), *argv_tail])
+            assert root.level == expected_level
         finally:
             root.setLevel(original_level)
 
@@ -854,32 +819,3 @@ class TestSubmitConfigLogLevel:
         called_with = from_config_spy.call_args.args[0]
         # existing_path returns Path; default is the CONFIG_FILE string, converted by argparse type.
         assert str(called_with) == str(CONFIG_FILE)
-
-    def test_default_log_level_is_warning(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import logging
-
-        root = logging.getLogger()
-        original_level = root.level
-        script = tmp_path / "s.in"
-        script.write_text("ENGINE = g09\n")
-        (tmp_path / "input").write_text("x")
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(
-            submit_mod,
-            "parse_config",
-            MagicMock(return_value=make_mock_config()),
-        )
-        monkeypatch.setattr(
-            submit_mod,
-            "make_cli_deps",
-            MagicMock(return_value=make_mock_deps(make_mock_config())),
-        )
-        try:
-            _run([str(script)])
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)

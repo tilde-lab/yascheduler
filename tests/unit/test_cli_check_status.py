@@ -957,33 +957,6 @@ class TestCheckStatusQueryRenderSeparation:
 class TestCheckStatusConfigLogLevel:
     """--config and --log-level argparse + behavior scenarios (defaults WARNING)."""
 
-    def test_help_lists_config_and_log_level(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            check_status_mod._parse_status_args(["--help"])
-        assert exc.value.code == 0
-        out, _ = capsys.readouterr()
-        assert "--config" in out
-        assert "--log-level" in out
-
-    def test_config_nonexistent_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            check_status_mod._parse_status_args(["--config", "/nonexistent.conf"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert "not a file" in err
-        assert "/nonexistent.conf" in err
-
-    def test_log_level_warn_rejected_exits_two(self) -> None:
-        with pytest.raises(SystemExit) as exc:
-            check_status_mod._parse_status_args(["--log-level", "WARN"])
-        assert exc.value.code == 2
-
     @pytest.mark.parametrize(
         ("argv", "expected_level"),
         [

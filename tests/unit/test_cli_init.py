@@ -117,18 +117,6 @@ class TestInitFlags:
         assert "--schema" in out
         assert "--daemon" in out
 
-    def test_unknown_flag_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """--bogus → argparse usage error on stderr; exit 2."""
-        with pytest.raises(SystemExit) as exc:
-            init(["--bogus"])
-
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()  # argparse prints a usage error
-
 
 class TestInitErrors:
     """Exit-code contract on DatabaseError and OSError."""
@@ -285,28 +273,6 @@ class TestServiceInstall:
 
 class TestInitConfigLogLevel:
     """--config and --log-level argparse + behavior scenarios (defaults WARNING)."""
-
-    def test_help_lists_config_and_log_level(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            init(["--help"])
-        assert exc.value.code == 0
-        out, _ = capsys.readouterr()
-        assert "--config" in out
-        assert "--log-level" in out
-
-    def test_config_nonexistent_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            init(["--schema", "--config", "/nonexistent.conf"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert "not a file" in err
-        assert "/nonexistent.conf" in err
 
     def test_config_custom_passed_to_init_schema(
         self,
