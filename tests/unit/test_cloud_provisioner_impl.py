@@ -1002,94 +1002,36 @@ class TestDeallocate:
         adapter.delete_node.assert_awaited_once_with(cfg=config, external_id="10.0.0.1")
 
     @pytest.mark.asyncio
-    async def test_deallocate_unsupported_cloud(self) -> None:
-        """Logs warning when cloud provider is not configured."""
+    @pytest.mark.parametrize(
+        ("cloud", "external_id", "has_config"),
+        [
+            pytest.param("unknown-cloud", "10.0.0.1", True, id="unsupported-cloud"),
+            pytest.param("test-cloud", "10.0.0.1", False, id="cloud-without-config"),
+            pytest.param(None, "10.0.0.1", True, id="no-cloud"),
+            pytest.param("test-cloud", None, True, id="no-external-id"),
+        ],
+    )
+    async def test_deallocate_skips_adapter_call(
+        self,
+        cloud: str | None,
+        external_id: str | None,
+        has_config: bool,
+    ) -> None:
+        """A node no provider can act on is skipped: the adapter is never called."""
         adapter, config = _make_mock_adapter(name="test-cloud")
         adapter.delete_node = AsyncMock()
 
         prov = make_provisioner(
             adapters={"test-cloud": adapter},
-            configs={"test-cloud": config},
+            configs={"test-cloud": config} if has_config else {},
         )
 
         node = Node(
             node_id=NodeId(1),
             hostname="10.0.0.1",
+            external_id=external_id,
             ncpus=2,
-            cloud="unknown-cloud",
-            username="root",
-            port=22,
-            enabled=True,
-        )
-        await prov.deallocate(node)
-
-        adapter.delete_node.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_deallocate_no_config(self) -> None:
-        """Logs warning when cloud is in adapters but not in configs."""
-        adapter, _config = _make_mock_adapter(name="test-cloud")
-        adapter.delete_node = AsyncMock()
-
-        prov = make_provisioner(
-            adapters={"test-cloud": adapter},
-            configs={},
-        )
-
-        node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.1",
-            ncpus=2,
-            cloud="test-cloud",
-            username="root",
-            port=22,
-            enabled=True,
-        )
-        await prov.deallocate(node)
-
-        adapter.delete_node.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_deallocate_no_cloud_logs_and_returns(self) -> None:
-        """node.cloud is None -> no provider SDK invoked; adapter logs and returns."""
-        adapter, config = _make_mock_adapter(name="test-cloud")
-        adapter.delete_node = AsyncMock()
-
-        prov = make_provisioner(
-            adapters={"test-cloud": adapter},
-            configs={"test-cloud": config},
-        )
-
-        node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.1",
-            ncpus=2,
-            cloud=None,
-            username="root",
-            port=22,
-            enabled=True,
-        )
-        await prov.deallocate(node)
-
-        adapter.delete_node.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_deallocate_no_external_id_logs_and_returns(self) -> None:
-        """cloud set but external_id None (corrupt/legacy row) -> skip, no adapter call."""
-        adapter, config = _make_mock_adapter(name="test-cloud")
-        adapter.delete_node = AsyncMock()
-
-        prov = make_provisioner(
-            adapters={"test-cloud": adapter},
-            configs={"test-cloud": config},
-        )
-
-        node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.1",
-            ncpus=2,
-            cloud="test-cloud",
-            external_id=None,
+            cloud=cloud,
             username="root",
             port=22,
             enabled=True,

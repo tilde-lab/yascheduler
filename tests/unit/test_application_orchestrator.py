@@ -539,20 +539,32 @@ class TestCloudsGetCapacity:
         cap = await orch._clouds_get_capacity()
         assert cap == 0
 
+    @pytest.mark.parametrize(
+        ("max_nodes", "clouds", "expected"),
+        [
+            pytest.param(10, ("aws", "aws", "gcp"), 8, id="matching-nodes-subtracted"),
+            pytest.param(5, ("aws",) * 10, 0, id="clamped-to-zero"),
+            pytest.param(8, ("gcp", "azure", "aws"), 7, id="unrelated-clouds-excluded"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_capacity_with_nodes(self) -> None:
-        """active_clouds with max_nodes=10, 2 matching nodes → returns 8."""
+    async def test_capacity_counts_only_active_cloud_nodes(
+        self,
+        max_nodes: int,
+        clouds: tuple[str, ...],
+        expected: int,
+    ) -> None:
+        """Capacity is max_nodes minus nodes whose cloud is an active cloud prefix."""
         cfg_aws = MagicMock()
-        cfg_aws.max_nodes = 10
+        cfg_aws.max_nodes = max_nodes
         cfg_aws.prefix = "aws"
         orch = make_orchestrator(active_clouds=[cfg_aws])
 
         from yascheduler.domain.model import Node, NodeId
 
         nodes = [
-            Node(node_id=NodeId(1), hostname="1", ncpus=2, cloud="aws"),
-            Node(node_id=NodeId(2), hostname="2", ncpus=2, cloud="aws"),
-            Node(node_id=NodeId(3), hostname="3", ncpus=2, cloud="gcp"),
+            Node(node_id=NodeId(i + 1), hostname=str(i + 1), ncpus=2, cloud=cloud)
+            for i, cloud in enumerate(clouds)
         ]
         mock_uow = AsyncMock()
         mock_uow.nodes.list_all = AsyncMock(return_value=nodes)
@@ -561,54 +573,7 @@ class TestCloudsGetCapacity:
         orch._uow_factory = lambda: mock_uow  # type: ignore[method-assign]
 
         cap = await orch._clouds_get_capacity()
-        assert cap == 8  # 10 max - 2 current (aws nodes only)
-
-    @pytest.mark.asyncio
-    async def test_capacity_clamped_to_zero(self) -> None:
-        """When current exceeds max_nodes, clamp to 0."""
-        cfg_aws = MagicMock()
-        cfg_aws.max_nodes = 5
-        cfg_aws.prefix = "aws"
-        orch = make_orchestrator(active_clouds=[cfg_aws])
-
-        from yascheduler.domain.model import Node, NodeId
-
-        nodes = [
-            Node(node_id=NodeId(i + 1), hostname=str(i), ncpus=2, cloud="aws")
-            for i in range(10)
-        ]
-        mock_uow = AsyncMock()
-        mock_uow.nodes.list_all = AsyncMock(return_value=nodes)
-        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
-        mock_uow.__aexit__ = AsyncMock(return_value=False)
-        orch._uow_factory = lambda: mock_uow  # type: ignore[method-assign]
-
-        cap = await orch._clouds_get_capacity()
-        assert cap == 0  # max(0, 5-10)
-
-    @pytest.mark.asyncio
-    async def test_unrelated_clouds_excluded(self) -> None:
-        """Nodes in clouds not in active_clouds don't count toward current."""
-        cfg_aws = MagicMock()
-        cfg_aws.max_nodes = 8
-        cfg_aws.prefix = "aws"
-        orch = make_orchestrator(active_clouds=[cfg_aws])
-
-        from yascheduler.domain.model import Node, NodeId
-
-        nodes = [
-            Node(node_id=NodeId(1), hostname="1", ncpus=2, cloud="gcp"),
-            Node(node_id=NodeId(2), hostname="2", ncpus=2, cloud="azure"),
-            Node(node_id=NodeId(3), hostname="3", ncpus=2, cloud="aws"),
-        ]
-        mock_uow = AsyncMock()
-        mock_uow.nodes.list_all = AsyncMock(return_value=nodes)
-        mock_uow.__aenter__ = AsyncMock(return_value=mock_uow)
-        mock_uow.__aexit__ = AsyncMock(return_value=False)
-        orch._uow_factory = lambda: mock_uow  # type: ignore[method-assign]
-
-        cap = await orch._clouds_get_capacity()
-        assert cap == 7  # 8 max - 1 current (only aws counts)
+        assert cap == expected
 
 
 class TestOrchestratorConstructor:
@@ -809,9 +774,20 @@ class TestAllocatorConsumer:
 class TestConsumeConditionalDiscard:
     """_task_consumer_consumer discards _occupancy_started only when consume_task returns True."""
 
+    @pytest.mark.parametrize(
+        ("consume_result", "in_occupancy"),
+        [
+            pytest.param(True, False, id="finalised-discards-ip"),
+            pytest.param(False, True, id="deferred-keeps-ip"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_finalised_discards_ip(self) -> None:
-        """consume_task returns True -> _occupancy_started.discard(ip) called."""
+    async def test_discards_occupancy_only_on_finalise(
+        self,
+        consume_result: bool,
+        in_occupancy: bool,
+    ) -> None:
+        """consume_task True discards the occupancy slot; False keeps it for the next cycle."""
         from yascheduler.application.queue import UMessage
         from yascheduler.domain.model import ConnectedMachine, MachineState
 
@@ -837,50 +813,13 @@ class TestConsumeConditionalDiscard:
 
         with patch(
             "yascheduler.application.orchestrator.consume_task",
-            new=AsyncMock(return_value=True),
+            new=AsyncMock(return_value=consume_result),
         ):
             await orch._task_consumer_consumer(
                 cast("UMessage[TaskId, Task[Running]]", msg), Counter()
             )
 
-        assert NodeId(1) not in orch._occupancy_started
-
-    @pytest.mark.asyncio
-    async def test_deferred_keeps_ip(self) -> None:
-        """consume_task returns False -> _occupancy_started.discard(ip) NOT called."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import ConnectedMachine, MachineState
-
-        orch = make_orchestrator()
-        machine = ConnectedMachine(
-            node_id=NodeId(1),
-            platforms=("linux",),
-            state=MachineState.FREE,
-            free_since=0.0,
-        )
-        session_stub = SimpleNamespace(machine=machine, ip="10.0.0.1")
-        orch._repository.get_session = MagicMock(return_value=session_stub)  # type: ignore[method-assign]
-        orch._occupancy_started.add(NodeId(1))
-
-        task = _make_task(
-            task_id=TaskId(5),
-            engine="e",
-            label="t",
-            status=TaskStatus.RUNNING,
-            allocated_node_id=NodeId(1),
-        )
-        msg = UMessage(TaskId(5), task)
-
-        with patch(
-            "yascheduler.application.orchestrator.consume_task",
-            new=AsyncMock(return_value=False),
-        ):
-            await orch._task_consumer_consumer(
-                cast("UMessage[TaskId, Task[Running]]", msg), Counter()
-            )
-
-        # Deferred: ip stays registered so the next producer cycle re-enters consume
-        assert NodeId(1) in orch._occupancy_started
+        assert (NodeId(1) in orch._occupancy_started) is in_occupancy
 
 
 class TestConsumeInFlightGuard:

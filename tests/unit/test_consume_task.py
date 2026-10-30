@@ -582,59 +582,35 @@ class TestConsumeTask:
             "error": expected_error,
         }
 
-    async def test_transient_only_defers_without_terminal_side_effects(
+    @pytest.mark.parametrize(
+        ("transient", "permanent", "expected_permanent"),
+        [
+            pytest.param(
+                [(OUTPUT_PATH, SFTPFailure("connection lost"))],
+                [],
+                0,
+                id="transient-only",
+            ),
+            pytest.param(
+                [(OUTPUT_PATH, SFTPFailure("connection lost"))],
+                [(f"{REMOTE_FOLDER}/OTHER", OSError("permission denied"))],
+                1,
+                id="transient-and-permanent",
+            ),
+        ],
+    )
+    async def test_transient_error_defers_without_terminal_side_effects(
         self,
         mock_output_downloader: MagicMock,
         running_task: Task,
         mock_engine_repo: MagicMock,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
+        transient: list[tuple[str, Exception]],
+        permanent: list[tuple[str, Exception]],
+        expected_permanent: int,
     ) -> None:
-        """Transient-only errors -> False with no save, commit, discard, or cleanup."""
-        transient = [(OUTPUT_PATH, SFTPFailure("connection lost"))]
-        mock_output_downloader.download_outputs = AsyncMock(
-            return_value=(transient, [])
-        )
-        uow = _make_uow(running_task)
-        tracker = _make_tracker()
-        session = SimpleNamespace()
-
-        with caplog.at_level(logging.DEBUG, logger=CONSUME_LOGGER):
-            result = await _run_consume(
-                task_id=running_task.task_id,
-                session=session,
-                uow_factory=MagicMock(return_value=uow),
-                output_downloader=mock_output_downloader,
-                engines=mock_engine_repo,
-                local_tasks_dir=tmp_path,
-                tracker=tracker,
-            )
-
-        assert result is False
-        uow.tasks.save.assert_not_awaited()
-        uow.commit.assert_not_awaited()
-        tracker.discard.assert_not_called()
-        mock_output_downloader.cleanup_remote.assert_not_awaited()
-        assert _marker_fields(caplog, "RETRIEVAL_DEFER") == {
-            "task_id": 1,
-            "transient": 1,
-            "permanent": 0,
-        }
-        assert not any(
-            record.getMessage() == "FINALISE_DECISION" for record in caplog.records
-        )
-
-    async def test_mixed_transient_and_permanent_errors_defer_without_side_effects(
-        self,
-        mock_output_downloader: MagicMock,
-        running_task: Task,
-        mock_engine_repo: MagicMock,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Any transient error wins over permanent errors: no terminal state or cleanup."""
-        transient = [(OUTPUT_PATH, SFTPFailure("connection lost"))]
-        permanent = [(f"{REMOTE_FOLDER}/OTHER", OSError("permission denied"))]
+        """Any transient error defers (False) with no save, commit, discard, or cleanup."""
         mock_output_downloader.download_outputs = AsyncMock(
             return_value=(transient, permanent)
         )
@@ -660,8 +636,8 @@ class TestConsumeTask:
         mock_output_downloader.cleanup_remote.assert_not_awaited()
         assert _marker_fields(caplog, "RETRIEVAL_DEFER") == {
             "task_id": 1,
-            "transient": 1,
-            "permanent": 1,
+            "transient": len(transient),
+            "permanent": expected_permanent,
         }
         assert not any(
             record.getMessage() == "FINALISE_DECISION" for record in caplog.records

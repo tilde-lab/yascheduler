@@ -544,32 +544,23 @@ class TestCheckStatusExitCodes:
         _, err = capsys.readouterr()
         assert "Error:" in err
 
-    def test_exit_one_on_config_error(
+    @pytest.mark.parametrize(
+        ("attr", "error"),
+        [
+            pytest.param("parse_config", RuntimeError("bad config"), id="config-error"),
+            pytest.param(
+                "make_cli_deps", ValueError("unexpected"), id="unexpected-exception"
+            ),
+        ],
+    )
+    def test_exit_one_on_startup_failure(
         self,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
+        attr: str,
+        error: Exception,
     ) -> None:
-        monkeypatch.setattr(
-            check_status_mod,
-            "parse_config",
-            MagicMock(side_effect=RuntimeError("bad config")),
-        )
-        with pytest.raises(SystemExit) as exc:
-            _run([])
-        assert exc.value.code == 1
-        _, err = capsys.readouterr()
-        assert "Error:" in err
-
-    def test_exit_one_on_unexpected_exception(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr(
-            check_status_mod,
-            "make_cli_deps",
-            MagicMock(side_effect=ValueError("unexpected")),
-        )
+        monkeypatch.setattr(check_status_mod, attr, MagicMock(side_effect=error))
         with pytest.raises(SystemExit) as exc:
             _run([])
         assert exc.value.code == 1
@@ -768,10 +759,18 @@ class TestCheckStatusViewHappyPath:
         _run(["-v"])
         uow.nodes.get_by_ids.assert_called_once()
 
-    def test_default_does_not_fetch_nodes(
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param([], id="default"),
+            pytest.param(["-i"], id="info"),
+        ],
+    )
+    def test_non_view_modes_do_not_fetch_nodes(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        argv: list[str],
     ) -> None:
         _config, uow, _deps = stub_config_deps
         uow.tasks.list_by_status = AsyncMock(
@@ -783,25 +782,7 @@ class TestCheckStatusViewHappyPath:
                 ),
             ],
         )
-        _run([])
-        uow.nodes.get_by_ids.assert_not_called()
-
-    def test_info_does_not_fetch_nodes(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-    ) -> None:
-        _config, uow, _deps = stub_config_deps
-        uow.tasks.list_by_status = AsyncMock(
-            return_value=[
-                make_task(
-                    task_id=1,
-                    status=TaskStatus.RUNNING,
-                    allocated_node_id=NodeId(1),
-                ),
-            ],
-        )
-        _run(["-i"])
+        _run(argv)
         uow.nodes.get_by_ids.assert_not_called()
 
 
@@ -1003,20 +984,26 @@ class TestCheckStatusConfigLogLevel:
             check_status_mod._parse_status_args(["--log-level", "WARN"])
         assert exc.value.code == 2
 
-    def test_log_level_debug_sets_root_to_debug(
+    @pytest.mark.parametrize(
+        ("argv", "expected_level"),
+        [
+            pytest.param([], logging.WARNING, id="default-warning"),
+            pytest.param(["--log-level", "DEBUG"], logging.DEBUG, id="debug-flag"),
+        ],
+    )
+    def test_root_log_level(
         self,
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        expected_level: int,
     ) -> None:
-        import logging
-
         _config, uow, _deps = stub_config_deps
         uow.tasks.list_by_status = AsyncMock(return_value=[])
         root = logging.getLogger()
         original_level = root.level
         try:
-            _run(["--log-level", "DEBUG"])
-            assert root.level == logging.DEBUG
+            _run(argv)
+            assert root.level == expected_level
         finally:
             root.setLevel(original_level)
 
@@ -1052,20 +1039,3 @@ class TestCheckStatusConfigLogLevel:
         monkeypatch.setattr(check_status_mod, "parse_config", from_config_spy)
         _run([])
         assert str(from_config_spy.call_args.args[0]) == str(CONFIG_FILE)
-
-    def test_default_log_level_is_warning(
-        self,
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import logging
-
-        _config, uow, _deps = stub_config_deps
-        uow.tasks.list_by_status = AsyncMock(return_value=[])
-        root = logging.getLogger()
-        original_level = root.level
-        try:
-            _run([])
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)

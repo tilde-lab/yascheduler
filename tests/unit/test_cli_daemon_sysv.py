@@ -92,73 +92,29 @@ class TestDaemonSysvParsing:
         assert "not a file" in err
         assert "/nonexistent.conf" in err
 
-    def test_short_flags_parse_correctly(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        cfg = tmp_path / "yascheduler.conf"
-        cfg.write_text("[local]")
-        cfg_logger_spy = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(sysv_mod, "configure_logger", cfg_logger_spy)
-        monkeypatch.setattr(
-            sysv_mod,
-            "parse_config",
-            MagicMock(return_value=MagicMock()),
-        )
-
-        def fake_run(coro: Coroutine) -> None:
-            coro.close()
-
-        monkeypatch.setattr(sysv_mod.asyncio, "run", fake_run)
-        _run(
-            [
-                "--config",
-                str(cfg),
-                "-p",
-                "/var/run/yascheduler.pid",
-                "-l",
+    @pytest.mark.parametrize(
+        ("extra_args", "expected_log_file"),
+        [
+            pytest.param(
+                ["-p", "/var/run/yascheduler.pid", "-l", "/var/log/yascheduler.log"],
                 "/var/log/yascheduler.log",
-            ],
-        )
-        assert cfg_logger_spy.call_args.args[0] == "/var/log/yascheduler.log"
-
-    def test_log_level_long_only_no_collision_with_l(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        cfg = tmp_path / "yascheduler.conf"
-        cfg.write_text("[local]")
-        cfg_logger_spy = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr(sysv_mod, "configure_logger", cfg_logger_spy)
-        monkeypatch.setattr(
-            sysv_mod,
-            "parse_config",
-            MagicMock(return_value=MagicMock()),
-        )
-
-        def fake_run(coro: Coroutine) -> None:
-            coro.close()
-
-        monkeypatch.setattr(sysv_mod.asyncio, "run", fake_run)
-        _run(
-            [
-                "--config",
-                str(cfg),
-                "--log-level",
-                "DEBUG",
-                "-l",
+                id="short-flags",
+            ),
+            # -l is --log-file, --log-level is long-only → both parse cleanly.
+            pytest.param(
+                ["--log-level", "DEBUG", "-l", "/var/log/yascheduler.log"],
                 "/var/log/yascheduler.log",
-            ],
-        )
-        # -l is --log-file, --log-level is long-only → both parse cleanly.
-        assert cfg_logger_spy.call_args.args[0] == "/var/log/yascheduler.log"
-
-    def test_default_log_file_is_log_file(
+                id="log-level-long-only",
+            ),
+            pytest.param([], LOG_FILE, id="default-log-file"),
+        ],
+    )
+    def test_parsed_log_file_reaches_configure_logger(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
+        extra_args: list[str],
+        expected_log_file: str,
     ) -> None:
         cfg = tmp_path / "yascheduler.conf"
         cfg.write_text("[local]")
@@ -174,8 +130,8 @@ class TestDaemonSysvParsing:
             coro.close()
 
         monkeypatch.setattr(sysv_mod.asyncio, "run", fake_run)
-        _run(["--config", str(cfg)])
-        assert cfg_logger_spy.call_args.args[0] == LOG_FILE
+        _run(["--config", str(cfg), *extra_args])
+        assert cfg_logger_spy.call_args.args[0] == expected_log_file
 
     def test_default_pid_file_is_pid_file(
         self,

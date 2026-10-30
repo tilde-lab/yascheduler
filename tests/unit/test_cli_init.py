@@ -65,11 +65,23 @@ def _stub_apply_migrations(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 class TestInitFlags:
     """Flag parsing and dispatch."""
 
-    def test_no_flags_runs_both(
+    @pytest.mark.parametrize(
+        ("argv", "service_calls", "schema_calls"),
+        [
+            pytest.param([], 1, 1, id="no-flags"),
+            pytest.param(["--schema"], 0, 1, id="schema-only"),
+            pytest.param(["--daemon"], 1, 0, id="daemon-only"),
+            pytest.param(["--schema", "--daemon"], 1, 1, id="both-flags"),
+        ],
+    )
+    def test_flag_dispatch(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        service_calls: int,
+        schema_calls: int,
     ) -> None:
-        """No flags → both service install and apply_schema run; exit 0."""
+        """Each flag combination runs the right halves and exits 0."""
         systemd_mock = MagicMock()
         sysv_mock = MagicMock()
         apply_mock = MagicMock()
@@ -85,89 +97,12 @@ class TestInitFlags:
         )
 
         with pytest.raises(SystemExit) as exc:
-            init([])
+            init(argv)
 
         assert exc.value.code == 0
-        assert systemd_mock.call_count == 1
+        assert systemd_mock.call_count == service_calls
         assert sysv_mock.call_count == 0
-        assert apply_mock.call_count == 1
-
-    def test_schema_only_skips_service(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """--schema → apply_schema called, service install NOT called; exit 0."""
-        systemd_mock = MagicMock()
-        sysv_mock = MagicMock()
-        apply_mock = MagicMock()
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init._init_systemd",
-            systemd_mock,
-        )
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init._init_sysv", sysv_mock)
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init.apply_schema", apply_mock)
-
-        with pytest.raises(SystemExit) as exc:
-            init(["--schema"])
-
-        assert exc.value.code == 0
-        assert systemd_mock.call_count == 0
-        assert sysv_mock.call_count == 0
-        assert apply_mock.call_count == 1
-
-    def test_daemon_only_skips_schema(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """--daemon → service install called, apply_schema NOT called; exit 0."""
-        systemd_mock = MagicMock()
-        sysv_mock = MagicMock()
-        apply_mock = MagicMock()
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init._init_systemd",
-            systemd_mock,
-        )
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init._init_sysv", sysv_mock)
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init.apply_schema", apply_mock)
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init.Path.is_dir",
-            lambda self: True,
-        )
-
-        with pytest.raises(SystemExit) as exc:
-            init(["--daemon"])
-
-        assert exc.value.code == 0
-        assert systemd_mock.call_count == 1
-        assert sysv_mock.call_count == 0
-        assert apply_mock.call_count == 0
-
-    def test_both_flags_runs_both(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """--schema --daemon → both run (equivalent to no-flags default); exit 0."""
-        systemd_mock = MagicMock()
-        sysv_mock = MagicMock()
-        apply_mock = MagicMock()
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init._init_systemd",
-            systemd_mock,
-        )
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init._init_sysv", sysv_mock)
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init.apply_schema", apply_mock)
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init.Path.is_dir",
-            lambda self: True,
-        )
-
-        with pytest.raises(SystemExit) as exc:
-            init(["--schema", "--daemon"])
-
-        assert exc.value.code == 0
-        assert systemd_mock.call_count == 1
-        assert sysv_mock.call_count == 0
-        assert apply_mock.call_count == 1
+        assert apply_mock.call_count == schema_calls
 
     def test_help_exits_zero(
         self,
@@ -293,11 +228,21 @@ class TestServiceInstall:
         _, err = capsys.readouterr()
         assert "Error: cannot write to" in err
 
-    def test_systemd_detection_via_run_dir(
+    @pytest.mark.parametrize(
+        ("run_dir_exists", "systemd_calls", "sysv_calls"),
+        [
+            pytest.param(True, 1, 0, id="systemd-run-dir-present"),
+            pytest.param(False, 0, 1, id="systemd-run-dir-absent"),
+        ],
+    )
+    def test_service_detection(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        run_dir_exists: bool,
+        systemd_calls: int,
+        sysv_calls: int,
     ) -> None:
-        """/run/systemd/system exists → _init_systemd called, _init_sysv not."""
+        """/run/systemd/system presence selects the service flavor."""
         systemd_mock = MagicMock()
         sysv_mock = MagicMock()
         monkeypatch.setattr(
@@ -307,39 +252,15 @@ class TestServiceInstall:
         monkeypatch.setattr("yascheduler.entrypoints.cli.init._init_sysv", sysv_mock)
         monkeypatch.setattr(
             "yascheduler.entrypoints.cli.init.Path.is_dir",
-            lambda self: True,
+            lambda self: run_dir_exists,
         )
 
         with pytest.raises(SystemExit) as exc:
             init(["--daemon"])
 
         assert exc.value.code == 0
-        assert systemd_mock.call_count == 1
-        assert sysv_mock.call_count == 0
-
-    def test_non_systemd_detection(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """/run/systemd/system absent → _init_sysv called, _init_systemd not."""
-        systemd_mock = MagicMock()
-        sysv_mock = MagicMock()
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init._init_systemd",
-            systemd_mock,
-        )
-        monkeypatch.setattr("yascheduler.entrypoints.cli.init._init_sysv", sysv_mock)
-        monkeypatch.setattr(
-            "yascheduler.entrypoints.cli.init.Path.is_dir",
-            lambda self: False,
-        )
-
-        with pytest.raises(SystemExit) as exc:
-            init(["--daemon"])
-
-        assert exc.value.code == 0
-        assert systemd_mock.call_count == 0
-        assert sysv_mock.call_count == 1
+        assert systemd_mock.call_count == systemd_calls
+        assert sysv_mock.call_count == sysv_calls
 
     def test_schema_idempotent_rerun(
         self,

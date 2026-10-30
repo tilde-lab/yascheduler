@@ -398,49 +398,25 @@ class TestVultrClientGetSshKeys:
         assert [k["id"] for k in result] == ["k1"]
         mock_request.assert_awaited_once()
 
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({"not_ssh_keys": []}, id="missing-ssh-keys-list"),
+            pytest.param(
+                {"ssh_keys": [{"ssh_key": "ssh-rsa AAAA= one"}]},
+                id="entry-without-id",
+            ),
+            pytest.param({"ssh_keys": [{"id": "k1"}]}, id="entry-without-ssh-key"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_invalid_shape_raises_apierror(self) -> None:
+    async def test_invalid_response_raises_apierror(self, payload: dict) -> None:
+        """A response without the ssh_keys list, or with an incomplete entry, is rejected."""
         from yascheduler.infra.cloud.providers.vultr import APIError, VultrClient
 
         client = VultrClient.__new__(VultrClient)
         with (
-            patch.object(
-                client, "_request", AsyncMock(return_value={"not_ssh_keys": []})
-            ),
-            pytest.raises(APIError, match="Invalid SSH keys list response"),
-        ):
-            await _collect(client.get_ssh_keys())
-
-    @pytest.mark.asyncio
-    async def test_missing_id_in_entry_raises_apierror(self) -> None:
-        from yascheduler.infra.cloud.providers.vultr import APIError, VultrClient
-
-        client = VultrClient.__new__(VultrClient)
-        with (
-            patch.object(
-                client,
-                "_request",
-                AsyncMock(
-                    return_value={
-                        "ssh_keys": [{"ssh_key": "ssh-rsa AAAA= one"}]
-                    },  # no id
-                ),
-            ),
-            pytest.raises(APIError, match="Invalid SSH keys list response"),
-        ):
-            await _collect(client.get_ssh_keys())
-
-    @pytest.mark.asyncio
-    async def test_missing_ssh_key_in_entry_raises_apierror(self) -> None:
-        from yascheduler.infra.cloud.providers.vultr import APIError, VultrClient
-
-        client = VultrClient.__new__(VultrClient)
-        with (
-            patch.object(
-                client,
-                "_request",
-                AsyncMock(return_value={"ssh_keys": [{"id": "k1"}]}),
-            ),
+            patch.object(client, "_request", AsyncMock(return_value=payload)),
             pytest.raises(APIError, match="Invalid SSH keys list response"),
         ):
             await _collect(client.get_ssh_keys())
@@ -567,41 +543,24 @@ class TestVultrClientCreateBareMetal:
             },
         )
 
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({"not_bare_metal": {}}, id="missing-bare-metal-key"),
+            pytest.param(
+                {"bare_metal": {"label": "no-id"}},
+                id="bare-metal-without-id",
+            ),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_response_without_bare_metal_key_raises(self) -> None:
+    async def test_invalid_response_raises_apierror(self, payload: dict) -> None:
+        """A response without bare_metal, or a bare_metal without id, is rejected."""
         from yascheduler.infra.cloud.providers.vultr import APIError, VultrClient
 
         client = VultrClient.__new__(VultrClient)
         with (
-            patch.object(
-                client, "_request", AsyncMock(return_value={"not_bare_metal": {}})
-            ),
-            pytest.raises(APIError, match="Invalid create Bare Metal response"),
-        ):
-            await client.create_bare_metal(
-                region="ams",
-                plan="p",
-                os_id=1,
-                label="t",
-                hostname="t",
-                sshkey_id=["k"],
-                user_data="d",
-                enable_ipv6=True,
-            )
-
-    @pytest.mark.asyncio
-    async def test_response_bare_metal_without_id_raises(self) -> None:
-        """create_bare_metal rejects a bare_metal without id — id is required
-        by VultrBareMetal and validated via _is_bare_metal_resp."""
-        from yascheduler.infra.cloud.providers.vultr import APIError, VultrClient
-
-        client = VultrClient.__new__(VultrClient)
-        with (
-            patch.object(
-                client,
-                "_request",
-                AsyncMock(return_value={"bare_metal": {"label": "no-id"}}),
-            ),
+            patch.object(client, "_request", AsyncMock(return_value=payload)),
             pytest.raises(APIError, match="Invalid create Bare Metal response"),
         ):
             await client.create_bare_metal(
@@ -1712,9 +1671,20 @@ class TestDeleteAndVerify:
         mock_client.delete_bare_metal.assert_awaited_once()
         assert mock_client.get_bare_metal.call_count == 2
 
+    @pytest.mark.parametrize(
+        ("delete_status", "expected_result"),
+        [
+            pytest.param(404, True, id="delete-404-already-gone"),
+            pytest.param(403, False, id="delete-403-permanent"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_delete_404_means_already_gone_no_verify(self) -> None:
-        """DELETE returns 404 → already gone → no verify-poll needed."""
+    async def test_delete_status_without_verify(
+        self,
+        delete_status: int,
+        expected_result: bool,
+    ) -> None:
+        """A DELETE 404 is already-gone success; any other 4xx is a permanent failure."""
         from yascheduler.infra.cloud.providers.vultr import (
             APIError,
             _delete_and_verify,
@@ -1722,7 +1692,7 @@ class TestDeleteAndVerify:
 
         mock_client = MagicMock()
         mock_client.delete_bare_metal = AsyncMock(
-            side_effect=APIError("HTTP 404", status=404),
+            side_effect=APIError(f"HTTP {delete_status}", status=delete_status),
         )
         mock_client.get_bare_metal = AsyncMock()
 
@@ -1731,7 +1701,7 @@ class TestDeleteAndVerify:
         ):
             result = await _delete_and_verify(mock_client, "inst-1")
 
-        assert result is True
+        assert result is expected_result
 
         # Only the DELETE — no verify GET.
         mock_client.delete_bare_metal.assert_awaited_once()
@@ -1798,30 +1768,6 @@ class TestDeleteAndVerify:
 
         # All calls are DELETE retries — no verify GET ever issued.
         assert mock_client.delete_bare_metal.call_count == CLEANUP_DELETE_ATTEMPTS
-        mock_client.get_bare_metal.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_delete_permanent_4xx_no_retry_no_verify(self) -> None:
-        """DELETE 4xx (non-404) is permanent → no retry, no verify."""
-        from yascheduler.infra.cloud.providers.vultr import (
-            APIError,
-            _delete_and_verify,
-        )
-
-        mock_client = MagicMock()
-        mock_client.delete_bare_metal = AsyncMock(
-            side_effect=APIError("HTTP 403", status=403),
-        )
-        mock_client.get_bare_metal = AsyncMock()
-
-        with patch(
-            "yascheduler.infra.cloud.providers.vultr.asyncio.sleep", AsyncMock()
-        ):
-            result = await _delete_and_verify(mock_client, "inst-1")
-
-        assert result is False
-
-        mock_client.delete_bare_metal.assert_awaited_once()
         mock_client.get_bare_metal.assert_not_awaited()
 
     @pytest.mark.asyncio

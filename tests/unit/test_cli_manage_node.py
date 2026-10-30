@@ -123,116 +123,65 @@ def _run(argv: list[str]) -> None:
 class TestHostSpecParsing:
     """_parse_host_spec: IPv4, user@, :port, ~ncpus, IPv6 brackets, rejections, defaults."""
 
-    def test_plain_ipv4(self) -> None:
-        spec = manage_node_mod._parse_host_spec("10.0.0.1")
-        assert spec == manage_node_mod.HostSpec(
-            host="10.0.0.1",
-            username=None,
-            port=22,
-            ncpus=None,
-        )
-
-    def test_user_at_host(self) -> None:
-        spec = manage_node_mod._parse_host_spec("deploy@10.0.0.1")
-        assert spec == manage_node_mod.HostSpec(
-            host="10.0.0.1",
-            username="deploy",
-            port=22,
-            ncpus=None,
-        )
-
-    def test_host_with_port(self) -> None:
-        spec = manage_node_mod._parse_host_spec("10.0.0.1:2222")
-        assert spec == manage_node_mod.HostSpec(
-            host="10.0.0.1",
-            username=None,
-            port=2222,
-            ncpus=None,
-        )
-
-    def test_host_with_ncpus(self) -> None:
-        spec = manage_node_mod._parse_host_spec("10.0.0.1~4")
-        assert spec == manage_node_mod.HostSpec(
-            host="10.0.0.1",
-            username=None,
-            port=22,
-            ncpus=4,
-        )
-
-    def test_full_spec(self) -> None:
-        spec = manage_node_mod._parse_host_spec("deploy@10.0.0.1:2222~4")
-        assert spec == manage_node_mod.HostSpec(
-            host="10.0.0.1",
-            username="deploy",
-            port=2222,
-            ncpus=4,
-        )
-
-    def test_bracketed_ipv6(self) -> None:
-        spec = manage_node_mod._parse_host_spec("[::1]")
-        assert spec == manage_node_mod.HostSpec(
-            host="::1",
-            username=None,
-            port=22,
-            ncpus=None,
-        )
-
-    def test_bracketed_ipv6_with_port(self) -> None:
-        spec = manage_node_mod._parse_host_spec("[fe80::1]:2222")
-        assert spec == manage_node_mod.HostSpec(
-            host="fe80::1",
-            username=None,
-            port=2222,
-            ncpus=None,
-        )
+    @pytest.mark.parametrize(
+        ("spec_str", "expected"),
+        [
+            pytest.param("10.0.0.1", ("10.0.0.1", None, 22, None), id="ipv4"),
+            pytest.param(
+                "deploy@10.0.0.1", ("10.0.0.1", "deploy", 22, None), id="user-at-host"
+            ),
+            pytest.param("10.0.0.1:2222", ("10.0.0.1", None, 2222, None), id="port"),
+            pytest.param("10.0.0.1~4", ("10.0.0.1", None, 22, 4), id="ncpus"),
+            pytest.param(
+                "deploy@10.0.0.1:2222~4",
+                ("10.0.0.1", "deploy", 2222, 4),
+                id="full-spec",
+            ),
+            pytest.param("[::1]", ("::1", None, 22, None), id="bracketed-ipv6"),
+            pytest.param(
+                "[fe80::1]:2222",
+                ("fe80::1", None, 2222, None),
+                id="bracketed-ipv6-with-port",
+            ),
+            pytest.param(
+                "compute-node-7",
+                ("compute-node-7", None, 22, None),
+                id="hostname",
+            ),
+        ],
+    )
+    def test_host_spec_parsed(
+        self,
+        spec_str: str,
+        expected: tuple[str, str | None, int, int | None],
+    ) -> None:
+        """Rows compare the full (host, username, port, ncpus) tuple."""
+        spec = manage_node_mod._parse_host_spec(spec_str)
+        assert (spec.host, spec.username, spec.port, spec.ncpus) == expected
 
     def test_tilde_zero_maps_to_none(self) -> None:
         spec = manage_node_mod._parse_host_spec("10.0.0.1~0")
         assert spec.ncpus is None
 
-    def test_unbracketed_ipv6_rejected(self) -> None:
+    @pytest.mark.parametrize(
+        "bad_spec",
+        [
+            pytest.param("::1", id="unbracketed-ipv6"),
+            pytest.param("a@b@c", id="multiple-at-signs"),
+            pytest.param("10.0.0.1~4~5", id="multiple-tildes"),
+            pytest.param("10.0.0.1:", id="empty-port"),
+            pytest.param("10.0.0.1:99999", id="port-out-of-range"),
+            pytest.param("10.0.0.1:0", id="port-zero"),
+            pytest.param("10.0.0.1~-5", id="negative-ncpus"),
+            pytest.param("10.0.0.1:abc", id="non-integer-port"),
+            pytest.param("", id="empty-string"),
+            pytest.param("@10.0.0.1", id="empty-user"),
+            pytest.param("10.0.0.1~", id="empty-ncpus"),
+        ],
+    )
+    def test_malformed_spec_rejected(self, bad_spec: str) -> None:
         with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("::1")
-
-    def test_multiple_at_signs_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("a@b@c")
-
-    def test_multiple_tildes_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1~4~5")
-
-    def test_empty_port_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1:")
-
-    def test_port_out_of_range_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1:99999")
-
-    def test_port_zero_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1:0")
-
-    def test_negative_ncpus_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1~-5")
-
-    def test_non_integer_port_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1:abc")
-
-    def test_empty_string_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("")
-
-    def test_empty_user_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("@10.0.0.1")
-
-    def test_empty_ncpus_rejected(self) -> None:
-        with pytest.raises(argparse.ArgumentTypeError):
-            manage_node_mod._parse_host_spec("10.0.0.1~")
+            manage_node_mod._parse_host_spec(bad_spec)
 
     def test_default_port_22_when_absent(self) -> None:
         spec = manage_node_mod._parse_host_spec("10.0.0.1")
@@ -241,15 +190,6 @@ class TestHostSpecParsing:
     def test_default_username_none_when_absent(self) -> None:
         spec = manage_node_mod._parse_host_spec("10.0.0.1")
         assert spec.username is None
-
-    def test_hostname_passes(self) -> None:
-        spec = manage_node_mod._parse_host_spec("compute-node-7")
-        assert spec == manage_node_mod.HostSpec(
-            host="compute-node-7",
-            username=None,
-            port=22,
-            ncpus=None,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -274,46 +214,32 @@ class TestManageNodeArgparse:
         assert "--remove-soft" in out
         assert "--remove-hard" in out
 
-    def test_missing_host_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run([])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()
-
-    def test_unknown_flag_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["10.0.0.1", "--bogus"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()
-
-    def test_remove_soft_and_hard_mutex_exits_two(
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param([], id="missing-host"),
+            pytest.param(["10.0.0.1", "--bogus"], id="unknown-flag"),
+            pytest.param(
+                ["10.0.0.1", "--remove-soft", "--remove-hard"],
+                id="remove-mutex",
+            ),
+            pytest.param(
+                ["10.0.0.1", "--skip-setup", "--remove-hard"],
+                id="skip-setup-with-remove-hard",
+            ),
+            pytest.param(
+                ["10.0.0.1", "--skip-setup", "--remove-soft"],
+                id="skip-setup-with-remove-soft",
+            ),
+        ],
+    )
+    def test_invalid_argv_exits_two(
         self,
         capsys: pytest.CaptureFixture[str],
+        argv: list[str],
     ) -> None:
         with pytest.raises(SystemExit) as exc:
-            _run(["10.0.0.1", "--remove-soft", "--remove-hard"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()
-
-    def test_skip_setup_with_remove_hard_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["10.0.0.1", "--skip-setup", "--remove-hard"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()
-
-    def test_skip_setup_with_remove_soft_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["10.0.0.1", "--skip-setup", "--remove-soft"])
+            _run(argv)
         assert exc.value.code == 2
         _, err = capsys.readouterr()
         assert err.strip()
@@ -605,45 +531,44 @@ class TestManageNodeAddPath:
             f"expected collision warning for localhost, got {[r.getMessage() for r in caplog.records]}"
         )
 
-    def test_add_non_loopback_no_data_dir_warning(
+    @pytest.mark.parametrize(
+        ("host", "local_data_dir", "remote_data_dir"),
+        [
+            pytest.param(
+                "10.0.0.1",
+                "/tmp/yasched-shared",
+                "/tmp/yasched-shared",
+                id="non-loopback-matching-dirs",
+            ),
+            pytest.param(
+                "127.0.0.1",
+                "/tmp/yasched-local",
+                "/tmp/yasched-remote",
+                id="loopback-distinct-dirs",
+            ),
+        ],
+    )
+    def test_no_data_dir_collision_warning(
         self,
         caplog: pytest.LogCaptureFixture,
         stub_env: tuple[MagicMock, AsyncMock, MagicMock, AsyncMock],
+        host: str,
+        local_data_dir: str,
+        remote_data_dir: str,
     ) -> None:
-        """Issue #115: a non-loopback host with matching data_dir does NOT warn."""
         config, uow, _deps, _repo = stub_env
         uow.nodes.get = AsyncMock(return_value=None)
-        shared = "/tmp/yasched-shared"
-        config.local.data_dir = Path(shared)
-        config.remote.data_dir = PurePosixPath(shared)
+        config.local.data_dir = Path(local_data_dir)
+        config.remote.data_dir = PurePosixPath(remote_data_dir)
 
         with caplog.at_level(
             logging.WARNING, logger="yascheduler.entrypoints.cli.manage_node"
         ):
-            _run(["10.0.0.1"])
+            _run([host])
 
         assert not any("collide" in r.getMessage() for r in caplog.records), (
-            f"unexpected warning for non-loopback, got {[r.getMessage() for r in caplog.records]}"
-        )
-
-    def test_add_loopback_distinct_data_dir_no_warning(
-        self,
-        caplog: pytest.LogCaptureFixture,
-        stub_env: tuple[MagicMock, AsyncMock, MagicMock, AsyncMock],
-    ) -> None:
-        """Issue #115: loopback host with distinct data_dir does NOT warn."""
-        config, uow, _deps, _repo = stub_env
-        uow.nodes.get = AsyncMock(return_value=None)
-        config.local.data_dir = Path("/tmp/yasched-local")
-        config.remote.data_dir = PurePosixPath("/tmp/yasched-remote")
-
-        with caplog.at_level(
-            logging.WARNING, logger="yascheduler.entrypoints.cli.manage_node"
-        ):
-            _run(["127.0.0.1"])
-
-        assert not any("collide" in r.getMessage() for r in caplog.records), (
-            f"unexpected warning for distinct data_dir, got {[r.getMessage() for r in caplog.records]}"
+            f"unexpected collision warning for {host}, "
+            f"got {[r.getMessage() for r in caplog.records]}"
         )
 
     def test_add_constructs_repository_once(

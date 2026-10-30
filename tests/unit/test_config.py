@@ -183,27 +183,19 @@ def test_config_remote_jump_port_read_from_section() -> None:
     assert remote.jump_port == 2222
 
 
-def test_config_remote_jump_port_rejects_below_1() -> None:
-    """[remote] parser rejects jump_port below 1"""
+@pytest.mark.parametrize(
+    ("raw_port", "match"),
+    [
+        pytest.param("0", "jump_port must be >= 1", id="below-1"),
+        pytest.param("65536", "jump_port must be <= 65535", id="at-65536"),
+        pytest.param("ssh", "invalid literal for int", id="non-integer"),
+    ],
+)
+def test_config_remote_jump_port_rejects_invalid(raw_port: str, match: str) -> None:
+    """[remote] parser rejects out-of-range and non-integer jump_port"""
     cfg = ConfigParser()
-    cfg.read_string("[remote]\nuser=root\njump_port=0\n")
-    with pytest.raises(ValueError, match="jump_port must be >= 1"):
-        _parse_remote_section(cfg["remote"])
-
-
-def test_config_remote_jump_port_rejects_65536() -> None:
-    """[remote] parser rejects jump_port at or above 65536"""
-    cfg = ConfigParser()
-    cfg.read_string("[remote]\nuser=root\njump_port=65536\n")
-    with pytest.raises(ValueError, match="jump_port must be <= 65535"):
-        _parse_remote_section(cfg["remote"])
-
-
-def test_config_remote_jump_port_rejects_non_integer() -> None:
-    """[remote] parser rejects non-integer jump_port"""
-    cfg = ConfigParser()
-    cfg.read_string("[remote]\nuser=root\njump_port=ssh\n")
-    with pytest.raises(ValueError):
+    cfg.read_string(f"[remote]\nuser=root\njump_port={raw_port}\n")
+    with pytest.raises(ValueError, match=match):
         _parse_remote_section(cfg["remote"])
 
 
@@ -247,36 +239,67 @@ def test_config_cloud_hetzner_jump_port_read_from_section() -> None:
     assert hetzner.jump_port == 2222
 
 
-def test_config_cloud_az_jump_port_rejects_below_1() -> None:
-    """[clouds] az_jump_port=0 raises ValueError"""
+@pytest.mark.parametrize(
+    ("ini", "match"),
+    [
+        pytest.param(
+            "az_tenant_id=tid\naz_client_id=cid\naz_client_secret=cs\n"
+            "az_subscription_id=sid\naz_user=admin\naz_jump_port=0\n",
+            "az_jump_port must be >= 1",
+            id="az-jump-port-below-1",
+        ),
+        pytest.param(
+            "upcloud_login=user\nupcloud_password=pass\nupcloud_jump_port=70000\n",
+            "upcloud_jump_port must be <= 65535",
+            id="upcloud-jump-port-65536",
+        ),
+        pytest.param(
+            "hetzner_token=tk\nhetzner_jump_port=ssh\n",
+            "invalid literal for int",
+            id="hetzner-jump-port-non-integer",
+        ),
+        pytest.param(
+            "hetzner_user=root\n",
+            "hetzner_token is required",
+            id="hetzner-missing-token",
+        ),
+        pytest.param(
+            "upcloud_password=pass\n",
+            "upcloud_login is required",
+            id="upcloud-missing-login",
+        ),
+        pytest.param(
+            "upcloud_login=user\n",
+            "upcloud_password is required",
+            id="upcloud-missing-password",
+        ),
+        pytest.param(
+            "vastai_user=root\n",
+            "vastai_api_key is required",
+            id="vastai-missing-api-key",
+        ),
+        pytest.param(
+            "vultr_user=root\n",
+            "vultr_api_key is required",
+            id="vultr-missing-api-key",
+        ),
+        pytest.param(
+            "az_user=admin\n",
+            "az_tenant_id is required",
+            id="az-missing-tenant-id",
+        ),
+        pytest.param(
+            "az_tenant_id=tid\naz_client_id=cid\naz_user=admin\n",
+            "az_client_secret is required",
+            id="az-missing-client-secret",
+        ),
+    ],
+)
+def test_config_clouds_reject_invalid_input(ini: str, match: str) -> None:
+    """parse_clouds rejects out-of-range jump ports and missing required cloud credentials"""
     cfg = ConfigParser()
-    cfg.read_string(
-        "[clouds]\n"
-        "az_tenant_id=tid\naz_client_id=cid\naz_client_secret=cs\n"
-        "az_subscription_id=sid\naz_user=admin\naz_jump_port=0\n"
-    )
-    with pytest.raises(ValueError, match="az_jump_port must be >= 1"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_upcloud_jump_port_rejects_65536() -> None:
-    """[clouds] upcloud_jump_port=70000 raises ValueError"""
-    cfg = ConfigParser()
-    cfg.read_string(
-        "[clouds]\nupcloud_login=user\nupcloud_password=pass\nupcloud_jump_port=70000\n"
-    )
-    with pytest.raises(
-        ValueError,
-        match="upcloud_jump_port must be <= 65535",
-    ):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_hetzner_jump_port_rejects_non_integer() -> None:
-    """[clouds] hetzner_jump_port=ssh raises ValueError"""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\nhetzner_token=tk\nhetzner_jump_port=ssh\n")
-    with pytest.raises(ValueError):
+    cfg.read_string(f"[clouds]\n{ini}")
+    with pytest.raises(ValueError, match=match):
         parse_clouds(cfg, RemoteDefaults())
 
 
@@ -339,62 +362,6 @@ def test_config_cloud_azure_inherits_remote_root_without_banning() -> None:
     clouds = parse_clouds(cfg, RemoteDefaults(username="root"))
     az = next(c for c in clouds if isinstance(c, ConfigCloudAzure))
     assert az.username == "root"
-
-
-def test_config_cloud_hetzner_rejects_missing_token() -> None:
-    """[clouds] without hetzner_token raises ValueError (parser-side presence check)."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\nhetzner_user=root\n")
-    with pytest.raises(ValueError, match="hetzner_token is required"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_upcloud_rejects_missing_login() -> None:
-    """[clouds] without upcloud_login raises ValueError."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\nupcloud_password=pass\n")
-    with pytest.raises(ValueError, match="upcloud_login is required"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_upcloud_rejects_missing_password() -> None:
-    """[clouds] with upcloud_login but no upcloud_password raises ValueError."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\nupcloud_login=user\n")
-    with pytest.raises(ValueError, match="upcloud_password is required"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_vastai_rejects_missing_api_key() -> None:
-    """[clouds] without vastai_api_key raises ValueError."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\nvastai_user=root\n")
-    with pytest.raises(ValueError, match="vastai_api_key is required"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_vultr_rejects_missing_api_key() -> None:
-    """[clouds] without vultr_api_key raises ValueError."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\nvultr_user=root\n")
-    with pytest.raises(ValueError, match="vultr_api_key is required"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_azure_rejects_missing_tenant_id() -> None:
-    """[clouds] without az_tenant_id raises ValueError."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\naz_user=admin\n")
-    with pytest.raises(ValueError, match="az_tenant_id is required"):
-        parse_clouds(cfg, RemoteDefaults())
-
-
-def test_config_cloud_azure_rejects_missing_client_secret() -> None:
-    """[clouds] with az_tenant_id/client_id but no az_client_secret raises ValueError."""
-    cfg = ConfigParser()
-    cfg.read_string("[clouds]\naz_tenant_id=tid\naz_client_id=cid\naz_user=admin\n")
-    with pytest.raises(ValueError, match="az_client_secret is required"):
-        parse_clouds(cfg, RemoteDefaults())
 
 
 @pytest.mark.filterwarnings(
