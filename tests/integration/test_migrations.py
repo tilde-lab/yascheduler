@@ -173,7 +173,7 @@ def test_legacy_db_runs_all_migrations() -> None:
         finally:
             conn.close()
 
-        apply_migrations(config)
+        apply_migrations(config, engine_inputs={})
 
         conn = _connect(config)
         try:
@@ -235,7 +235,7 @@ def test_modern_db_skips_bootstrap_and_applies_only_pending() -> None:
         finally:
             conn.close()
 
-        apply_migrations(config)
+        apply_migrations(config, engine_inputs={})
 
         conn = _connect(config)
         try:

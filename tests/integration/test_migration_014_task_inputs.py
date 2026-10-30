@@ -1,7 +1,7 @@
 """Integration tests for migration 014 task-input snapshot conversion."""
 # region MODULE_CONTRACT
-# PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap exposes the task-input storage contract without engine context, 013 databases convert every task status into equivalent binary snapshot entries, legacy databases upgrade through 014 without losing task identity, timestamps, state, bindings, or unrelated metadata, and failed conversion retries atomically after fixture repair.
-# SCOPE: Fresh input-storage contract and current/legacy cohorts through migration 014, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, tracker/snapshot idempotency on rerun, and qualified-runner structured failure logs with payload redaction.
+# PURPOSE: Verify migration 014 against real PostgreSQL through testcontainers: fresh bootstrap exposes the task-input storage contract with an explicit empty context, 013 databases convert every task status into equivalent binary snapshot entries, legacy databases upgrade through 014 without losing task identity, timestamps, state, bindings, or unrelated metadata, TO_DO failures retry atomically after fixture repair, and unconvertible started tasks are skipped unchanged and reported.
+# SCOPE: Fresh input-storage contract and current/legacy cohorts through migration 014, exact input-table schema and constraints, UTF-8 and fort.9 lenient-base64 conversion, literal-directory and glob subtree expansion, metadata-key removal, bootstrap-precreated and runner-only table creation, TO_DO failure rollback/trigger restoration for unknown engines, missing/unsafe inputs, malformed encodings and unsupported values, RUNNING/DONE skip preservation for every failure shape and non-object JSONB, aggregate engine warnings, required engine context, tracker/snapshot idempotency on rerun, and qualified-runner structured logs with payload redaction.
 # DEPENDENCIES: USES API: apply_schema, apply_migrations, pg8000.native, testcontainers.PostgresContainer
 # READS: PostgreSQL container (postgres:16-alpine)
 # KEYWORDS: migration 014, task inputs, snapshots, postgres, base64, legacy upgrade, rollback, retry, idempotency
@@ -131,6 +131,7 @@ EXPECTED_INPUT_CONTRACT = {
 }
 UNKNOWN_ENGINE = "migration-014-unknown-engine"
 UNSAFE_ENGINE = "migration-014-unsafe-engine"
+_OVERSIZED_KEY = "payload-key-" + "x" * 100
 LOG_SECRET = "UNIQUE_MIGRATION_INPUT_SECRET_8e2f"
 LOG_CREDENTIAL = "UNIQUE_MIGRATION_CREDENTIAL_46b1"
 MIGRATION_LOGGER = (
@@ -172,6 +173,21 @@ PRESERVED_TASK_COLUMNS = (
     "webhook_custom_params",
     "error",
 )
+_EXPECTED_FAILURE_TYPES = {
+    "unknown-engine": "ValueError",
+    "missing-input": "MissingInputFileError",
+    "unsafe-path": "UnsafeTaskPathError",
+    "malformed-fort9": "InvalidTaskSnapshotError",
+    "unsupported-value": "InvalidTaskSnapshotError",
+}
+_EXPECTED_FAILURE_PATHS = {
+    "unknown-engine": None,
+    "missing-input": "INPUT",
+    "unsafe-path": "../escape",
+    "malformed-fort9": "fort.9",
+    "unsupported-value": "INPUT",
+}
+_EXPECTED_FAILURE_SELECTION_LABELS = frozenset({"missing-input", "unsafe-path"})
 
 
 def _make_config(pg: PostgresContainer) -> PostgresDbConfig:
@@ -349,6 +365,8 @@ def _failure_cases() -> tuple[_FailureCase, ...]:
     marker = "rollback-broken"
     full_payload = _payload(marker)
     expected_remaining = _expected_remaining_metadata(marker)
+    unknown_payload = {_OVERSIZED_KEY: "unrelated", **full_payload}
+    unknown_remaining = {_OVERSIZED_KEY: "unrelated", **expected_remaining}
     missing_input_payload = {
         key: value for key, value in full_payload.items() if key != "INPUT"
     }
@@ -361,8 +379,8 @@ def _failure_cases() -> tuple[_FailureCase, ...]:
         _FailureCase(
             label="unknown-engine",
             engine=UNKNOWN_ENGINE,
-            broken_payload=full_payload,
-            repaired_payload=full_payload,
+            broken_payload=unknown_payload,
+            repaired_payload=unknown_payload,
             failing_engine_inputs={ENGINE: DECLARATIONS},
             repaired_engine_inputs={
                 ENGINE: DECLARATIONS,
@@ -373,7 +391,7 @@ def _failure_cases() -> tuple[_FailureCase, ...]:
                 "supply its configuration",
             ),
             expected_entries=EXPECTED_INPUT_ENTRIES,
-            expected_remaining=expected_remaining,
+            expected_remaining=unknown_remaining,
         ),
         _FailureCase(
             label="missing-input",
@@ -627,7 +645,7 @@ def _legacy_metadata(
     }
 
 
-def test_fresh_bootstrap_exposes_migration_014_input_storage_without_engine_context() -> (
+def test_fresh_bootstrap_exposes_migration_014_input_storage_with_empty_engine_context() -> (
     None
 ):
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
@@ -642,8 +660,8 @@ def test_fresh_bootstrap_exposes_migration_014_input_storage_without_engine_cont
             conn.close()
 
         # The fresh snapshot already carries migration 014 input storage;
-        # the capped runner call must not need engine context.
-        apply_migrations(config, upto="014")
+        # the capped runner call accepts an explicit empty declaration context.
+        apply_migrations(config, engine_inputs={}, upto="014")
 
         conn = _connect(config)
         try:
@@ -987,13 +1005,12 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
             broken_task_id = _insert_modern_task(
                 conn,
                 title=f"rollback-broken-{case.label}",
-                status="DONE",
+                status="TO_DO",
                 extra=case.broken_payload,
                 created_at="2024-06-07T08:09:10+00:00",
                 updated_at="2024-06-07T08:10:11+00:00",
                 local_folder="/rollback/local/broken",
                 remote_folder="/rollback/remote/broken",
-                error="historical rollback warning",
             )
             if case.engine != ENGINE:
                 conn.run(
@@ -1003,6 +1020,15 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
                     task_id=broken_task_id,
                 )
             before_failure_tasks = _task_rows(conn)
+            stored_broken_payload = json.loads(
+                str(
+                    next(
+                        row
+                        for row in before_failure_tasks
+                        if row["task_id"] == broken_task_id
+                    )["extra"]
+                )
+            )
             before_failure_tracker = _tracker_snapshot(conn)
         finally:
             conn.close()
@@ -1021,6 +1047,16 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         assert f"task {broken_task_id}, engine {case.engine!r}" in diagnostic
         for fragment in case.expected_diagnostic:
             assert fragment in diagnostic
+        payload_keys = list(stored_broken_payload)
+        displayed_keys = [key[:80] for key in payload_keys[:10]]
+        assert (
+            f"payload keys ({len(payload_keys)} total, first 10, up to 80 characters each): "
+            f"{displayed_keys!r}"
+        ) in diagnostic
+        assert (
+            "configure the engine input_files to match these keys or mark the task DONE"
+            in diagnostic
+        )
 
         assert caplog.records[0].getMessage() == "MIGRATE_INPUTS_START"
         overall_failed = [
@@ -1045,29 +1081,17 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         failed_record = task_failed[0]
         assert failed_record.name == MIGRATION_LOGGER
         failed_fields = extra_fields(failed_record)
-        expected_failure = {
-            "unknown-engine": "ValueError",
-            "missing-input": "MissingInputFileError",
-            "unsafe-path": "UnsafeTaskPathError",
-            "malformed-fort9": "InvalidTaskSnapshotError",
-            "unsupported-value": "InvalidTaskSnapshotError",
-        }[case.label]
+        expected_failure = _EXPECTED_FAILURE_TYPES[case.label]
         assert failed_fields["engine"] == case.engine
         assert failed_fields["entry_count"] == 0
         assert failed_fields["failure"] == expected_failure
-        expected_path = {
-            "unknown-engine": None,
-            "missing-input": "INPUT",
-            "unsafe-path": "../escape",
-            "malformed-fort9": "fort.9",
-            "unsupported-value": "INPUT",
-        }[case.label]
+        expected_path = _EXPECTED_FAILURE_PATHS[case.label]
         if expected_path is None:
             assert "path" not in failed_fields
             assert "selection" not in failed_fields
         else:
             assert failed_fields["path"] == expected_path
-        if case.label in {"missing-input", "unsafe-path"}:
+        if case.label in _EXPECTED_FAILURE_SELECTION_LABELS:
             assert failed_fields["selection"] == expected_path
         else:
             assert "selection" not in failed_fields
@@ -1194,3 +1218,625 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
 
 
 # endregion FUNC_test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent
+
+
+# region FUNC_test_migration_014_skips_unconvertible_started_task
+# PURPOSE: Prove every legacy conversion failure skips a RUNNING or DONE task without touching its JSONB payload, precision, metadata, or input rows, while recording the migration and exposing bounded content-free skip diagnostics.
+@pytest.mark.parametrize("status", ["RUNNING", "DONE"])
+@pytest.mark.parametrize("case", _failure_cases(), ids=lambda case: case.label)
+def test_migration_014_skips_unconvertible_started_task(
+    status: str,
+    case: _FailureCase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+
+        conn = _connect(config)
+        try:
+            _set_tracker_to_013(conn)
+            node_id = (
+                _insert_node(conn, "10.14.7.1", 4) if status == "RUNNING" else None
+            )
+            task_id = _insert_modern_task(
+                conn,
+                title=f"skip-{status.lower()}-{case.label}",
+                status=status,
+                extra=case.broken_payload,
+                created_at="2024-07-08T09:10:11+00:00",
+                updated_at="2024-07-08T09:11:12+00:00",
+                allocated_node_id=node_id,
+                local_folder="/skip/local",
+                remote_folder="/skip/remote",
+            )
+            if case.engine != ENGINE:
+                conn.run(
+                    "UPDATE yascheduler_tasks SET engine = :engine "
+                    "WHERE task_id = :task_id",
+                    engine=case.engine,
+                    task_id=task_id,
+                )
+            conn.run(
+                "UPDATE yascheduler_tasks "
+                "SET extra = jsonb_set("
+                "extra, '{precision}', "
+                "'1.234567890123456789'::jsonb, true"
+                ") WHERE task_id = :task_id",
+                task_id=task_id,
+            )
+            before_tasks = _task_rows(conn)
+            before_payload = json.loads(str(before_tasks[0]["extra"]))
+            before_precision = _query(
+                conn,
+                "SELECT (extra -> 'precision')::text AS precision "
+                "FROM yascheduler_tasks WHERE task_id = :task_id",
+                task_id=task_id,
+            )[0]["precision"]
+            assert before_precision == "1.234567890123456789"
+            status_row = _query(
+                conn,
+                "SELECT status::text AS status FROM yascheduler_tasks "
+                "WHERE task_id = :task_id",
+                task_id=task_id,
+            )[0]
+            assert status_row["status"] == status
+            assert _all_input_rows(conn) == []
+        finally:
+            conn.close()
+
+        with caplog.at_level(logging.DEBUG, logger=MIGRATION_LOGGER):
+            apply_migrations(
+                config,
+                engine_inputs=case.failing_engine_inputs,
+                upto="014",
+            )
+
+        skipped = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
+            and getattr(record, "task_id", None) == task_id
+        ]
+        assert len(skipped) == 1
+        skipped_fields = {
+            key: value
+            for key, value in extra_fields(skipped[0]).items()
+            if key != "message"
+        }
+        expected_fields: dict[str, object] = {
+            "task_id": task_id,
+            "engine": case.engine,
+            "entry_count": 0,
+            "failure": _EXPECTED_FAILURE_TYPES[case.label],
+            "key_count": len(before_payload),
+        }
+        expected_path = _EXPECTED_FAILURE_PATHS[case.label]
+        if expected_path is not None:
+            expected_fields["path"] = expected_path
+        if case.label in _EXPECTED_FAILURE_SELECTION_LABELS:
+            expected_fields["selection"] = expected_path
+        assert skipped_fields == expected_fields
+
+        for marker in (
+            "MIGRATE_TASK_INPUTS",
+            "MIGRATE_TASK_STORAGE_START",
+            "MIGRATE_TASK_STORAGE_DONE",
+            "MIGRATE_TASK_INPUTS_FAILED",
+        ):
+            assert not any(
+                record.getMessage() == marker
+                and getattr(record, "task_id", None) == task_id
+                for record in caplog.records
+            )
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING and record.name == MIGRATION_LOGGER
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].getMessage() == (
+            f"Migration 014 left 1 task(s) unconverted for engine {case.engine!r}"
+        )
+        warning_fields = {
+            key: value
+            for key, value in extra_fields(warnings[0]).items()
+            if key != "message"
+        }
+        assert warning_fields == {"engine": case.engine, "skipped_count": 1}
+        assert any(
+            record.getMessage() == "MIGRATE_INPUTS_DONE" for record in caplog.records
+        )
+
+        all_log_fields = repr([extra_fields(record) for record in caplog.records])
+        for marker in (
+            LOG_SECRET,
+            LOG_CREDENTIAL,
+            base64.b64encode(LOG_SECRET.encode()).decode(),
+        ):
+            assert marker not in caplog.text
+            assert marker not in all_log_fields
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "014"]
+            assert _task_rows(conn) == before_tasks
+            assert _all_input_rows(conn) == []
+            assert (
+                _query(
+                    conn,
+                    "SELECT status::text AS status FROM yascheduler_tasks "
+                    "WHERE task_id = :task_id",
+                    task_id=task_id,
+                )[0]["status"]
+                == status
+            )
+            assert (
+                _query(
+                    conn,
+                    "SELECT (extra -> 'precision')::text AS precision "
+                    "FROM yascheduler_tasks WHERE task_id = :task_id",
+                    task_id=task_id,
+                )[0]["precision"]
+                == before_precision
+            )
+            success_tasks = _task_rows(conn)
+            success_inputs = _all_input_rows(conn)
+            success_tracker = _tracker_snapshot(conn)
+        finally:
+            conn.close()
+
+        # A recorded 014 is a no-op: running without context must not retry or
+        # re-evaluate the skipped row.
+        apply_migrations(config, upto="014")
+
+        conn = _connect(config)
+        try:
+            assert _task_rows(conn) == success_tasks
+            assert _all_input_rows(conn) == success_inputs
+            assert _tracker_snapshot(conn) == success_tracker
+            assert _timestamp_trigger_state(conn) == "O"
+        finally:
+            conn.close()
+
+
+# endregion FUNC_test_migration_014_skips_unconvertible_started_task
+
+
+# region FUNC_test_migration_014_mixed_cohort_aggregates_skipped_engine_warning
+# PURPOSE: Prove one run converts pending and finished tasks of a declared engine, leaves older tasks of an undeclared engine untouched, and aggregates exactly one content-free warning per skipped engine.
+def test_migration_014_mixed_cohort_aggregates_skipped_engine_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+
+        conn = _connect(config)
+        try:
+            _set_tracker_to_013(conn)
+            running_node_id = _insert_node(conn, "10.14.8.1", 4)
+            known_todo_id = _insert_modern_task(
+                conn,
+                title="mixed-known-todo",
+                status="TO_DO",
+                extra=_payload("mixed-known-todo"),
+                created_at="2024-08-09T10:11:12+00:00",
+                updated_at="2024-08-09T10:12:13+00:00",
+                local_folder="/mixed/local/todo",
+            )
+            known_done_id = _insert_modern_task(
+                conn,
+                title="mixed-known-done",
+                status="DONE",
+                extra=_payload("mixed-known-done"),
+                created_at="2024-08-10T11:12:13+00:00",
+                updated_at="2024-08-10T11:13:14+00:00",
+                local_folder="/mixed/local/done",
+                error="historical completion warning",
+            )
+            skipped_running_id = _insert_modern_task(
+                conn,
+                title="mixed-skipped-running",
+                status="RUNNING",
+                extra={
+                    **_payload("mixed-skipped-running"),
+                    "secret": LOG_SECRET,
+                },
+                created_at="2024-08-11T12:13:14+00:00",
+                updated_at="2024-08-11T12:14:15+00:00",
+                allocated_node_id=running_node_id,
+                local_folder="/mixed/local/running",
+                remote_folder="/mixed/remote/running",
+            )
+            skipped_done_id = _insert_modern_task(
+                conn,
+                title="mixed-skipped-done",
+                status="DONE",
+                extra={
+                    **_payload("mixed-skipped-done"),
+                    "secret": LOG_CREDENTIAL,
+                },
+                created_at="2024-08-12T13:14:15+00:00",
+                updated_at="2024-08-12T13:15:16+00:00",
+                local_folder="/mixed/local/skipped-done",
+                remote_folder="/mixed/remote/skipped-done",
+            )
+            for task_id in (skipped_running_id, skipped_done_id):
+                conn.run(
+                    "UPDATE yascheduler_tasks SET engine = :engine "
+                    "WHERE task_id = :task_id",
+                    engine=UNKNOWN_ENGINE,
+                    task_id=task_id,
+                )
+            conn.run(
+                "UPDATE yascheduler_tasks "
+                "SET extra = jsonb_set("
+                "extra, '{precision}', "
+                "'1.234567890123456789'::jsonb, true"
+                ") WHERE task_id = :task_id",
+                task_id=skipped_done_id,
+            )
+            before = {cast(int, row["task_id"]): row for row in _task_rows(conn)}
+            statuses = {
+                cast(int, row["task_id"]): row["status"]
+                for row in _query(
+                    conn,
+                    "SELECT task_id, status::text AS status "
+                    "FROM yascheduler_tasks ORDER BY task_id",
+                )
+            }
+            assert statuses == {
+                known_todo_id: "TO_DO",
+                known_done_id: "DONE",
+                skipped_running_id: "RUNNING",
+                skipped_done_id: "DONE",
+            }
+        finally:
+            conn.close()
+
+        with caplog.at_level(logging.DEBUG, logger=MIGRATION_LOGGER):
+            apply_migrations(
+                config,
+                engine_inputs={ENGINE: DECLARATIONS},
+                upto="014",
+            )
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "014"]
+            _assert_converted_snapshot(conn, known_todo_id)
+            _assert_converted_snapshot(conn, known_done_id)
+            assert _input_rows(conn, skipped_running_id) == {}
+            assert _input_rows(conn, skipped_done_id) == {}
+            after = {cast(int, row["task_id"]): row for row in _task_rows(conn)}
+            for task_id, marker in (
+                (known_todo_id, "mixed-known-todo"),
+                (known_done_id, "mixed-known-done"),
+            ):
+                assert json.loads(str(after[task_id]["extra"])) == (
+                    _expected_remaining_metadata(marker)
+                )
+            assert after[skipped_running_id] == before[skipped_running_id]
+            assert after[skipped_done_id] == before[skipped_done_id]
+            precision = _query(
+                conn,
+                "SELECT (extra -> 'precision')::text AS precision "
+                "FROM yascheduler_tasks WHERE task_id = :task_id",
+                task_id=skipped_done_id,
+            )[0]["precision"]
+            assert precision == "1.234567890123456789"
+            success_tasks = _task_rows(conn)
+            success_inputs = _all_input_rows(conn)
+            success_tracker = _tracker_snapshot(conn)
+        finally:
+            conn.close()
+
+        skipped_records = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
+        ]
+        assert {getattr(record, "task_id", None) for record in skipped_records} == {
+            skipped_running_id,
+            skipped_done_id,
+        }
+        # Each skipped payload has the rich fixture, its secret marker, and
+        # (for the DONE row) the precision injected directly into JSONB.
+        expected_key_counts = {
+            skipped_running_id: len(_payload("unused")) + 1,
+            skipped_done_id: len(_payload("unused")) + 2,
+        }
+        for record in skipped_records:
+            task_id = cast(int, getattr(record, "task_id", None))
+            fields = {
+                key: value
+                for key, value in extra_fields(record).items()
+                if key != "message"
+            }
+            assert fields == {
+                "task_id": task_id,
+                "engine": UNKNOWN_ENGINE,
+                "entry_count": 0,
+                "failure": "ValueError",
+                "key_count": expected_key_counts[task_id],
+            }
+
+        for task_id in (skipped_running_id, skipped_done_id):
+            for marker in (
+                "MIGRATE_TASK_INPUTS",
+                "MIGRATE_TASK_STORAGE_START",
+                "MIGRATE_TASK_STORAGE_DONE",
+                "MIGRATE_TASK_INPUTS_FAILED",
+            ):
+                assert not any(
+                    record.getMessage() == marker
+                    and getattr(record, "task_id", None) == task_id
+                    for record in caplog.records
+                )
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING and record.name == MIGRATION_LOGGER
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].getMessage() == (
+            f"Migration 014 left 2 task(s) unconverted for engine {UNKNOWN_ENGINE!r}"
+        )
+        warning_fields = {
+            key: value
+            for key, value in extra_fields(warnings[0]).items()
+            if key != "message"
+        }
+        assert warning_fields == {"engine": UNKNOWN_ENGINE, "skipped_count": 2}
+        assert not any(
+            record.levelno == logging.WARNING and ENGINE in record.getMessage()
+            for record in caplog.records
+        )
+        all_log_fields = repr([extra_fields(record) for record in caplog.records])
+        assert LOG_SECRET not in caplog.text
+        assert LOG_CREDENTIAL not in caplog.text
+        assert LOG_SECRET not in all_log_fields
+        assert LOG_CREDENTIAL not in all_log_fields
+
+        # The skipped rows are terminal for migration 014: a rerun under a
+        # tracker at 014 is a complete no-op even without engine context.
+        apply_migrations(config, upto="014")
+
+        conn = _connect(config)
+        try:
+            assert _task_rows(conn) == success_tasks
+            assert _all_input_rows(conn) == success_inputs
+            assert _tracker_snapshot(conn) == success_tracker
+            assert _timestamp_trigger_state(conn) == "O"
+        finally:
+            conn.close()
+
+
+# endregion FUNC_test_migration_014_mixed_cohort_aggregates_skipped_engine_warning
+
+
+# region FUNC_test_migration_014_non_object_extra_status_boundary
+# PURPOSE: Prove JSONB values that are not metadata objects skip for started tasks with key_count zero and abort for TO_DO tasks without crashing while formatting bounded key diagnostics.
+@pytest.mark.parametrize("status", ["RUNNING", "DONE", "TO_DO"])
+def test_migration_014_non_object_extra_status_boundary(
+    status: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+
+        conn = _connect(config)
+        try:
+            _set_tracker_to_013(conn)
+            node_id = (
+                _insert_node(conn, "10.14.9.1", 4) if status == "RUNNING" else None
+            )
+            task_id = _insert_modern_task(
+                conn,
+                title=f"non-object-{status.lower()}",
+                status=status,
+                extra={"INPUT": "body"},
+                created_at="2024-09-10T14:15:16+00:00",
+                updated_at="2024-09-10T14:16:17+00:00",
+                allocated_node_id=node_id,
+                remote_folder="/non-object/remote",
+            )
+            conn.run(
+                "UPDATE yascheduler_tasks SET extra = CAST(:extra AS JSONB) "
+                "WHERE task_id = :task_id",
+                extra=json.dumps(["legacy-array", 7]),
+                task_id=task_id,
+            )
+            before_tasks = _task_rows(conn)
+            assert json.loads(str(before_tasks[0]["extra"])) == ["legacy-array", 7]
+            assert (
+                _query(
+                    conn,
+                    "SELECT status::text AS status FROM yascheduler_tasks "
+                    "WHERE task_id = :task_id",
+                    task_id=task_id,
+                )[0]["status"]
+                == status
+            )
+            before_tracker = _tracker_snapshot(conn)
+        finally:
+            conn.close()
+
+        with caplog.at_level(logging.DEBUG, logger=MIGRATION_LOGGER):
+            if status == "TO_DO":
+                with pytest.raises(RuntimeError) as exc_info:
+                    apply_migrations(
+                        config,
+                        engine_inputs={ENGINE: DECLARATIONS},
+                        upto="014",
+                    )
+                diagnostic = str(exc_info.value)
+                assert f"task {task_id}, engine {ENGINE!r}" in diagnostic
+                assert "legacy extra must be a metadata object" in diagnostic
+                assert (
+                    "payload keys (0 total, first 10, up to 80 characters each): []"
+                    in diagnostic
+                )
+                assert (
+                    "configure the engine input_files to match these keys "
+                    "or mark the task DONE"
+                ) in diagnostic
+            else:
+                apply_migrations(
+                    config,
+                    engine_inputs={ENGINE: DECLARATIONS},
+                    upto="014",
+                )
+
+        if status == "TO_DO":
+            assert not any(
+                record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
+                for record in caplog.records
+            )
+            assert not [
+                record for record in caplog.records if record.levelno == logging.WARNING
+            ]
+            conn = _connect(config)
+            try:
+                assert _tracker_snapshot(conn) == before_tracker
+                assert _task_rows(conn) == before_tasks
+                assert _all_input_rows(conn) == []
+                assert _timestamp_trigger_state(conn) == "O"
+            finally:
+                conn.close()
+            return
+
+        skipped = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
+            and getattr(record, "task_id", None) == task_id
+        ]
+        assert len(skipped) == 1
+        skipped_fields = {
+            key: value
+            for key, value in extra_fields(skipped[0]).items()
+            if key != "message"
+        }
+        assert skipped_fields == {
+            "task_id": task_id,
+            "engine": ENGINE,
+            "entry_count": 0,
+            "failure": "TypeError",
+            "key_count": 0,
+        }
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING and record.name == MIGRATION_LOGGER
+        ]
+        assert len(warnings) == 1
+        assert warnings[0].getMessage() == (
+            f"Migration 014 left 1 task(s) unconverted for engine {ENGINE!r}"
+        )
+        assert "legacy-array" not in caplog.text
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "014"]
+            assert _task_rows(conn) == before_tasks
+            assert _all_input_rows(conn) == []
+            assert (
+                _query(
+                    conn,
+                    "SELECT status::text AS status FROM yascheduler_tasks "
+                    "WHERE task_id = :task_id",
+                    task_id=task_id,
+                )[0]["status"]
+                == status
+            )
+        finally:
+            conn.close()
+
+
+# endregion FUNC_test_migration_014_non_object_extra_status_boundary
+
+
+# region FUNC_test_migration_014_requires_engine_context_even_on_empty_database
+# PURPOSE: Prove engine declarations are mandatory even when no task is pending and that an explicitly empty mapping is accepted.
+def test_migration_014_requires_engine_context_even_on_empty_database() -> None:
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+
+        conn = _connect(config)
+        try:
+            _set_tracker_to_013(conn)
+        finally:
+            conn.close()
+
+        with pytest.raises(
+            RuntimeError,
+            match="requires engine input declarations; supply engine_inputs "
+            r"\(an empty mapping is allowed\)",
+        ):
+            apply_migrations(config, upto="014")
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013"]
+            assert _all_input_rows(conn) == []
+        finally:
+            conn.close()
+
+        # The empty mapping is a declaration context, not a missing one.
+        apply_migrations(config, engine_inputs={}, upto="014")
+
+        conn = _connect(config)
+        try:
+            assert _tracker_rows(conn) == ["013", "014"]
+            assert _all_input_rows(conn) == []
+            assert _timestamp_trigger_state(conn) == "O"
+        finally:
+            conn.close()
+
+
+# endregion FUNC_test_migration_014_requires_engine_context_even_on_empty_database
+
+
+# region FUNC_test_migration_014_missing_engine_context_rolls_back_existing_rows
+# PURPOSE: Prove a missing engine-declaration context leaves every stored task and the tracker untouched.
+def test_migration_014_missing_engine_context_rolls_back_existing_rows() -> None:
+    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
+        config = _make_config(pg)
+        apply_schema(config)
+
+        conn = _connect(config)
+        try:
+            _set_tracker_to_013(conn)
+            _insert_modern_task(
+                conn,
+                title="context-rollback",
+                status="TO_DO",
+                extra=_payload("context-rollback"),
+                created_at="2024-10-11T15:16:17+00:00",
+                updated_at="2024-10-11T15:17:18+00:00",
+            )
+            before_tasks = _task_rows(conn)
+            before_tracker = _tracker_snapshot(conn)
+        finally:
+            conn.close()
+
+        with pytest.raises(RuntimeError, match="requires engine input declarations"):
+            apply_migrations(config, upto="014")
+
+        conn = _connect(config)
+        try:
+            assert _tracker_snapshot(conn) == before_tracker
+            assert _task_rows(conn) == before_tasks
+            assert _all_input_rows(conn) == []
+            assert _timestamp_trigger_state(conn) == "O"
+        finally:
+            conn.close()
+
+
+# endregion FUNC_test_migration_014_missing_engine_context_rolls_back_existing_rows

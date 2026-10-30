@@ -43,7 +43,7 @@ Unrelated user metadata SHALL remain independent of input contents.
 
 Capture, submission normalization, persistence, migration, and upload SHALL
 emit structured DEBUG boundary records using module-local stdlib loggers.
-Records SHALL distinguish entry, successful completion, and failure,
+Records SHALL distinguish entry, successful completion, skip, and failure,
 carrying task identity when available, the input source or engine where
 relevant, entry counts, and the affected selection or path when known.
 

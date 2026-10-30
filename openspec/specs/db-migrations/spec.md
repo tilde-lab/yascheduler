@@ -132,12 +132,13 @@ needs no snapshot DDL edit.
 
 ### Requirement: Legacy task inputs migrate without metadata loss
 
-The forward migration SHALL identify legacy file payloads using the input
-declarations of each stored task's configured engine, convert those payloads
-into task-owned input entries, and remove only converted file keys from
-unrelated metadata. Conversion SHALL use stored payloads rather than the
-original filesystem. Task identities, lifecycle state, node bindings, result
-locations, and unrelated metadata SHALL be preserved for all task statuses.
+The forward migration SHALL identify legacy file payloads with the input
+declarations of each stored task's engine, convert those payloads into
+task-owned input entries where the declarations allow it, and remove only
+converted file keys from unrelated metadata. Conversion SHALL use stored
+payloads rather than the original filesystem. Task identities, lifecycle state,
+node bindings, result locations, and unrelated metadata SHALL be preserved for
+every task.
 
 #### Scenario: existing task data is converted
 
@@ -156,15 +157,39 @@ not claim to recover encodings that were never recorded.
 - **WHEN** a non-`fort.9` legacy file payload is a string that resembles base64
 - **THEN** it converts as UTF-8 text and is not decoded as base64
 
-### Requirement: Unsafe conversion stops the upgrade
+### Requirement: A task that has not started stops the upgrade
 
-The migration SHALL fail with task and path or engine diagnostics when a
-required engine declaration is unavailable, a required payload is absent, or
-a payload cannot be converted safely. It SHALL leave the input conversion and
-its migration tracker entry uncommitted on failure. Fresh bootstrap and
-upgraded databases SHALL expose the same input storage contract.
+The upgrade SHALL stop and leave its conversion and its tracker entry
+uncommitted when a task that has not started cannot be converted: its engine
+declaration is unavailable, a declared input is absent from its payload, or its
+payload cannot be converted safely. The stop SHALL name the task, its engine,
+the failing input when known, and the input keys that task carries. Fresh
+bootstrap and upgraded databases SHALL expose the same input storage contract.
 
 #### Scenario: unsafe conversion stops the upgrade
 
-- **WHEN** a task lacks its engine declaration or has a missing, unsafe, or undecodable required payload
-- **THEN** migration reports the affected task and cause, retains the pre-conversion task data, and does not record the input migration as applied
+- **WHEN** the upgrade meets a task that has not started whose engine declaration is missing or whose declared payload cannot be converted
+- **THEN** the upgrade stops naming the task, its engine, the failing input when known, and the input keys that task carries, and no conversion or tracker entry is committed
+
+### Requirement: The upgrade requires engine declarations
+
+The upgrade SHALL stop before converting any stored task when it receives no
+engine declaration context, and SHALL leave its tracker entry uncommitted. An
+empty engine declaration mapping is a valid context.
+
+#### Scenario: the upgrade refuses to run without declarations
+
+- **WHEN** the upgrade runs without an engine declaration context against a database that holds stored tasks
+- **THEN** it stops before converting any task and no tracker entry is committed
+
+### Requirement: A task that has started is left unconverted
+
+The upgrade SHALL continue past a task that has started and cannot be
+converted. That task SHALL keep its stored payload and metadata, and SHALL gain
+no input entries. The upgrade SHALL report each engine left with unconverted
+tasks and the number of tasks that engine left.
+
+#### Scenario: a task that has started is left unconverted
+
+- **WHEN** the upgrade meets a task that has started and cannot be converted
+- **THEN** the upgrade continues, that task keeps its stored payload and metadata and gains no input entries, and each engine left with unconverted tasks is reported with its count

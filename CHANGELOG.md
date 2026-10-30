@@ -4,9 +4,14 @@
 
 - database schema change: migrations 014 (task input snapshots) and 015 (task
   output selections) are applied by `yainit`, which must run before the new
-  daemon starts. Migration 014 converts stored legacy input payloads using the
-  engine declarations of the config it runs with and aborts, naming the
-  affected task, when a declaration or payload cannot be converted safely.
+  daemon starts. Migration 014 requires an engine declaration context: no
+  context aborts, while an empty mapping is valid. A `TO_DO` task that cannot
+  be converted aborts the upgrade and names the task, engine, failing input
+  when known, and its input keys. A `RUNNING` or `DONE` task that cannot be
+  converted keeps its legacy payload, gains no input entries, and does not
+  stop the upgrade; a warning reports each affected engine with its task count.
+  Storage faults still abort. Unconverted tasks are not backfilled
+  automatically.
 
 ### Feat
 

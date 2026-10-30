@@ -1,19 +1,20 @@
 """Convert legacy task input payloads to task-owned snapshots."""
+# region MODULE_CONTRACT
+# PURPOSE: Preserve deployable task inputs while allowing already-started tasks with unconvertible legacy inputs to stop blocking the upgrade.
+# SCOPE: Forward migration 014; configured engine declarations select stored payload paths, never local files. No submission, deployment, or output behavior.
+# INVARIANTS: DDL, conversion, metadata removal, and tracker recording share the runner's transaction; no intermediate commits. Missing context, TO_DO conversion failures, and storage failures abort; RUNNING/DONE conversion failures leave rows unchanged and are reported per engine. All task columns except converted extra keys remain unchanged, including timestamps. Content-free boundary traces carry task/engine/path counts and failure classes, never file bodies, payloads, SQL params, or exception text.
+# DEPENDENCIES: Domain snapshot/path/selection rules; Migration engine context; SQL frozen in this module, not mutable runtime task queries.
+# endregion MODULE_CONTRACT
 
 # Dynamic migration modules live outside a package; the runner loads them by path.
 # ruff: noqa: INP001
-# region MODULE_CONTRACT
-# PURPOSE: Preserve the deployment meaning of every stored task's legacy inputs while moving them out of arbitrary metadata into owned binary entries.
-# SCOPE: Forward migration 014; configured engine declarations select stored payload paths, never local files. No submission, deployment, or output behavior.
-# INVARIANTS: DDL, conversion, metadata removal, and tracker recording share the runner's transaction; no intermediate commits. All task columns except converted extra keys remain unchanged, including timestamps. Content-free DEBUG boundary traces carry task/engine/path counts and failure classes, never file bodies, payloads, SQL params, or exception text.
-# DEPENDENCIES: Domain snapshot/path/selection rules; Migration engine context; SQL frozen in this module, not mutable runtime task queries.
-# endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import base64
 import binascii
 import logging
+from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 from yascheduler.domain import (
@@ -73,7 +74,7 @@ ALTER TABLE yascheduler_tasks ENABLE TRIGGER yascheduler_tasks_touch_updated_at
 
 # Convert all statuses; task order keeps migration diagnostics deterministic.
 _LIST_LEGACY_INPUTS = """
-SELECT task_id, engine, extra
+SELECT task_id, engine, status, extra
 FROM yascheduler_tasks
 ORDER BY task_id
 """
@@ -109,13 +110,14 @@ class TaskInputSnapshots(Migration):
     """Move engine-selected legacy inputs into normalized owned rows."""
 
     # region METHOD_migrate
-    # PURPOSE: Create input storage and convert every stored task in the open migration transaction, leaving commit and tracker ownership with the runner.
-    # REQUIRES: Each stored engine has supplied input declarations; the scheduler and submitters are stopped.
-    # ENSURES: Successful conversion removes only selected payload keys; any error aborts the migration with task/engine/path context.
+    # PURPOSE: Convert representable inputs without letting historical conversion failures block pending work, leaving commit and tracker ownership with the runner.
+    # REQUIRES: An explicit engine-declarations mapping (possibly empty); the scheduler and submitters are stopped.
+    # ENSURES: Successful conversion removes only selected payload keys; unconvertible RUNNING/DONE rows remain unchanged and are reported. TO_DO conversion failures abort with bounded key diagnostics; storage and unexpected failures always abort.
     def migrate(self) -> None:  # noqa: PLR0915
         """Convert stored inputs without closing the runner's transaction."""
         rows: list[tuple[Any, ...]] = []
         converted_entries = 0
+        skipped_by_engine: dict[str, int] = {}
         current_task_id: int | None = None
         current_engine: str | None = None
         current_path: str | None = None
@@ -125,11 +127,14 @@ class TaskInputSnapshots(Migration):
             extra={"entry_count": 0},
         )
         try:
+            if self.engine_inputs is None:
+                message = "migration 014 requires engine input declarations; supply engine_inputs (an empty mapping is allowed)"
+                raise RuntimeError(message)  # noqa: TRY301
             self.conn.run(_CREATE_INPUTS)
             self.conn.run(_DISABLE_TIMESTAMP_TRIGGER)
             rows = self.conn.run(_LIST_LEGACY_INPUTS) or []
             logger.debug("MIGRATE_INPUTS", extra={"tasks": len(rows)})
-            for task_id, engine, payload in rows:
+            for task_id, engine, status, payload in rows:
                 current_task_id = task_id
                 current_engine = engine
                 current_path = None
@@ -144,7 +149,7 @@ class TaskInputSnapshots(Migration):
                     },
                 )
                 try:
-                    if self.engine_inputs is None or engine not in self.engine_inputs:
+                    if engine not in self.engine_inputs:
                         message = f"engine {engine!r} has no input declarations; supply its configuration"
                         raise ValueError(message)  # noqa: TRY301
                     if not isinstance(payload, dict):
@@ -170,13 +175,37 @@ class TaskInputSnapshots(Migration):
                         ):
                             current_selection = failure_path
                             failure_fields["selection"] = failure_path
+                    conversion_error = isinstance(
+                        err, (ValidationError, TypeError, ValueError)
+                    )
+                    # Frozen SQL enum labels; unknown states stay fail-closed
+                    # just like TO_DO.
+                    if conversion_error and status in ("RUNNING", "DONE"):
+                        failure_fields["key_count"] = (
+                            len(payload) if isinstance(payload, dict) else 0
+                        )
+                        logger.debug(
+                            "MIGRATE_TASK_INPUTS_SKIPPED", extra=failure_fields
+                        )
+                        skipped_by_engine[engine] = skipped_by_engine.get(engine, 0) + 1
+                        continue
                     logger.debug(
                         "MIGRATE_TASK_INPUTS_FAILED",
                         extra=failure_fields,
                     )
-                    if isinstance(err, (ValidationError, TypeError, ValueError)):
-                        message = f"task {task_id}, engine {engine!r}: {err}"
-                        raise RuntimeError(message) from err  # noqa: TRY004
+                    if conversion_error:
+                        keys = (
+                            [key[:80] for key in islice(payload, 10)]
+                            if isinstance(payload, dict)
+                            else []
+                        )
+                        key_count = len(payload) if isinstance(payload, dict) else 0
+                        message = (
+                            f"task {task_id}, engine {engine!r}: {err}; "
+                            f"payload keys ({key_count} total, first 10, up to 80 characters each): {keys!r}; "
+                            "configure the engine input_files to match these keys or mark the task DONE"
+                        )
+                        raise RuntimeError(message) from err
                     raise
                 # endregion BLOCK_convert_task
 
@@ -267,6 +296,13 @@ class TaskInputSnapshots(Migration):
                 failure_fields["selection"] = current_selection
             logger.debug("MIGRATE_INPUTS_FAILED", extra=failure_fields)
             raise
+        for engine, count in skipped_by_engine.items():
+            logger.warning(
+                "Migration 014 left %d task(s) unconverted for engine %r",
+                count,
+                engine,
+                extra={"engine": engine, "skipped_count": count},
+            )
         logger.debug(
             "MIGRATE_INPUTS_DONE",
             extra={"tasks": len(rows), "entry_count": converted_entries},
