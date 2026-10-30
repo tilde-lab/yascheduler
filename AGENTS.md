@@ -20,6 +20,8 @@
 - Prefer minimal changes over broad refactors.
 - Do not add compatibility layers without a concrete need.
 - If a commit is required, format the message according to Conventional Commits.
+- Never cite plans, task numbers, or change slugs in comments, docstrings,
+  tests, or docs — nobody looks them up.
 - Every module should export only the public API via `__all__`.
 
 <!-- #endregion SECTION_Dev_Rules -->
