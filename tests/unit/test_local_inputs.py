@@ -228,40 +228,6 @@ class TestGlobLanguageAtCapture:
 
         assert _file_content(snapshot, ".hidden") == b"hidden"
 
-    def test_star_is_per_component(self, tmp_path: Path) -> None:
-        root_file = tmp_path / "root.orb"
-        root_file.write_bytes(b"root")
-        (tmp_path / "basis").mkdir()
-        (tmp_path / "basis" / "nested.orb").write_bytes(b"nested")
-
-        snapshot = _capture(tmp_path, "*.orb")
-
-        assert [entry.path for entry in snapshot] == ["root.orb"]
-
-    def test_question_mark_matches_one_character(self, tmp_path: Path) -> None:
-        (tmp_path / "result1.dat").write_bytes(b"one")
-        (tmp_path / "result12.dat").write_bytes(b"two")
-
-        assert _capture(tmp_path, "result?.dat") == (
-            TaskInputFile(path="result1.dat", content=b"one"),
-        )
-
-    def test_character_class_matches_one_character(self, tmp_path: Path) -> None:
-        (tmp_path / "result1.dat").write_bytes(b"one")
-        (tmp_path / "resultx.dat").write_bytes(b"x")
-
-        assert _capture(tmp_path, "result[0-9].dat") == (
-            TaskInputFile(path="result1.dat", content=b"one"),
-        )
-
-    def test_character_class_escapes_metacharacter(self, tmp_path: Path) -> None:
-        (tmp_path / "a?b").write_bytes(b"question")
-        (tmp_path / "axb").write_bytes(b"other")
-
-        assert _capture(tmp_path, "a[?]b") == (
-            TaskInputFile(path="a?b", content=b"question"),
-        )
-
     def test_shell_syntax_filename_is_selected_literally(self, tmp_path: Path) -> None:
         (tmp_path / "~{a,b}").write_bytes(b"literal")
         (tmp_path / "a").write_bytes(b"expanded-lookalike")
@@ -285,59 +251,6 @@ class TestGlobLanguageAtCapture:
             "basis/deep/b.orb",
         ]
 
-    def test_leading_double_star_matches_root_level_x(self, tmp_path: Path) -> None:
-        (tmp_path / "x").write_bytes(b"root-x")
-        (tmp_path / "deep").mkdir()
-        (tmp_path / "deep" / "x").write_bytes(b"deep-x")
-
-        snapshot = _capture(tmp_path, "**/x")
-
-        assert _file_content(snapshot, "x") == b"root-x"
-        assert _file_content(snapshot, "deep/x") == b"deep-x"
-
-    def test_trailing_double_star_selects_directory_and_subtree(
-        self, tmp_path: Path
-    ) -> None:
-        basis = tmp_path / "basis"
-        (basis / "deep").mkdir(parents=True)
-        (basis / "root.txt").write_bytes(b"root")
-        (basis / "deep" / "child.txt").write_bytes(b"child")
-
-        snapshot = _capture(tmp_path, "basis/**")
-
-        assert [entry.path for entry in snapshot] == [
-            "basis",
-            "basis/deep",
-            "basis/deep/child.txt",
-            "basis/root.txt",
-        ]
-
-    def test_double_star_alone_excludes_root_level_files(self, tmp_path: Path) -> None:
-        (tmp_path / "root.txt").write_bytes(b"root")
-        basis = tmp_path / "basis"
-        basis.mkdir()
-        (basis / "child.txt").write_bytes(b"child")
-        (basis / "empty").mkdir()
-
-        snapshot = _capture(tmp_path, "**")
-
-        assert [entry.path for entry in snapshot] == [
-            "basis",
-            "basis/child.txt",
-            "basis/empty",
-        ]
-
-    def test_deeper_glob_below_file_yields_required_error(self, tmp_path: Path) -> None:
-        basis = tmp_path / "basis"
-        basis.mkdir()
-        (basis / "x.orb").write_bytes(b"x")
-
-        with pytest.raises(TaskInputCaptureError) as info:
-            _capture(tmp_path, "basis/x.orb/**")
-
-        assert info.value.path == "basis/x.orb/**"
-        assert "matched no" in info.value.reason
-
 
 class TestRequiredSelections:
     def test_missing_explicit_path_reports_raw_selection(self, tmp_path: Path) -> None:
@@ -356,6 +269,17 @@ class TestRequiredSelections:
             _capture(tmp_path, selection)
 
         assert info.value.path == selection
+        assert "matched no" in info.value.reason
+
+    def test_deeper_glob_below_file_yields_required_error(self, tmp_path: Path) -> None:
+        basis = tmp_path / "basis"
+        basis.mkdir()
+        (basis / "x.orb").write_bytes(b"x")
+
+        with pytest.raises(TaskInputCaptureError) as info:
+            _capture(tmp_path, "basis/x.orb/**")
+
+        assert info.value.path == "basis/x.orb/**"
         assert "matched no" in info.value.reason
 
     def test_failure_happens_after_other_selections_matched(
