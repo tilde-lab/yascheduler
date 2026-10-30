@@ -274,11 +274,7 @@ async def consume_task(
         )
     logger.debug(
         "FINALISE_DECISION",
-        extra={
-            "will_fail": bool(permanent_errors),
-            "permanent": len(permanent_errors),
-            "transient": len(transient_errors),
-        },
+        extra={"permanent": len(permanent_errors)},
     )
     # endregion BLOCK_finalise
     return await _finalize_and_clean(

@@ -88,9 +88,7 @@ def test_trigger_restore_failure_has_no_stale_task_context(
     assert failed[0].name == (
         "yascheduler.infra.persistence.sql.migrations.014_task_input_snapshots"
     )
-    fields = {
-        key: value for key, value in extra_fields(failed[0]).items() if key != "message"
-    }
+    fields = extra_fields(failed[0])
     assert fields == {
         "tasks": 1,
         "entry_count": 1,
@@ -211,7 +209,6 @@ def test_storage_failure_aborts_for_started_task(
         migration.migrate()
 
     messages = [record.getMessage() for record in caplog.records]
-    assert "MIGRATE_TASK_STORAGE_FAILED" in messages
     assert "MIGRATE_TASK_INPUTS_FAILED" in messages
     assert "MIGRATE_TASK_INPUTS_SKIPPED" not in messages
     assert "MIGRATE_INPUTS_DONE" not in messages

@@ -109,10 +109,7 @@ class TaskInputSnapshots(Migration):
         current_engine: str | None = None
         current_path: str | None = None
         current_selection: str | None = None
-        logger.debug(
-            "MIGRATE_INPUTS_START",
-            extra={"entry_count": 0},
-        )
+        logger.debug("MIGRATE_INPUTS_START")
         try:
             if self.engine_inputs is None:
                 message = "migration 014 requires engine input declarations; supply engine_inputs (an empty mapping is allowed)"
@@ -129,11 +126,7 @@ class TaskInputSnapshots(Migration):
                 # region BLOCK_convert_task
                 logger.debug(
                     "MIGRATE_TASK_INPUTS_START",
-                    extra={
-                        "task_id": task_id,
-                        "engine": engine,
-                        "entry_count": 0,
-                    },
+                    extra={"task_id": task_id, "engine": engine},
                 )
                 try:
                     if engine not in self.engine_inputs:
@@ -233,10 +226,6 @@ class TaskInputSnapshots(Migration):
                         "failure": type(err).__name__,
                     }
                     logger.debug(
-                        "MIGRATE_TASK_STORAGE_FAILED",
-                        extra=failure_fields,
-                    )
-                    logger.debug(
                         "MIGRATE_TASK_INPUTS_FAILED",
                         extra=failure_fields,
                     )
@@ -254,7 +243,6 @@ class TaskInputSnapshots(Migration):
                     extra={
                         "task_id": task_id,
                         "engine": engine,
-                        "entries": entry_count,
                         "entry_count": entry_count,
                     },
                 )

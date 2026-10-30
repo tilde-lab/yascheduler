@@ -216,7 +216,6 @@ class TestLogs:
         start = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_START"))
         assert start["engine"] == engine.name
         assert start["source"] == "legacy"
-        assert start["entry_count"] == 0
 
         success = extra_fields(
             _find_log_record(caplog, "NORMALIZE_INPUTS", source="legacy")
@@ -240,7 +239,6 @@ class TestLogs:
         start = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_START"))
         assert start["engine"] == engine.name
         assert start["source"] == "explicit"
-        assert start["entry_count"] == 0
 
         success = extra_fields(
             _find_log_record(caplog, "NORMALIZE_INPUTS", source="explicit")

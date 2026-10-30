@@ -213,7 +213,7 @@ def normalize_task_inputs(
     snapshot: TaskInputSnapshot = ()
     logger.debug(
         "NORMALIZE_INPUTS_START",
-        extra={"engine": engine.name, "source": source, "entry_count": 0},
+        extra={"engine": engine.name, "source": source},
     )
     try:
         payload = {
@@ -249,7 +249,6 @@ def normalize_task_inputs(
         extra={
             "engine": engine.name,
             "source": source,
-            "entries": len(snapshot),
             "entry_count": len(snapshot),
         },
     )

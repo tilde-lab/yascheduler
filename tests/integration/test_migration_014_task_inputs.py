@@ -724,7 +724,7 @@ def test_modern_013_migration_creates_table_and_converts_all_statuses(
         overall_start = _records(caplog, "MIGRATE_INPUTS_START")
         assert len(overall_start) == 1
         assert overall_start[0].name == MIGRATION_LOGGER
-        assert extra_fields(overall_start[0]) == {"entry_count": 0}
+        assert extra_fields(overall_start[0]) == {}
 
         overall_done = _records(caplog, "MIGRATE_INPUTS_DONE")
         assert len(overall_done) == 1

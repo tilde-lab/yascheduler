@@ -178,11 +178,7 @@ class TestConsumeTask:
         uow.commit.assert_awaited_once()
         tracker.discard.assert_called_once_with(TaskId(1))
 
-        assert _marker_fields(caplog, "FINALISE_DECISION") == {
-            "will_fail": False,
-            "permanent": 0,
-            "transient": 0,
-        }
+        assert _marker_fields(caplog, "FINALISE_DECISION") == {"permanent": 0}
         assert _marker_fields(caplog, "FINALISE_OK") == {
             "task_id": 1,
             "label": "test",
@@ -418,11 +414,7 @@ class TestConsumeTask:
             remote_dir=REMOTE_FOLDER,
             task_id=TaskId(1),
         )
-        assert _marker_fields(caplog, "FINALISE_DECISION") == {
-            "will_fail": True,
-            "permanent": 1,
-            "transient": 0,
-        }
+        assert _marker_fields(caplog, "FINALISE_DECISION") == {"permanent": 1}
         assert _marker_fields(caplog, "RETRIEVAL_ENTRIES") == {
             "task_id": 1,
             "transient": [],
@@ -570,11 +562,7 @@ class TestConsumeTask:
             remote_dir=REMOTE_FOLDER,
             task_id=TaskId(1),
         )
-        assert _marker_fields(caplog, "FINALISE_DECISION") == {
-            "will_fail": True,
-            "permanent": 1,
-            "transient": 0,
-        }
+        assert _marker_fields(caplog, "FINALISE_DECISION") == {"permanent": 1}
         assert _marker_fields(caplog, "FINALISE_FAIL") == {
             "task_id": 1,
             "label": "test",
