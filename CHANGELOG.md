@@ -1,3 +1,122 @@
+## v2.1.0 (2026-10-30)
+
+### Upgrade notes
+
+- no public API break: existing configuration, command-line flags, single-file
+  `input_files`/`output_files` lists, and the query `metadata` keys keep
+  working. What this release changes is the upgrade procedure and the rollback
+  story, not the package contract.
+- database schema change: migrations 014 (task input snapshots) and 015 (task
+  output selections) are applied by `yainit`, which must run before the new
+  daemon starts. Migration 014 requires an engine declaration context: no
+  context aborts, while an empty mapping is valid. A `TO_DO` task that cannot
+  be converted aborts the upgrade and names the task, engine, failing input
+  when known, and its input keys. A `RUNNING` or `DONE` task that cannot be
+  converted keeps its legacy payload, gains no input entries, and does not
+  stop the upgrade; a warning reports each affected engine with its task count.
+  Storage faults still abort. Unconverted tasks are not backfilled
+  automatically.
+- **inputs**: a legacy filename/value payload is read as a flat set of names,
+  by submission and by migration 014 through one shared rule. A literal
+  `input_files` declaration claims exactly the key of its name and a glob
+  claims keys as file paths; a key is never expanded into a directory or into
+  the keys sharing its prefix. A payload that carried both `basis` and
+  `basis/Si.orb` therefore converts instead of aborting the upgrade, and its
+  nested key stays unrelated metadata, exactly as the previous scheduler
+  accepted and deployed it. Tree submissions express directories with a glob
+  (`basis/**`) or with typed `input_entries`.
+- rollback: after migration 014 the stored inputs live in
+  `yascheduler_task_inputs` and are gone from `extra`, so an older package
+  cannot start tasks against the migrated database. Rolling back needs the
+  database restored from a backup taken before `yainit`.
+
+### Feat
+
+- **inputs**: engine `input_files` accepts files, directories, and globs.
+  `yasubmit` captures the exact input tree from the submission working
+  directory, including nested and empty directories, hidden entries, and binary
+  files; the task keeps that snapshot, so the source files may change or
+  disappear after submission. Variable, home-directory, and brace expansion do
+  not apply; `**` matches directory levels and `*` never crosses `/`. Symbolic
+  links and unsafe paths are rejected.
+- **inputs**: the public submit methods accept optional typed `input_entries`
+  for tree and binary submissions, and legacy Python submissions keep working:
+  their filename/value metadata becomes the same typed snapshot. Queries add a
+  top-level `input_entries` list ordered by task-relative path, carrying exact
+  bytes (`content_base64`) or directory markers, while `metadata` keeps a
+  derived legacy filename/value view of that snapshot. Existing arguments,
+  integer task identities, and task statuses are unchanged.
+- **task**: accepted tasks freeze the engine's output selections; the public
+  client submit methods accept optional `output_selections` to override them
+  for one submission.
+- **retrieval**: `output_files` accepts files, directories, and globs in the
+  same selection language as `input_files`. A directory retrieves its complete
+  subtree, overlapping selections are merged and each path is transferred once,
+  and retrieved paths keep their task-relative layout under the local result
+  root, which is merged rather than cleared.
+
+### Fix
+
+- **query**: the legacy `metadata` view of an input keeps its recorded meaning
+  for every name: UTF-8 text as before, binary as base64, and the exact
+  `fort.9` name as base64 in both directions. A value a consumer decodes from
+  `metadata["fort.9"]` is now the bytes the submission accepted, instead of
+  plain text that decoded to nothing or to the wrong bytes.
+- **retrieval**: a selection that matches nothing, or a selected symbolic link,
+  is a permanent error naming the failing selection while the remaining
+  selections are still attempted; a destination symbolic link or a
+  file/directory conflict is likewise a permanent error.
+- **retrieval**: a pass with any transient download failure keeps the task
+  `RUNNING` with the remote directory intact, even when permanent errors are
+  also present; only a pass without transient failures finalises the task.
+- **retrieval**: the terminal transition is committed before the remote task
+  directory is removed, so a crash during deletion can no longer make a later
+  pass re-download from a partly deleted tree. The removal runs afterwards as
+  best effort over its own SFTP channel and cannot change the task's outcome.
+- **retrieval**: directory listings, metadata reads, and the post-finalisation
+  removal are retried on transient SSH errors within the shared budget; an
+  exhausted budget records a transient error for the pass.
+- **retrieval**: a task whose engine was removed from the configuration
+  finalises as failed and has its remote directory cleaned up instead of
+  stranding it.
+- **deploy**: the upload creates the stored directories and inspects each
+  destination without following links; an unsafe destination or a failed write
+  prevents execution and reports the affected task and path.
+- **retrieval**: tasks accepted before output selections were recorded fall
+  back to the live configured selections and log a warning with the task
+  identity. Tasks with recorded selections keep them after engine configuration
+  fixes; resubmit those tasks.
+- **cli**: no command-line or flag changes; `yastatus` view follows the task's
+  recorded first selection and names a pattern instead of tailing it.
+
+### Refactor
+
+- **persistence**: task reads no longer load the task's input snapshot; the
+  snapshot is requested only where its bytes are needed — deployment streams
+  entries one at a time in path order, and the public query fetches snapshots
+  in one batch. Public responses, the database schema, and submissions are
+  unchanged.
+- **logging**: input capture, persistence, and deployment emit structured block
+  records with task and path identity; input-transfer diagnostics carry no file
+  payloads and no exception text.
+- **inputs**: the selection language now has one implementation. Whether an
+  entry matches, whether anything can still match below a directory, and
+  whether a selection component names an entry are three answers from one
+  domain state machine; local capture asks them instead of re-deriving the
+  pattern while it scans, so no component matching lives outside the domain.
+  Matching, error messages, and the accepted snapshot are unchanged.
+- **inputs**: local input capture no longer defends against the source tree
+  being rewritten while it is read. The scan-time file identities, the
+  read-time `lstat`/`open`/`fstat` comparison, and the per-ancestor rechecks
+  are gone: a writer racing a capture could submit its own task instead, so
+  the checks never moved the trust boundary, and they caught only part of the
+  concurrent writes they appeared to cover. Capture still opens each file
+  without following links and rejects a non-regular entry before reading, so a
+  missing, linked, or special source fails with its path, and a non-regular
+  entry can no longer block a capture indefinitely. A source replaced by a
+  different ordinary file between the listing and the read is now read
+  silently.
+
 ## v2.0.2 (2026-10-08)
 
 ### Fix

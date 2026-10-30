@@ -24,6 +24,7 @@ __all__ = [
     "CloudError",
     "CloudSetupError",
     "DomainError",
+    "InvalidTaskSnapshotError",
     "MachineBusyError",
     "MachineConnectionError",
     "MissingInputFileError",
@@ -31,8 +32,10 @@ __all__ = [
     "NodeRowNotFoundError",
     "SchedulingError",
     "TaskError",
+    "TaskInputCaptureError",
     "TaskNotRunningError",
     "TaskNotTodoError",
+    "UnsafeTaskPathError",
     "UnsupportedEngineError",
     "ValidationError",
 ]
@@ -52,6 +55,65 @@ class UnsupportedEngineError(ValidationError):
     def __init__(self, engine_name: str) -> None:
         self.engine_name = engine_name
         super().__init__(f"unsupported engine: {engine_name}")
+
+
+# region CLASS_UnsafeTaskPathError
+# PURPOSE: Reject task-relative paths and selections that could escape the task root before any traversal reads or writes through them.
+# INVARIANTS: Carries the offending path/selection and a concrete reason so callers report actionable path context.
+class UnsafeTaskPathError(ValidationError):
+    """A task-relative path or selection violates the task-root contract.
+
+    Raised when an input path or selection is absolute, has a Windows
+    drive/UNC root, contains ``..`` components or backslashes, names the task
+    root itself, or otherwise cannot stay inside the task root.
+    """
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"unsafe task path {path!r}: {reason}")
+
+
+# endregion CLASS_UnsafeTaskPathError
+
+
+# region CLASS_InvalidTaskSnapshotError
+# PURPOSE: Reject snapshot entry sets that violate the task-owned input invariants (duplicates, kind conflicts, non-entry objects) so only a consistent tree is ever accepted or deployed.
+# INVARIANTS: Carries the offending entry path and a concrete reason; raised before any task write.
+class InvalidTaskSnapshotError(ValidationError):
+    """A task input snapshot violates the owned-entry invariants.
+
+    Raised for duplicate entry paths, file/directory ancestor conflicts, and
+    entries that are not task input value objects.
+    """
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"invalid task input snapshot at {path!r}: {reason}")
+
+
+# endregion CLASS_InvalidTaskSnapshotError
+
+
+# region CLASS_TaskInputCaptureError
+# PURPOSE: Reject a submission whose input selections cannot be captured from the source filesystem, naming the offending selection or path.
+# INVARIANTS: Carries the offending task-relative path or selection and a concrete reason; raised before any task write; never carries file contents or credentials.
+class TaskInputCaptureError(ValidationError):
+    """A task input snapshot could not be captured from the submission root.
+
+    Raised when a required selection is missing, a source cannot be read, a
+    selected entry is a symbolic link or an unsupported filesystem type, or a
+    source changed detectably during capture.
+    """
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"task input capture failed at {path!r}: {reason}")
+
+
+# endregion CLASS_TaskInputCaptureError
 
 
 class MissingInputFileError(ValidationError):

@@ -7,12 +7,11 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import asyncssh
@@ -36,7 +35,6 @@ if TYPE_CHECKING:
 
 _SSH_IMAGE = "serversideup/docker-ssh"
 _SSH_USERNAME = "testuser"
-_YASCHEDULER_LOGGER = "yascheduler"
 
 
 def _container_loopback_ip(index: int) -> str:
@@ -45,22 +43,15 @@ def _container_loopback_ip(index: int) -> str:
     `get_container_host_ip()` returns the docker host (e.g. ``localhost``)
     for every container in the default docker_host connection mode, which
     collapses the two-container pool into a single indistinguishable host.
-    Published ports listen on the whole 127.0.0.0/8 range on Docker and on
-    rootless podman, so distinct loopback addresses (127.0.0.1, 127.0.0.2, ...)
-    give per-container reachable endpoints. Container bridge IPs are NOT used:
+    Distinct loopback addresses (127.0.0.1, 127.0.0.2, ...) give per-container
+    reachable endpoints, but the published port must be bound to that address
+    explicitly: a default ``0.0.0.0`` binding answers only on 127.0.0.1 under
+    pasta-backed rootless podman (e.g. podman nested in a container), so the
+    second container would be unreachable. Container bridge IPs are NOT used:
     on rootless podman the bridge lives in a dedicated network namespace and
     is unreachable from the host.
     """
     return f"127.0.0.{index + 1}"
-
-
-class LogCaptureHandler(logging.Handler):
-    def __init__(self, records: list[logging.LogRecord]) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._records = records
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(record)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -99,12 +90,18 @@ async def ssh_pool(
 
     containers: list[DockerContainer] = []
     try:
-        for _ in range(2):
+        for index in range(2):
             c = DockerContainer(_SSH_IMAGE)
             c.with_env("SSH_USER", _SSH_USERNAME)
             c.with_env("AUTHORIZED_KEYS", public_key_str)
             c.with_env("ALLOWED_IPS", "AllowUsers testuser")
             c.with_exposed_ports(2222)
+            # Bind the published port to this container's own loopback address.
+            # testcontainers types the value as str|int, but docker-py also
+            # accepts (host_ip, host_port) with host_port None for "pick any".
+            published_ports = cast("dict[str, Any]", c.ports)
+            published_ports.clear()
+            published_ports["2222/tcp"] = (_container_loopback_ip(index), None)
             c.waiting_for(LogMessageWaitStrategy("Server listening on"))
             c.start()
             containers.append(c)
@@ -180,6 +177,15 @@ def e2e_config(
         f"deploy_local_files = run.sh\n"
         f"sleep_interval = 1\n"
         f"platforms = linux\n"
+        f"\n"
+        f"[engine.test_tree]\n"
+        f"spawn = {{engine_path}}/run.sh\n"
+        f"check_pname = sleep\n"
+        f"input_files = 1.input\n"
+        f"output_files = OUT.aiida OUT.aiida/**/*.dat root.dat\n"
+        f"deploy_local_files = run.sh\n"
+        f"sleep_interval = 1\n"
+        f"platforms = linux\n"
     )
     ini_path.write_text(ini_content)
 
@@ -188,6 +194,22 @@ def e2e_config(
     run_sh = engines_dir / "run.sh"
     run_sh.write_text("#!/bin/sh\nsleep 3\ncat 1.input > 1.input.out\n")
     run_sh.chmod(run_sh.stat().st_mode | stat.S_IEXEC)
+
+    # Tree-producing engine: a declared directory plus an overlapping glob
+    # select the same nested file, and a root file exercises an explicit-file
+    # selection in the same task.
+    tree_engine_dir = tmp / "data" / "engines" / "test_tree"
+    tree_engine_dir.mkdir(parents=True)
+    tree_run_sh = tree_engine_dir / "run.sh"
+    tree_run_sh.write_text(
+        "#!/bin/sh\n"
+        "sleep 3\n"
+        "mkdir -p OUT.aiida/nested\n"
+        "printf 'nested-result-tree\\n' > OUT.aiida/nested/result.dat\n"
+        "printf 'root-result-tree\\n' > root.dat\n"
+        "cat 1.input > 1.input.out\n"
+    )
+    tree_run_sh.chmod(tree_run_sh.stat().st_mode | stat.S_IEXEC)
 
     keys_dir = tmp / "data" / "keys"
     keys_dir.mkdir(parents=True)
@@ -250,18 +272,3 @@ def uow_factory(
         return PostgresUnitOfWork(_db_config, _bus)
 
     return _factory
-
-
-@pytest.fixture
-def log_records() -> Generator[list[logging.LogRecord], None, None]:
-    logger = logging.getLogger(_YASCHEDULER_LOGGER)
-    records: list[logging.LogRecord] = []
-    handler = LogCaptureHandler(records)
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)

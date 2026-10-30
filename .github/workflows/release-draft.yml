@@ -15,7 +15,7 @@ env:
 
 jobs:
   release:
-    name: Bump version and create draft release
+    name: Tag and create draft release
     if: github.repository == 'tilde-lab/yascheduler'
     runs-on: ubuntu-latest
     permissions:
@@ -28,61 +28,101 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          # Resolve the latest master after acquiring the concurrency slot.
-          ref: master
+          # Resolve the pushed branch again after acquiring the concurrency
+          # slot. Backfill branches are added to `on.push.branches` and release
+          # from their own tip.
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
 
-      - name: Install the project
-        run: uv sync --locked --all-extras --dev
+      - name: Verify lockfile
+        # A version bumped without `uv version` leaves the lockfile stale;
+        # stop before anything is tagged.
+        run: uv lock --check
 
-      - name: Create bump and changelog
-        id: cz
+      - name: Resolve release state
+        id: state
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          version=$(uv version --short)
+          tag="v$version"
+          # The version in the previous tip of the branch, if the push has one.
+          previous=
+          if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]]; then
+            previous=$(git show "$BEFORE:pyproject.toml" 2> /dev/null |
+              sed -n 's/^version = "\(.*\)"$/\1/p' | head -1) || true
+          fi
+          # Drafts come back here too: any release for the tag means this
+          # version was already cut.
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --silent 2> /dev/null; then
+            released=true
+          else
+            released=false
+          fi
+          # A push that moves the version onto a number that already has a
+          # release would leave a tag with no package behind it. A push that
+          # leaves the version alone is an ordinary merge and releases nothing.
+          if [[ "$released" == true && "$previous" != "$version" ]]; then
+            echo "::error::$tag already has a release; bump the version."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            tagged=true
+          else
+            tagged=false
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tagged=$tagged" >> "$GITHUB_OUTPUT"
+          echo "released=$released" >> "$GITHUB_OUTPUT"
+          echo "Release state: $tag tagged=$tagged released=$released previous=${previous:-unknown}"
+
+      - name: Create and push tag
+        if: steps.state.outputs.tagged == 'false' && steps.state.outputs.released == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.state.outputs.tag }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          previous_version=$(uv run --no-sync cz version --project)
-          # 3: no commits; 21: commits exist but none requires a bump.
-          # Render notes separately so pre-bump hook logs stay out of the draft.
-          uv run --no-sync cz --no-raise 3,21 bump --yes --dry-run \
-            --changelog-to-stdout > .CHANGELOG-CURRENT.md
-          uv run --no-sync cz --no-raise 3,21 bump --yes --check-consistency
-          version=$(uv run --no-sync cz version --project)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [[ "$version" == "$previous_version" ]]; then
-            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      - name: Extract changelog notes
+        id: notes
+        if: steps.state.outputs.released == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.state.outputs.tag }}
+        run: |
+          awk -v tag="$TAG" '
+            BEGIN { section = "^## " tag "([ (]|$)" }
+            $0 ~ section { inside = 1 }
+            inside && /^## / && $0 !~ section { exit }
+            inside { print }
+          ' CHANGELOG.md > .CHANGELOG-CURRENT.md
+          if [[ -s .CHANGELOG-CURRENT.md ]]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
           else
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CHANGELOG.md has no $TAG section; using generated notes."
           fi
 
-      - name: Verify lockfile
-        if: steps.cz.outputs.bumped == 'true'
-        run: uv sync --locked --all-extras --dev
-
-      - name: Build
-        if: steps.cz.outputs.bumped == 'true'
+      - name: Create draft release
+        if: steps.state.outputs.released == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.state.outputs.tag }}
+          NOTES_FOUND: ${{ steps.notes.outputs.found }}
         run: |
-          uv build
-          uv run --no-sync twine check dist/*
-
-      - name: Push bump commit and tag
-        if: steps.cz.outputs.bumped == 'true'
-        env:
-          VERSION: ${{ steps.cz.outputs.version }}
-        # Publish both refs together, only after validation and build succeed.
-        run: git push --atomic origin HEAD:master "refs/tags/v$VERSION"
-
-      - name: Create Release Draft
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844
-        if: steps.cz.outputs.bumped == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          draft: true
-          tag_name: v${{ steps.cz.outputs.version }}
-          body_path: .CHANGELOG-CURRENT.md
-          fail_on_unmatched_files: true
-          files: dist/*
+          if [[ "$NOTES_FOUND" == true ]]; then
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" \
+              --notes-file .CHANGELOG-CURRENT.md
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --generate-notes
+          fi

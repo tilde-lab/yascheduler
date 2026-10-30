@@ -553,10 +553,9 @@ async def test_migration_003_backfills_prov_ips_and_drops_unique() -> None:
                 "INSERT INTO yascheduler_nodes (ip, enabled, cloud) "
                 "VALUES ('provxyz7654321', FALSE, 'aws')",
             )
-            # Pre-create yascheduler_tasks at the 002-era schema (no
-            # allocated_node_id) so apply_migrations runs 003 then 004
-            # (004 ALTERs ADD COLUMN allocated_node_id — would collide with
-            # the fresh-snapshot CREATE TABLE if the table were absent).
+            # Pre-create yascheduler_tasks at the 002-era schema so
+            # apply_schema's CREATE TABLE IF NOT EXISTS stays a no-op instead
+            # of introducing a fresh current-snapshot tasks table.
             conn.run(
                 "CREATE TABLE yascheduler_tasks ("
                 "task_id SERIAL PRIMARY KEY, label VARCHAR(256), "
@@ -566,10 +565,10 @@ async def test_migration_003_backfills_prov_ips_and_drops_unique() -> None:
             conn.close()
 
         # apply_schema is a no-op on the existing tables (CREATE TABLE IF NOT
-        # EXISTS); apply_migrations runs 003 (backfill + DROP CONSTRAINT) then
-        # 004 (add allocated_node_id).
+        # EXISTS); apply_migrations runs exactly 003 (backfill + DROP
+        # CONSTRAINT) — upto caps the chain at this era.
         apply_schema(config)
-        apply_migrations(config)
+        apply_migrations(config, upto="003")
 
         conn = pg8000.native.Connection(
             user=config.user,
@@ -582,7 +581,7 @@ async def test_migration_003_backfills_prov_ips_and_drops_unique() -> None:
             conn.run("BEGIN")
             try:
                 rows = conn.run(
-                    "SELECT hostname, enabled, cloud FROM yascheduler_nodes "
+                    "SELECT ip, enabled, cloud FROM yascheduler_nodes "
                     "WHERE cloud = 'aws'",
                 )
             finally:
@@ -596,11 +595,11 @@ async def test_migration_003_backfills_prov_ips_and_drops_unique() -> None:
             conn.run("BEGIN")
             try:
                 conn.run(
-                    "INSERT INTO yascheduler_nodes (hostname, enabled, cloud) "
+                    "INSERT INTO yascheduler_nodes (ip, enabled, cloud) "
                     "VALUES ('10.0.0.99', TRUE, 'aws')",
                 )
                 conn.run(
-                    "INSERT INTO yascheduler_nodes (hostname, enabled, cloud) "
+                    "INSERT INTO yascheduler_nodes (ip, enabled, cloud) "
                     "VALUES ('10.0.0.99', TRUE, 'hetzner')",
                 )
             finally:

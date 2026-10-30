@@ -1,11 +1,11 @@
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for domain entities: TaskStatus, MachineState, ProcessResult, Engine, Task, Node, ConnectedMachine.
-# SCOPE: Enum values, dataclass defaults/frozen semantics, Engine validation, Task lifecycle methods (run/reject/complete/fail/abandon), ConnectedMachine state transitions, materialize_task, Task.error column format contract, public events field.
-# KEYWORDS: TaskStatus, MachineState, ConnectedMachine, Engine, Task lifecycle
+# PURPOSE: Unit tests for domain entities: TaskStatus, MachineState, ProcessResult, Task, Node, ConnectedMachine.
+# SCOPE: Enum values, dataclass defaults/frozen semantics, Task lifecycle methods (run/reject/complete/fail/abandon), ConnectedMachine state transitions, materialize_task, Task.error column format contract, public events field, and the input-field split (Task carries no input contents; NewTask does).
+# KEYWORDS: TaskStatus, MachineState, ConnectedMachine, Task lifecycle
 # endregion MODULE_CONTRACT
 
 import time
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 from datetime import datetime
 
 import pytest
@@ -19,14 +19,12 @@ from yascheduler.domain.events import (
 )
 from yascheduler.domain.exceptions import (
     MachineBusyError,
-    MissingInputFileError,
     TaskNotRunningError,
     TaskNotTodoError,
 )
 from yascheduler.domain.model import (
     ConnectedMachine,
     Done,
-    Engine,
     MachineState,
     NewNode,
     NewTask,
@@ -157,23 +155,6 @@ class TestTaskState:
             Running(NodeId(1), "/r").remote_folder = "/x"  # type: ignore[misc]
 
 
-class TestEngine:
-    def test_validate_inputs_passes_when_all_present(self) -> None:
-        engine = Engine(name="cp2k", spawn="cp2k", input_files=("inp", "xyz"))
-        engine.validate_inputs({"inp": "content", "xyz": "content"})  # no exception
-
-    def test_validate_inputs_raises_when_file_missing(self) -> None:
-        engine = Engine(name="cp2k", spawn="cp2k", input_files=("inp", "xyz"))
-        with pytest.raises(MissingInputFileError) as exc_info:
-            engine.validate_inputs({"inp": "content"})
-        assert "xyz" in str(exc_info.value)
-        assert "cp2k" in str(exc_info.value)
-
-    def test_validate_inputs_no_input_files(self) -> None:
-        engine = Engine(name="cp2k", spawn="cp2k")
-        engine.validate_inputs({})  # no exception
-
-
 class TestTask:
     def make_task(self, **overrides: object) -> Task:
         return _make_task(**overrides)
@@ -191,6 +172,11 @@ class TestTask:
         assert not hasattr(task, "allocated_ip")
         assert isinstance(task.created_at, datetime)
         assert isinstance(task.updated_at, datetime)
+
+    def test_has_no_input_entries_field(self) -> None:
+        """A persisted task record carries no input contents; reads are explicit."""
+        assert "input_entries" not in {f.name for f in fields(Task)}
+        assert not hasattr(self.make_task(), "input_entries")
 
     def test_immutability(self) -> None:
         task = self.make_task()
@@ -219,6 +205,14 @@ class TestTask:
         assert done.state.error == "e"
         assert done.state.allocated_node_id == NodeId(9)
         assert done.state.remote_folder == "/d"
+
+    def test_transitions_preserve_output_selections(self) -> None:
+        selections = ("OUT.aiida", "**/*.dat")
+        task = self.make_task(output_selections=selections)
+        running = task.run(NodeId(7), "/r")
+        assert running.output_selections is selections
+        done = running.complete(local_folder="/l", remote_folder="/r")
+        assert done.output_selections is selections
 
     def test_run_builds_running_state(self) -> None:
         task = self.make_task()
@@ -649,11 +643,16 @@ class TestNewTask:
         assert nt.webhook_url is None
         assert nt.webhook_custom_params == {}
         assert nt.extra == {}
+        assert nt.output_selections == ()
         assert not hasattr(nt, "allocated_ip")
         assert not hasattr(nt, "created_at")
         assert not hasattr(nt, "updated_at")
         assert not hasattr(nt, "status")
         assert not hasattr(nt, "allocated_node_id")
+
+    def test_has_input_entries_field(self) -> None:
+        """Submission is the one boundary that carries input contents."""
+        assert "input_entries" in {f.name for f in fields(NewTask)}
 
     def test_has_no_task_id(self) -> None:
         nt = NewTask(label="x", engine="cp2k")

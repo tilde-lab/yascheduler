@@ -8,16 +8,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from yascheduler.application import query_tasks
+from yascheduler.application import legacy_input_value, query_tasks
 from yascheduler.domain import (
     AnyTask,
     Node,
     NodeId,
     TaskId,
+    TaskInputEntry,
+    TaskInputFile,
     TaskStatus,
     allocated_node_id_of,
     error_of,
@@ -33,8 +36,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping, Sequence
     from pathlib import PurePath
 
+    from yascheduler.domain import TaskInputSnapshot
     from yascheduler.entrypoints.config import Config
-
 __all__ = ["Yascheduler"]
 
 ReturnT_co = TypeVar("ReturnT_co", covariant=True)
@@ -70,9 +73,31 @@ def to_sync(
 # endregion FUNC_to_sync
 
 
+# region FUNC__input_entry_to_public
+# PURPOSE: Project one task input entry into its documented JSON-safe public form — files as padded base64 without line breaks, directories content-free — so consumers can rebuild exact input bytes from query results.
+# INVARIANTS: Standard base64 with padding (base64.b64encode, no newlines); entry order is the caller's (path-sorted snapshot).
+def _input_entry_to_public(entry: TaskInputEntry) -> dict[str, Any]:
+    """Return the public query representation of one input entry."""
+    if isinstance(entry, TaskInputFile):
+        return {
+            "path": entry.path,
+            "kind": entry.kind.value,
+            "content_base64": base64.b64encode(entry.content).decode("ascii"),
+        }
+    return {"path": entry.path, "kind": entry.kind.value}
+
+
+# endregion FUNC__input_entry_to_public
+
+
 # region FUNC__task_to_dict
-# PURPOSE: Project a Task plus its optional allocated Node into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId.
-def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, Any]:
+# PURPOSE: Project a Task plus its optional allocated Node and its input snapshot into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId; inputs project top-level as `input_entries` while metadata keeps legacy filename/value file keys for consumer compatibility.
+# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; the snapshot comes from the query's explicit batched read, never from the task record; entries ordered by task-relative path; file entries stay visible in metadata under their recorded legacy encoding (UTF-8 text, except `fort.9`, which stays base64 as submitted), derived from the immutable snapshot — never a second stored copy; pre-migration `extra` copies of input keys (the normalizer and the forward migration strip them) keep precedence over derived values while they exist; directories never appear in metadata; typed fields are never overwritten by input paths.
+def _task_to_dict(
+    t: AnyTask,
+    nodes_by_id: dict[NodeId, Node],
+    snapshot: TaskInputSnapshot = (),
+) -> Mapping[str, Any]:
     allocated_node_id = allocated_node_id_of(t)
     node = nodes_by_id.get(allocated_node_id) if allocated_node_id else None
     metadata: dict[str, Any] = {"engine": t.engine}
@@ -92,11 +117,27 @@ def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, A
     for k, v in t.extra.items():
         if k not in metadata:
             metadata[k] = v
+    # region BLOCK_derive_legacy_input_metadata
+    # The snapshot's files are the task's inputs by contract; their legacy
+    # metadata view is derived from the immutable entries, so queries keep the
+    # legacy shape without a second stored copy. Keys already present
+    # (typed fields or a transitional extra copy) keep their value.
+    for entry in snapshot:
+        if not isinstance(entry, TaskInputFile):
+            continue
+        if entry.path in metadata:
+            continue
+        metadata[entry.path] = legacy_input_value(entry.path, entry.content)
+    # endregion BLOCK_derive_legacy_input_metadata
     return {
         "task_id": t.task_id.value,
         "label": t.label,
         "status": t.status,
         "metadata": metadata,
+        "input_entries": [
+            _input_entry_to_public(entry)
+            for entry in sorted(snapshot, key=lambda entry: entry.path)
+        ],
         "node": (
             {
                 "hostname": node.hostname,
@@ -147,7 +188,7 @@ class Yascheduler:
     # endregion METHOD___init__
 
     # region METHOD_queue_submit_task_async
-    # PURPOSE: Offload each task submission through a fresh DI container so the caller does not need to open a Unit of Work or import the use case; unwrap the TaskId result at the facade boundary so the public contract stays int.
+    # PURPOSE: Offload each task submission through a fresh DI container so the caller does not need to open a Unit of Work or import the use case; forward optional output selections and unwrap the TaskId result at the facade boundary so the public contract stays int.
     async def queue_submit_task_async(
         self,
         label: str,
@@ -155,11 +196,21 @@ class Yascheduler:
         engine_name: str,
         *,
         _webhook_onsubmit: bool = False,
+        input_entries: Sequence[TaskInputEntry] | None = None,
+        output_selections: list[str] | None = None,
     ) -> int:
-        """Submit new task."""
+        """Submit new task, optionally with explicit inputs and output selections."""
         deps = self._deps_factory(self.config)
         # deps.submit (-> TaskId) → extract .value so the public contract stays int.
-        return (await deps.submit(label, dict(metadata), engine_name)).value
+        return (
+            await deps.submit(
+                label,
+                dict(metadata),
+                engine_name,
+                input_entries=input_entries,
+                output_selections=output_selections,
+            )
+        ).value
 
     # endregion METHOD_queue_submit_task_async
 
@@ -172,10 +223,19 @@ class Yascheduler:
         engine_name: str,
         *,
         webhook_onsubmit: bool = False,
+        input_entries: Sequence[TaskInputEntry] | None = None,
+        output_selections: list[str] | None = None,
     ) -> int:
-        """Submit new task."""
+        """Submit new task, optionally with explicit inputs and output selections."""
         fn = to_sync(self.queue_submit_task_async)
-        return fn(label, metadata, engine_name, _webhook_onsubmit=webhook_onsubmit)
+        return fn(
+            label,
+            metadata,
+            engine_name,
+            _webhook_onsubmit=webhook_onsubmit,
+            input_entries=input_entries,
+            output_selections=output_selections,
+        )
 
     # endregion METHOD_queue_submit_task
 
@@ -196,8 +256,12 @@ class Yascheduler:
         # before crossing into the use case (public jobs: list[int] preserved).
         job_ids: list[TaskId] | None = [TaskId(i) for i in jobs] if jobs else None
         deps = self._deps_factory(self.config)
-        tasks, nodes_by_id = await query_tasks(job_ids, statuses, deps.uow_factory)
-        return [_task_to_dict(t, nodes_by_id) for t in tasks]
+        tasks, nodes_by_id, snapshots = await query_tasks(
+            job_ids, statuses, deps.uow_factory
+        )
+        return [
+            _task_to_dict(t, nodes_by_id, snapshots.get(t.task_id, ())) for t in tasks
+        ]
 
     # endregion METHOD_queue_get_tasks_async
 

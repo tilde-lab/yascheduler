@@ -1,0 +1,370 @@
+# region MODULE_CONTRACT
+# PURPOSE: Pin submission-boundary input normalization — legacy literal/glob claims and encodings, exact fort.9 base64 compatibility, required declarations, claimed-key stripping with typed/unrelated metadata preservation, explicit-entry ambiguity, purity, immutable snapshot shape, and content-free trace logs — so public submit payloads become one typed domain snapshot exactly once.
+# SCOPE: normalize_task_inputs legacy and explicit modes, UTF-8 and lenient base64 conversion, glob parent materialization, missing/ambiguous declaration errors, claimed-key stripping, unrelated/typed metadata preservation, no filesystem access, and content-free NORMALIZE_INPUTS_START/success/FAILED trajectory logs.
+# KEYWORDS: task inputs, submission boundary, normalization, legacy metadata, base64, fort.9, snapshot
+# endregion MODULE_CONTRACT
+
+from __future__ import annotations
+
+import base64
+import builtins
+import logging
+
+import pytest
+
+from tests.log_assertions import extra_fields
+from yascheduler.application import legacy_inputs, normalize_task_inputs
+from yascheduler.domain import (
+    TYPED_METADATA_KEYS,
+    Engine,
+    InvalidTaskSnapshotError,
+    MissingInputFileError,
+    TaskInputDirectory,
+    TaskInputFile,
+    UnsafeTaskPathError,
+)
+
+
+def _engine(*input_files: str) -> Engine:
+    return Engine(name="test_engine", spawn="run", input_files=input_files)
+
+
+def _find_log_record(
+    caplog: pytest.LogCaptureFixture,
+    message: str,
+    source: str | None = None,
+) -> logging.LogRecord:
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "yascheduler.application.legacy_inputs"
+        and record.getMessage() == message
+        and (source is None or extra_fields(record).get("source") == source)
+    ]
+    assert len(records) == 1
+    return records[0]
+
+
+class TestLegacyLiteralDeclarations:
+    def test_typed_metadata_keys_are_never_claimed(self) -> None:
+        typed_metadata: dict[str, object] = {
+            "engine": "other-engine",
+            "local_folder": "local",
+            "webhook_url": "https://example.invalid/hook",
+            "webhook_custom_params": {"token": "redacted"},
+            "error": "previous-error",
+            "remote_folder": "remote",
+        }
+        assert set(typed_metadata) == TYPED_METADATA_KEYS
+        metadata = {**typed_metadata, "INPUT": "body"}
+
+        snapshot, remaining = normalize_task_inputs(metadata, _engine("*"), None)
+
+        assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
+        assert remaining == typed_metadata
+
+    def test_claimed_keys_are_stripped_and_unrelated_and_typed_metadata_preserved(
+        self,
+    ) -> None:
+        metadata = {
+            "INPUT": "body",
+            "count": 42,
+            "nested": {"items": [1, 2]},
+            "local_folder": "local",
+        }
+
+        snapshot, remaining = normalize_task_inputs(metadata, _engine("INPUT"), None)
+
+        assert snapshot == (TaskInputFile(path="INPUT", content=b"body"),)
+        assert remaining == {
+            "count": 42,
+            "nested": {"items": [1, 2]},
+            "local_folder": "local",
+        }
+
+    def test_empty_input_declarations_yield_empty_snapshot_and_metadata(self) -> None:
+        metadata = {"engine": "x", "count": 42, "nested": {"a": 1}}
+
+        snapshot, remaining = normalize_task_inputs(metadata, _engine(), None)
+
+        assert snapshot == ()
+        assert remaining == metadata
+
+
+class TestExplicitEntries:
+    def test_parents_are_materialized(self) -> None:
+        entries = [TaskInputFile(path="basis/deep/Si.orb", content=b"orb")]
+
+        snapshot, remaining = normalize_task_inputs(
+            {"unrelated": 42}, _engine("INPUT"), entries
+        )
+
+        assert snapshot == (
+            TaskInputDirectory(path="basis"),
+            TaskInputDirectory(path="basis/deep"),
+            TaskInputFile(path="basis/deep/Si.orb", content=b"orb"),
+        )
+        assert remaining == {"unrelated": 42}
+
+    def test_duplicate_path_is_rejected(self) -> None:
+        entries = [
+            TaskInputFile(path="a", content=b"first"),
+            TaskInputFile(path="a", content=b"second"),
+        ]
+
+        with pytest.raises(InvalidTaskSnapshotError) as info:
+            normalize_task_inputs({}, _engine(), entries)
+
+        assert info.value.path == "a"
+
+    def test_file_ancestor_conflict_is_rejected(self) -> None:
+        entries = [
+            TaskInputFile(path="a", content=b""),
+            TaskInputFile(path="a/b", content=b""),
+        ]
+
+        with pytest.raises(InvalidTaskSnapshotError) as info:
+            normalize_task_inputs({}, _engine(), entries)
+
+        assert info.value.path == "a"
+
+    def test_unsafe_path_is_rejected(self) -> None:
+        with pytest.raises(UnsafeTaskPathError) as info:
+            normalize_task_inputs(
+                {}, _engine(), [TaskInputFile(path="/abs", content=b"")]
+            )
+
+        assert info.value.path == "/abs"
+
+    def test_empty_sequence_is_empty_snapshot_without_legacy_fallback(self) -> None:
+        metadata = {"unrelated": "kept", "local_folder": "local"}
+
+        snapshot, remaining = normalize_task_inputs(metadata, _engine("INPUT"), [])
+
+        assert snapshot == ()
+        assert remaining == metadata
+
+    def test_literal_payload_ambiguity_is_rejected(self) -> None:
+        entries = [TaskInputFile(path="explicit", content=b"x")]
+
+        with pytest.raises(InvalidTaskSnapshotError) as info:
+            normalize_task_inputs({"INPUT": "legacy-body"}, _engine("INPUT"), entries)
+
+        assert info.value.path == "INPUT"
+
+    def test_glob_payload_ambiguity_names_sorted_first_key(self) -> None:
+        entries = [TaskInputFile(path="explicit", content=b"x")]
+        metadata = {
+            "basis/z.orb": "z",
+            "basis/a.orb": "a",
+        }
+
+        with pytest.raises(InvalidTaskSnapshotError) as info:
+            normalize_task_inputs(metadata, _engine("basis/**/*.orb"), entries)
+
+        assert info.value.path == "basis/a.orb"
+
+    def test_unrelated_metadata_is_preserved_verbatim(self) -> None:
+        metadata = {
+            "count": 42,
+            "nested": {"items": [1, 2]},
+            "local_folder": "local",
+        }
+
+        snapshot, remaining = normalize_task_inputs(
+            metadata, _engine("INPUT"), [TaskInputDirectory(path="empty")]
+        )
+
+        assert snapshot == (TaskInputDirectory(path="empty"),)
+        assert remaining == metadata
+
+
+class TestPurity:
+    def test_normalization_does_not_open_files(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fail_open(*args: object, **kwargs: object) -> object:
+            raise AssertionError("normalization must not read the filesystem")
+
+        monkeypatch.setattr(builtins, "open", fail_open)
+        engine = _engine("INPUT")
+
+        legacy_snapshot, _ = normalize_task_inputs({"INPUT": "legacy"}, engine, None)
+        explicit_snapshot, _ = normalize_task_inputs(
+            {}, engine, [TaskInputFile(path="explicit", content=b"data")]
+        )
+
+        assert legacy_snapshot == (TaskInputFile(path="INPUT", content=b"legacy"),)
+        assert explicit_snapshot == (TaskInputFile(path="explicit", content=b"data"),)
+
+    def test_module_imports_no_filesystem_modules(self) -> None:
+        assert not hasattr(legacy_inputs, "os")
+        assert not hasattr(legacy_inputs, "Path")
+
+
+class TestLogs:
+    def test_legacy_start_and_success_record_fields(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = _engine("INPUT")
+
+        with caplog.at_level(
+            logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+        ):
+            normalize_task_inputs({"INPUT": "body"}, engine, None)
+
+        start = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_START"))
+        assert start["engine"] == engine.name
+        assert start["source"] == "legacy"
+
+        success = extra_fields(
+            _find_log_record(caplog, "NORMALIZE_INPUTS", source="legacy")
+        )
+        assert success["engine"] == engine.name
+        assert success["source"] == "legacy"
+        assert success["entry_count"] == 1
+
+    def test_explicit_start_and_success_record_fields(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engine = _engine("INPUT")
+
+        with caplog.at_level(
+            logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+        ):
+            normalize_task_inputs(
+                {}, engine, [TaskInputFile(path="basis/x", content=b"x")]
+            )
+
+        start = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_START"))
+        assert start["engine"] == engine.name
+        assert start["source"] == "explicit"
+
+        success = extra_fields(
+            _find_log_record(caplog, "NORMALIZE_INPUTS", source="explicit")
+        )
+        assert success["engine"] == engine.name
+        assert success["source"] == "explicit"
+        assert success["entry_count"] == 2
+
+    def test_malformed_legacy_value_failure_record_has_no_exception_text(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        marker = "UNIQUE_NORMALIZER_SECRET_MARKER_6d4c2e"
+
+        with (
+            caplog.at_level(
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+            ),
+            pytest.raises(InvalidTaskSnapshotError),
+        ):
+            normalize_task_inputs({"fort.9": marker + "!"}, _engine("fort.9"), None)
+
+        _find_log_record(caplog, "NORMALIZE_INPUTS_START")
+        failed = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_FAILED"))
+        assert failed["engine"] == "test_engine"
+        assert failed["source"] == "legacy"
+        assert failed["entry_count"] == 0
+        assert failed["path"] == "fort.9"
+        assert failed["failure"] == "InvalidTaskSnapshotError"
+        assert marker not in caplog.text
+        assert marker not in repr([extra_fields(record) for record in caplog.records])
+        assert all(record.exc_info is None for record in caplog.records)
+
+    def test_missing_selection_failure_uses_filename_as_path(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with (
+            caplog.at_level(
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+            ),
+            pytest.raises(MissingInputFileError),
+        ):
+            normalize_task_inputs({"other": "value"}, _engine("INPUT"), None)
+
+        failed = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_FAILED"))
+        assert failed["source"] == "legacy"
+        assert failed["entry_count"] == 0
+        assert failed["path"] == "INPUT"
+        assert failed["failure"] == "MissingInputFileError"
+
+    def test_explicit_ambiguity_failure_records_progress(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        marker = "UNIQUE_AMBIGUOUS_PAYLOAD_MARKER"
+
+        with (
+            caplog.at_level(
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+            ),
+            pytest.raises(InvalidTaskSnapshotError),
+        ):
+            normalize_task_inputs(
+                {"INPUT": marker},
+                _engine("INPUT"),
+                [TaskInputFile(path="explicit", content=b"x")],
+            )
+
+        failed = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_FAILED"))
+        assert failed["source"] == "explicit"
+        assert failed["entry_count"] == 1
+        assert failed["path"] == "INPUT"
+        assert failed["failure"] == "InvalidTaskSnapshotError"
+        assert marker not in caplog.text
+
+    def test_malformed_entry_failure_does_not_echo_object_repr(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        payload = b"UNIQUE_MALFORMED_INPUT_SECRET_fe52"
+        payload_text = payload.decode()
+        base64_text = base64.b64encode(payload).decode()
+        credential = "UNIQUE_MALFORMED_CREDENTIAL_SECRET_78b0"
+        malformed = {
+            "path": "INPUT",
+            "content": payload,
+            "base64": base64_text,
+            "token": credential,
+        }
+
+        with (
+            caplog.at_level(
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+            ),
+            pytest.raises(InvalidTaskSnapshotError),
+        ):
+            normalize_task_inputs(
+                {},
+                _engine(),
+                [malformed],  # type: ignore[list-item]
+            )
+
+        failed = extra_fields(_find_log_record(caplog, "NORMALIZE_INPUTS_FAILED"))
+        assert failed["source"] == "explicit"
+        assert failed["entry_count"] == 0
+        assert failed["path"] == "<entry 0>"
+        assert failed["failure"] == "InvalidTaskSnapshotError"
+        rendered = caplog.text
+        fields_repr = repr([extra_fields(record) for record in caplog.records])
+        for marker in (payload_text, base64_text, credential):
+            assert marker not in rendered
+            assert marker not in fields_repr
+        assert all(record.exc_info is None for record in caplog.records)
+
+    def test_logs_do_not_contain_file_contents(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        marker = "UNIQUE_NORMALIZER_SECRET_MARKER_6d4c2e"
+
+        with caplog.at_level(
+            logging.DEBUG, logger="yascheduler.application.legacy_inputs"
+        ):
+            normalize_task_inputs({"INPUT": marker}, _engine("INPUT"), None)
+            normalize_task_inputs(
+                {},
+                _engine("INPUT"),
+                [TaskInputFile(path="explicit", content=marker.encode())],
+            )
+
+        for record in caplog.records:
+            assert marker not in record.getMessage()
+            assert marker not in repr(extra_fields(record))

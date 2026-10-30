@@ -1,6 +1,6 @@
 """Unit tests for orchestrator consumer-worker error resilience."""
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for orchestrator consumer-worker error resilience (fix-save-silent-zero-rows).
+# PURPOSE: Unit tests for orchestrator consumer-worker error resilience.
 # SCOPE: consumer Exception → logged and worker continues processing subsequent messages; consumer CancelledError → propagates past `except Exception` to the graceful-drain path.
 # KEYWORDS: consumer resilience, CancelledError, error recovery
 # endregion MODULE_CONTRACT

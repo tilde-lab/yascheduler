@@ -54,3 +54,43 @@ the task created event is owned by `domain-entities`.
 
 - **WHEN** a record is inserted or a stored row is read
 - **THEN** the returned entity carries the values written to the database
+
+### Requirement: Input snapshots persist as task-owned entries
+
+The task store SHALL persist input snapshots as normalized file and directory
+entries owned by a task, separate from unrelated metadata. Each task-relative
+path SHALL identify at most one entry within its task. Directory entries SHALL
+be distinguishable from zero-length files. The database SHALL reject duplicate
+paths and orphan entries.
+
+#### Scenario: task ownership remains consistent
+
+- **WHEN** a duplicate or orphan input entry is written, or a task is deleted
+- **THEN** an invalid write fails atomically, while task deletion removes all of that task's input entries without affecting another task
+
+### Requirement: Snapshot lifecycle follows the task transaction
+
+The task store SHALL keep the complete input snapshot of an accepted task,
+including exact file bytes, apart from the task record. A task read SHALL
+return the record alone. A snapshot request SHALL return the complete snapshot:
+every entry, its kind, its exact file bytes, and its empty directories.
+Lifecycle updates SHALL preserve the snapshot. Deleting a task SHALL delete its
+snapshot in the same transaction. A task and its snapshot SHALL share one
+transaction boundary.
+
+#### Scenario: snapshot survives persistence and lifecycle updates
+
+- **WHEN** a task with binary files, a zero-length file, an empty directory, and unrelated metadata is committed, reloaded, and advanced through its lifecycle
+- **THEN** every task read returns the record without input contents, every snapshot request returns the same paths, entry kinds, and file bytes, unrelated metadata retains its values, and deleting the task removes its snapshot
+
+### Requirement: Output selections persist with the task
+
+The task store SHALL persist the output selections a task recorded at
+acceptance and SHALL return them unchanged on every task read, for the whole
+lifecycle of the task. A task accepted before output selections were recorded
+SHALL be returned without them.
+
+#### Scenario: recorded selections survive persistence and lifecycle updates
+
+- **WHEN** a task committed with recorded output selections is reloaded and advanced through its lifecycle
+- **THEN** every read returns the selections it recorded, and a task from before the record exists is returned without them

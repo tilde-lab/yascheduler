@@ -10,10 +10,10 @@ repos:
         name: ruff format
         description: Run ruff format
         language: system
-        entry: uv run ruff format
+        entry: uv run ruff format --check
         pass_filenames: true
         exclude: "^openspec"
-        types: [python, markdown]
+        types_or: [python, markdown]
 
       - id: ruff-check
         name: ruff check
@@ -43,7 +43,7 @@ repos:
         name: tombi format
         description: Run tombi format
         language: system
-        entry: uv run tombi format
+        entry: uv run tombi format --check
         pass_filenames: true
         types: [toml]
 

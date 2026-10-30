@@ -26,7 +26,11 @@ from yascheduler.application.allocation_tracker import AllocationTracker
 from yascheduler.application.consume_task import consume_task
 from yascheduler.application.submit_task import submit_task
 from yascheduler.application.uow import AbstractUnitOfWork
-from yascheduler.domain import Engine, EngineRepository
+from yascheduler.domain import (
+    Engine,
+    EngineRepository,
+    TaskInputFile,
+)
 from yascheduler.domain.events import (
     TaskAllocated,
     TaskCompleted,
@@ -82,6 +86,7 @@ class TestSubmitTaskEvents:
             engine_name="test_engine",
             engines=mock_engine_repo,
             uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"data"),),
         )
 
         saved_arg: Task = uow.tasks.save.call_args[0][0]
@@ -240,7 +245,8 @@ class TestConsumeTaskEvents:
     @pytest.fixture
     def mock_output_downloader(self) -> MagicMock:
         output_downloader = MagicMock()
-        output_downloader.download_outputs = AsyncMock(return_value=("", "", [], []))
+        output_downloader.download_outputs = AsyncMock(return_value=([], []))
+        output_downloader.cleanup_remote = AsyncMock(return_value=None)
         return output_downloader
 
     async def _run_consume(
@@ -268,84 +274,67 @@ class TestConsumeTaskEvents:
         mock_output_downloader: MagicMock,
         running_task: Task,
         mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        uow = AsyncMock()
-        uow.tasks = AsyncMock()
+        uow = mock_uow_factory.return_value
         uow.tasks.get_running = AsyncMock(return_value=running_task)
-        uow.tasks.save = AsyncMock()
-        uow.commit = AsyncMock()
-        uow.collect_events = AsyncMock(return_value=[])
-        uow.publish_events = AsyncMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-
-        def uow_factory() -> AbstractUnitOfWork:
-            return uow
-
         tracker = MagicMock(spec=AllocationTracker)
-        local_tasks_dir = MagicMock(spec=Path)
 
         await self._run_consume(
-            session=SimpleNamespace(),  # opaque to consume_task; only forwarded to operations.download_outputs
+            session=SimpleNamespace(),  # opaque to consume_task; only forwarded to operations
             output_downloader=mock_output_downloader,
             task=running_task,
-            uow_factory=uow_factory,
+            uow_factory=mock_uow_factory,
             engines=mock_engine_repo,
-            local_tasks_dir=local_tasks_dir,
+            local_tasks_dir=tmp_path,
             tracker=tracker,
         )
 
-        saved_task: Task = uow.tasks.save.call_args[0][0]
+        saved_task: Task = uow.tasks.save.call_args.args[0]
         assert len(saved_task.events) == 1
         event = saved_task.events[0]
         assert isinstance(event, TaskCompleted)
         assert event.task_id == TaskId(1)
+        assert event.local_folder == str(tmp_path / "20250101_120000_42")
+        assert saved_task.local_folder == str(tmp_path / "20250101_120000_42")
+        mock_output_downloader.cleanup_remote.assert_awaited_once()
         tracker.discard.assert_called_once_with(TaskId(1))
 
-    async def test_consume_failure_records_task_failed_event(
+    async def test_consume_failure_records_task_failed_event_with_formatted_reason(
         self,
         mock_output_downloader: MagicMock,
         running_task: Task,
         mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+        tmp_path: Path,
     ) -> None:
         mock_output_downloader.download_outputs = AsyncMock(
             return_value=(
-                "",
-                "",
                 [],
                 [("/remote/file", OSError("Connection refused"))],
             ),
         )
-
-        uow = AsyncMock()
-        uow.tasks = AsyncMock()
+        uow = mock_uow_factory.return_value
         uow.tasks.get_running = AsyncMock(return_value=running_task)
-        uow.tasks.save = AsyncMock()
-        uow.commit = AsyncMock()
-        uow.collect_events = AsyncMock(return_value=[])
-        uow.publish_events = AsyncMock()
-        uow.__aenter__ = AsyncMock(return_value=uow)
-        uow.__aexit__ = AsyncMock(return_value=False)
-
-        def uow_factory() -> AbstractUnitOfWork:
-            return uow
-
         tracker = MagicMock(spec=AllocationTracker)
-        local_tasks_dir = MagicMock(spec=Path)
 
         await self._run_consume(
-            session=SimpleNamespace(),  # opaque to consume_task; only forwarded to operations.download_outputs
+            session=SimpleNamespace(),  # opaque to consume_task; only forwarded to operations
             output_downloader=mock_output_downloader,
             task=running_task,
-            uow_factory=uow_factory,
+            uow_factory=mock_uow_factory,
             engines=mock_engine_repo,
-            local_tasks_dir=local_tasks_dir,
+            local_tasks_dir=tmp_path,
             tracker=tracker,
         )
 
-        saved_task: Task = uow.tasks.save.call_args[0][0]
+        saved_task: Task = uow.tasks.save.call_args.args[0]
         assert len(saved_task.events) == 1
         event = saved_task.events[0]
         assert isinstance(event, TaskFailed)
         assert event.task_id == TaskId(1)
+        assert event.reason == "Download error: /remote/file: Connection refused"
+        assert saved_task.state.error == event.reason
+        mock_output_downloader.cleanup_remote.assert_awaited_once()
         tracker.discard.assert_called_once_with(TaskId(1))
