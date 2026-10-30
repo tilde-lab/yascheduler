@@ -29,10 +29,11 @@ from yascheduler.infra.ssh.operations import TaskDeployer
 from yascheduler.infra.ssh.operations.deployment import _write_remote_file
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
     from asyncssh.sftp import SFTPClient
 
+    from yascheduler.domain import TaskInputEntry
     from yascheduler.infra.ssh.session import SSHMachineSession
 
 
@@ -138,9 +139,8 @@ def _make_engine(input_files: tuple[str, ...] = ("input.txt",)) -> Engine:
     )
 
 
-def _make_task(
-    input_entries: tuple[TaskInputFile | TaskInputDirectory, ...] = (),
-) -> Task:
+def _make_task() -> Task:
+    """Build a RUNNING task; input contents are streamed separately."""
     from datetime import datetime
 
     return Task(
@@ -151,10 +151,15 @@ def _make_task(
         webhook_url=None,
         webhook_custom_params={},
         extra={},
-        input_entries=normalize_input_snapshot(input_entries),
         created_at=datetime(2025, 1, 1),
         updated_at=datetime(2025, 1, 1),
     )
+
+
+async def _aiter(entries: Sequence[TaskInputEntry]) -> AsyncIterator[TaskInputEntry]:
+    """Yield snapshot entries the way the repository streams them to the deployer."""
+    for entry in entries:
+        yield entry
 
 
 # =============================================================================
@@ -306,9 +311,8 @@ class TestStartTaskAbortOnUploadFailure:
             await deployer.start_task_on_machine(
                 session,
                 _make_engine(input_files=("input.txt",)),
-                _make_task(
-                    input_entries=(TaskInputFile(path="input.txt", content=b"hello"),)
-                ),
+                _make_task(),
+                _aiter((TaskInputFile(path="input.txt", content=b"hello"),)),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -342,9 +346,8 @@ class TestStartTaskAbortOnUploadFailure:
             await deployer.start_task_on_machine(
                 session,
                 _make_engine(input_files=("input.txt",)),
-                _make_task(
-                    input_entries=(TaskInputFile(path="input.txt", content=b"hello"),)
-                ),
+                _make_task(),
+                _aiter((TaskInputFile(path="input.txt", content=b"hello"),)),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -407,13 +410,17 @@ class TestSuccessfulWrite:
         # count write invocations across the loop.
         ok = await deployer._upload_task_data(
             state,
-            _make_task(
-                input_entries=(
-                    TaskInputFile(path="input.txt", content=b"a"),
-                    TaskInputFile(path="fort.9", content=b"AAAA"),
+            _make_task(),
+            PurePosixPath("/remote/tasks/7"),
+            # The stored snapshot is path-ordered; submission normalizes it.
+            _aiter(
+                normalize_input_snapshot(
+                    (
+                        TaskInputFile(path="input.txt", content=b"a"),
+                        TaskInputFile(path="fort.9", content=b"AAAA"),
+                    )
                 )
             ),
-            PurePosixPath("/remote/tasks/7"),
         )
 
         assert ok is True
@@ -433,8 +440,10 @@ class TestSuccessfulWrite:
 
         ok = await deployer._upload_task_data(
             state,
-            _make_task(input_entries=(TaskInputDirectory(path="basis/empty"),)),
+            _make_task(),
             PurePosixPath("/remote/tasks/7"),
+            # Submission materializes parent directories; the deployer replays them.
+            _aiter(normalize_input_snapshot((TaskInputDirectory(path="basis/empty"),))),
         )
 
         assert ok is True

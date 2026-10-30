@@ -1,13 +1,14 @@
 # region MODULE_CONTRACT
-# PURPOSE: Verify via a real Docker SSH server that TaskDeployer reconstructs a task's stored input tree under the remote task root and only then runs spawn, and that an unsafe destination prevents spawn and returns the session to FREE.
-# SCOPE: Docker SSH fixture, repository/session setup, nested binary/hidden/empty file and empty-directory snapshot deployment, exact remote byte/path checks, symbolic-link and file/directory-conflict rejection with rollback, replacement of a stale ordinary file, and cleanup.
+# PURPOSE: Verify via a real Docker SSH server that TaskDeployer reconstructs a task's stored input tree from the streamed snapshot entries under the remote task root and only then runs spawn, and that an unsafe entry or destination prevents spawn and returns the session to FREE.
+# SCOPE: Docker SSH fixture, repository/session setup, nested binary/hidden/empty file and empty-directory snapshot deployment, exact remote byte/path checks, symbolic-link and file/directory-conflict rejection with rollback, replacement of a stale ordinary file, an unsafe stored entry failing after its predecessors were written, and cleanup.
 # DEPENDENCIES: USES API: testcontainers (Docker SSH server), asyncssh SFTP
-# KEYWORDS: TaskDeployer, input snapshot, SFTP, binary bytes, empty directory, spawn ordering, symbolic link, destination conflict, rollback
+# KEYWORDS: TaskDeployer, input snapshot, streamed entries, SFTP, binary bytes, empty directory, spawn ordering, symbolic link, destination conflict, unsafe path, partial tree, rollback
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, TypedDict
 from uuid import uuid4
@@ -18,6 +19,7 @@ from asyncssh.sftp import FILEXFER_TYPE_SYMLINK
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
+from tests.log_assertions import extra_fields
 from yascheduler.domain import (
     Engine,
     TaskInputDirectory,
@@ -39,11 +41,11 @@ from yascheduler.infra.ssh.operations import TaskDeployer
 from yascheduler.infra.ssh.repository import SSHMachineRepository
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
     from asyncssh.sftp import SFTPClient
 
-    from yascheduler.domain import MachineSession
+    from yascheduler.domain import MachineSession, TaskInputEntry
 
 pytestmark = pytest.mark.integration
 
@@ -185,21 +187,35 @@ async def _remove_remote_paths(
     await _run_remote_checked(session, f"rm -rf -- {quoted}")
 
 
+# region FUNC__aiter
+# PURPOSE: Reproduce the repository's lazy per-task entry stream so deployment reads one entry at a time from a plain sequence (no async-generator expressions on the 3.9 floor).
+async def _aiter(entries: TaskInputSnapshot) -> AsyncIterator[TaskInputEntry]:
+    """Yield snapshot entries one at a time, as the stored keyset stream does."""
+    for entry in entries:
+        yield entry
+
+
+# endregion FUNC__aiter
+
+
+# region FUNC__build_deployment
+# PURPOSE: Build the engine and RUNNING task whose remote folder receives the streamed entries, keeping the record itself free of input contents.
 def _build_deployment(
     remote_root: PurePosixPath,
-    snapshot: TaskInputSnapshot,
     spawn: str,
 ) -> tuple[Engine, RunningTask]:
-    """Build the engine and RUNNING task that deploys one snapshot."""
+    """Build the engine and RUNNING task that deploys one streamed snapshot."""
     engine = Engine(name="snapshot_engine", spawn=spawn)
     task: RunningTask = Task(
         task_id=TaskId(1),
         engine=engine.name,
         label="snapshot-unsafe-destination",
         state=Running(allocated_node_id=NodeId(1), remote_folder=str(remote_root)),
-        input_entries=snapshot,
     )
     return engine, task
+
+
+# endregion FUNC__build_deployment
 
 
 async def test_deploy_reconstructs_stored_input_tree(
@@ -234,7 +250,6 @@ async def test_deploy_reconstructs_stored_input_tree(
         engine=engine.name,
         label="snapshot-deployment",
         state=Running(allocated_node_id=NodeId(1), remote_folder=str(remote_root)),
-        input_entries=snapshot,
     )
 
     expected_files = {
@@ -263,6 +278,7 @@ async def test_deploy_reconstructs_stored_input_tree(
             session,
             engine,
             task,
+            _aiter(snapshot),
             ncpus=4,
             engines_dir=PurePosixPath("/tmp/engines"),
         )
@@ -311,7 +327,6 @@ async def test_deploy_rejects_symlinked_destination_directory(
     )
     engine, task = _build_deployment(
         remote_root,
-        snapshot,
         "touch {task_path}/__spawned__",
     )
 
@@ -333,6 +348,7 @@ async def test_deploy_rejects_symlinked_destination_directory(
                 session,
                 engine,
                 task,
+                _aiter(snapshot),
                 ncpus=4,
                 engines_dir=PurePosixPath("/tmp/engines"),
             )
@@ -373,7 +389,6 @@ async def test_deploy_rejects_file_where_snapshot_needs_directory(
     )
     engine, task = _build_deployment(
         remote_root,
-        snapshot,
         "touch {task_path}/__spawned__",
     )
 
@@ -392,6 +407,7 @@ async def test_deploy_rejects_file_where_snapshot_needs_directory(
                 session,
                 engine,
                 task,
+                _aiter(snapshot),
                 ncpus=4,
                 engines_dir=PurePosixPath("/tmp/engines"),
             )
@@ -423,7 +439,6 @@ async def test_deploy_replaces_existing_ordinary_file(
     )
     engine, task = _build_deployment(
         remote_root,
-        snapshot,
         "test -f {task_path}/INPUT && touch {task_path}/__spawned__",
     )
 
@@ -444,6 +459,7 @@ async def test_deploy_replaces_existing_ordinary_file(
                 session,
                 engine,
                 task,
+                _aiter(snapshot),
                 ncpus=4,
                 engines_dir=PurePosixPath("/tmp/engines"),
             )
@@ -457,3 +473,86 @@ async def test_deploy_replaces_existing_ordinary_file(
         assert session.machine.state == MachineState.BUSY
     finally:
         await _remove_remote_paths(session, remote_root)
+
+
+# region FUNC_test_deploy_streams_until_unsafe_entry_then_fails
+# PURPOSE: Prove per-entry path validation lets the entries before a corrupt stored path land on the machine, then fails the transfer on that entry without writing anything outside the task root.
+async def test_deploy_streams_until_unsafe_entry_then_fails(
+    repository: SSHMachineRepository,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Entries before an unsafe stored path are written; the transfer fails on it; nothing escapes the task root."""
+    session = _get_session(repository)
+    remote_holder = PurePosixPath("/tmp")
+    remote_root = remote_holder / f"yascheduler-unsafe-{uuid4().hex}"
+    escaped_path = remote_holder / "escape.txt"
+    engine, task = _build_deployment(
+        remote_root,
+        "touch {task_path}/__spawned__",
+    )
+    # The bad entry comes last: the store streams in path order, so everything
+    # ahead of it is transferred before validation rejects it.
+    entries = (
+        TaskInputDirectory(path="good"),
+        TaskInputFile(path="good/first.bin", content=BINARY_BYTES),
+        TaskInputFile(path="../escape.txt", content=b"escaped-bytes"),
+    )
+
+    try:
+        with (
+            caplog.at_level(
+                logging.DEBUG,
+                logger="yascheduler.infra.ssh.operations.deployment",
+            ),
+            pytest.raises(UnsafeTaskPathError) as excinfo,
+        ):
+            await TaskDeployer().start_task_on_machine(
+                session,
+                engine,
+                task,
+                _aiter(entries),
+                ncpus=4,
+                engines_dir=PurePosixPath("/tmp/engines"),
+            )
+
+        assert excinfo.value.path == "../escape.txt"
+        assert "'..'" in excinfo.value.reason
+        assert session.machine.state == MachineState.FREE
+
+        # The entries preceding the bad one are already on the machine.
+        async with session.open_sftp() as sftp:
+            assert (
+                await _read_remote_file(sftp, remote_root / "good" / "first.bin")
+                == BINARY_BYTES
+            )
+            assert await _remote_tree(sftp, remote_root) == {
+                "good": "directory",
+                "good/first.bin": "file",
+            }
+
+        # Nothing landed outside the task root and spawn never ran.
+        assert not await _remote_is_file(session, escaped_path)
+        assert not await _remote_is_file(session, remote_root / "__spawned__")
+
+        started = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "UPLOAD_INPUTS"
+        ]
+        assert len(started) == 1
+        assert "entry_count" not in extra_fields(started[0])
+        failed = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "UPLOAD_INPUTS_FAILED"
+        ]
+        assert len(failed) == 1
+        failed_fields = extra_fields(failed[0])
+        assert failed_fields["entry_count"] == 2
+        assert failed_fields["path"] == "../escape.txt"
+        assert failed_fields["failure"] == "UnsafeTaskPathError"
+    finally:
+        await _remove_remote_paths(session, remote_root)
+
+
+# endregion FUNC_test_deploy_streams_until_unsafe_entry_then_fails

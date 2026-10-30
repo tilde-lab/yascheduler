@@ -33,9 +33,9 @@ from yascheduler.infra.cloud.dto import CloudCreateNodeDTO
 from yascheduler.infra.cloud.manager import CloudProvisionerImpl
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import AsyncIterator, Callable, Sequence
 
-    from yascheduler.domain import Engine
+    from yascheduler.domain import Engine, TaskInputEntry, TaskInputSnapshot
 
 
 # =============================================================================
@@ -265,6 +265,12 @@ class _FakeNodeRepo:
         return counts
 
 
+async def _aiter(entries: Sequence[TaskInputEntry]) -> AsyncIterator[TaskInputEntry]:
+    """Yield snapshot entries the way the real repository streams them."""
+    for entry in entries:
+        yield entry
+
+
 class _FakeTaskRepo:
     """In-memory TaskRepository backed by a shared store dict."""
 
@@ -340,6 +346,15 @@ class _FakeTaskRepo:
         for t in self._store.values():
             counts[t.status] = counts.get(t.status, 0) + 1
         return counts
+
+    def iter_input_entries(self, task_id: TaskId) -> AsyncIterator[TaskInputEntry]:
+        # These tests allocate from TO_DO only; no snapshot bytes are involved.
+        return _aiter(())
+
+    async def list_input_snapshots(
+        self, task_ids: Sequence[TaskId]
+    ) -> dict[TaskId, TaskInputSnapshot]:
+        return {}
 
 
 class FakeUnitOfWork:
@@ -724,7 +739,7 @@ class TestFixA:
 
         captured_ip: list[str] = []
 
-        async def _start(session: Any, engine: Any, task: Any) -> bool:
+        async def _start(session: Any, engine: Any, task: Any, entries: Any) -> bool:
             captured_ip.append(session.hostname)
             return True
 
@@ -899,7 +914,7 @@ class TestFixC:
 
         call_log: list[str] = []
 
-        async def _start(session: Any, engine: Any, task: Any) -> bool:
+        async def _start(session: Any, engine: Any, task: Any, entries: Any) -> bool:
             call_log.append(session.hostname)
             if session.hostname == "10.0.0.1":
                 raise RuntimeError("stale session channel closed")
@@ -922,7 +937,9 @@ class TestFixC:
         tasks_store: dict[TaskId, Task] = {TaskId(1): _make_todo_task()}
         uow = FakeUnitOfWork(tasks_store, nodes_store)
 
-        async def _start_fails(session: Any, engine: Any, task: Any) -> bool:
+        async def _start_fails(
+            session: Any, engine: Any, task: Any, entries: Any
+        ) -> bool:
             raise RuntimeError("unreachable session")
 
         clouds = FakeCloudProvisioner(

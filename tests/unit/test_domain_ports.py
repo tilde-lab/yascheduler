@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
 # PURPOSE: Structural conformance tests for domain port Protocols via isinstance checks.
-# SCOPE: TaskRepository, NodeRepository, MachineRepository, MachineSession, CloudProvisioner Protocols.
+# SCOPE: TaskRepository, NodeRepository, MachineRepository, MachineSession, CloudProvisioner Protocols, including the task-input read surface (streamed entries + batched snapshots).
 # KEYWORDS: domain port Protocols, isinstance, structural conformance
 # endregion MODULE_CONTRACT
 
@@ -31,9 +31,17 @@ from yascheduler.domain.ports import (
     NodeRepository,
     TaskRepository,
 )
+from yascheduler.domain.task_inputs import TaskInputEntry, TaskInputSnapshot
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+    from collections.abc import (
+        AsyncGenerator,
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Mapping,
+        Sequence,
+    )
     from pathlib import Path
     from re import Pattern
 
@@ -83,6 +91,14 @@ class StubTaskRepository:
         return []
 
     async def count_by_status(self) -> dict[TaskStatus, int]:
+        return {}
+
+    def iter_input_entries(self, task_id: TaskId) -> AsyncIterator[TaskInputEntry]:
+        return _empty_async_gen()
+
+    async def list_input_snapshots(
+        self, task_ids: Sequence[TaskId]
+    ) -> Mapping[TaskId, TaskInputSnapshot]:
         return {}
 
 
@@ -291,6 +307,17 @@ class StubCloudProvisioner:
 def test_task_repository_protocol() -> None:
     stub = StubTaskRepository()
     assert isinstance(stub, TaskRepository)
+
+
+def test_task_repository_input_read_surface() -> None:
+    """TaskRepository exposes a synchronous entry iterator and an awaited batched snapshot read."""
+    import inspect
+
+    assert hasattr(TaskRepository, "iter_input_entries")
+    assert hasattr(TaskRepository, "list_input_snapshots")
+    # iter_input_entries returns the iterator directly — callers must not await it.
+    assert not inspect.iscoroutinefunction(TaskRepository.iter_input_entries)
+    assert inspect.iscoroutinefunction(TaskRepository.list_input_snapshots)
 
 
 def test_node_repository_protocol() -> None:

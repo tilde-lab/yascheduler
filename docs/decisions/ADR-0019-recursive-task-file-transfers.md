@@ -14,6 +14,11 @@
   task's output selections. The selection language, tree layout, and
   classification in this ADR stand; §3's "no database storage" covers output
   content, not the selection record.
+- **Amended:** 2026-10-30 — the input snapshot is read on demand: the task
+  record no longer carries input contents, and deployment transfers the
+  snapshot entry by entry. Ownership, storage, and the upload contract in this
+  ADR stand; see
+  [ADR-0021](ADR-0021-input-bytes-read-apart-from-task.md).
 - **Supersedes:** [ADR-0013](ADR-0013-task-metadata-typed-columns-not-jsonb.md),
   only its placement of task input files in `extra`
 - **Superseded by:**

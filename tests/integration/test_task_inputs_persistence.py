@@ -1,16 +1,17 @@
 """Integration tests for task-owned input snapshot persistence."""
 # region MODULE_CONTRACT
-# PURPOSE: Verify the task input snapshot table, its owned-entry SQL, and the repository insert/hydration behavior against real PostgreSQL via testcontainers.
-# SCOPE: Binary/empty-file/empty-directory/nested round-trip through get/list_by_status/list_by_jobs; duplicate and orphan rejection at the layer that enforces them; entry-write failure rolling back task creation; deletion cascade across two tasks; snapshot survival through run/complete/fail saves; and payload-free insert/hydration boundary logs.
+# PURPOSE: Verify the task input snapshot table, its owned-entry SQL, and the explicit snapshot reads that replaced record hydration — against real PostgreSQL via testcontainers.
+# SCOPE: Streamed entry round-trip over text/binary/zero-length/empty-directory/nested shapes with exact kinds and bytes in path order, batched snapshots keyed by TaskId with inputless tasks absent, plain reads carrying no input field, snapshot immutability through run/complete/fail saves, duplicate and orphan rejection at the layer that enforces them, entry-write failure rolling back task creation, deletion cascade across two tasks, and payload-free insert boundary logs.
 # DEPENDENCIES: USES API: PostgresUnitOfWork, pg8000.native, testcontainers.PostgresContainer
 # READS: PostgreSQL container (postgres:16-alpine)
-# KEYWORDS: task inputs, snapshot, round-trip, hydration, cascade, atomicity, lifecycle
+# KEYWORDS: task inputs, snapshot, streaming read, batched snapshot, cascade, atomicity, lifecycle
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import base64
 import logging
+from dataclasses import fields
 from typing import TYPE_CHECKING
 
 import pg8000.native
@@ -37,14 +38,16 @@ from yascheduler.domain.model import (
 from yascheduler.shared.log import LogFormatter
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Mapping
 
-    from yascheduler.domain import AnyTask
+    from yascheduler.domain import AnyTask, TaskInputEntry
     from yascheduler.infra.persistence.postgres_uow import PostgresUnitOfWork
 
 pytestmark = pytest.mark.integration
 
 BINARY_BYTES = b"\x00\x01\xffbin\x00ary"
+TEXT_BYTES = b"text input\n"
+OTHER_BYTES = b"\x89other\x00bytes"
 EXTRA_METADATA: dict[str, object] = {
     "priority": 7,
     "tags": ["baseline", "opt"],
@@ -57,6 +60,7 @@ def _snapshot() -> TaskInputSnapshot:
     return normalize_input_snapshot(
         [
             TaskInputFile(path="inp", content=BINARY_BYTES),
+            TaskInputFile(path="note.txt", content=TEXT_BYTES),
             TaskInputFile(path="empty.txt", content=b""),
             TaskInputDirectory(path="emptydir"),
             TaskInputDirectory(path="nested"),
@@ -99,19 +103,48 @@ async def _reload(
     uow_factory: Callable[[], PostgresUnitOfWork],
     task_id: TaskId,
 ) -> AnyTask | None:
-    """Reload one task in a fresh UoW so hydration, not identity map, supplies the snapshot."""
+    """Reload one task record in a fresh UoW so the read path supplies it."""
     async with uow_factory() as uow:
         task = await uow.tasks.get(task_id)
         await uow.commit()
     return task
 
 
-async def test_snapshot_round_trips_through_insert_and_every_read_path(
+async def _stream(
+    uow_factory: Callable[[], PostgresUnitOfWork],
+    task_id: TaskId,
+) -> list[TaskInputEntry]:
+    """Drain the per-task entry stream in a fresh UoW."""
+    async with uow_factory() as uow:
+        entries = [entry async for entry in uow.tasks.iter_input_entries(task_id)]
+        await uow.commit()
+    return entries
+
+
+async def _snapshots(
+    uow_factory: Callable[[], PostgresUnitOfWork],
+    task_ids: list[TaskId],
+) -> Mapping[TaskId, TaskInputSnapshot]:
+    """Read the batched snapshots for the given tasks in a fresh UoW."""
+    async with uow_factory() as uow:
+        snapshots = await uow.tasks.list_input_snapshots(task_ids)
+        await uow.commit()
+    return snapshots
+
+
+def _by_path(entries: Iterable[TaskInputEntry]) -> dict[str, TaskInputEntry]:
+    """Key entries by task-relative path so comparisons ignore read ordering."""
+    return {entry.path: entry for entry in entries}
+
+
+# region FUNC_test_streamed_entries_round_trip_a_mixed_tree
+# PURPOSE: Prove the per-task stream returns every shape of the stored tree in path order with exact kinds and bytes, and stops after the last entry.
+async def test_streamed_entries_round_trip_a_mixed_tree(
     uow_factory: Callable[[], PostgresUnitOfWork],
     pg_conn: pg8000.native.Connection,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Binary, empty-file, empty-directory, and nested entries reload identically on every read path."""
+    """Text, binary, zero-length, empty-directory, and nested entries stream identically and in order."""
     snapshot = _snapshot()
     caplog.set_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres")
     async with uow_factory() as uow:
@@ -125,15 +158,6 @@ async def test_snapshot_round_trips_through_insert_and_every_read_path(
         )
         await uow.commit()
         task_id = inserted.task_id
-
-    # The insert result itself carries the snapshot the caller supplied.
-    assert inserted.input_entries == snapshot
-
-    async with uow_factory() as uow:
-        by_id = await uow.tasks.get(task_id)
-        by_status = await uow.tasks.list_by_status({TaskStatus.TO_DO})
-        by_jobs = await uow.tasks.list_by_jobs([task_id])
-        await uow.commit()
 
     insert_start = [
         record
@@ -165,54 +189,51 @@ async def test_snapshot_round_trips_through_insert_and_every_read_path(
         "engine": "fleur",
         "entry_count": len(snapshot),
     }
-    hydrate_done = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "hydrate_task_inputs_DONE"
-        and getattr(record, "task_id", None) == task_id.value
-    ]
-    assert hydrate_done
-    assert {
-        key: value
-        for key, value in extra_fields(hydrate_done[0]).items()
-        if key != "message"
-    } == {
-        "task_id": task_id.value,
-        "engine": "fleur",
-        "task_count": 1,
-        "entry_count": len(snapshot),
-    }
 
-    assert len(by_status) == 1
-    assert len(by_jobs) == 1
-    for loaded in (by_id, by_status[0], by_jobs[0]):
-        assert loaded is not None
-        assert loaded.task_id == task_id
-        assert loaded.input_entries == snapshot
-        assert loaded.extra == EXTRA_METADATA
+    async with uow_factory() as uow:
+        stream = uow.tasks.iter_input_entries(task_id)
+        streamed = [entry async for entry in stream]
+        # A further pass over the exhausted iterator yields nothing.
+        assert [entry async for entry in stream] == []
+        await uow.commit()
 
-    # Paths are deterministic and canonical: parents precede their children.
-    assert by_id is not None
-    assert tuple(entry.path for entry in by_id.input_entries) == (
+    paths = tuple(entry.path for entry in streamed)
+    # Deterministic canonical order: byte order puts parents before descendants.
+    assert paths == (
         "empty.txt",
         "emptydir",
         "inp",
         "nested",
         "nested/deep",
         "nested/deep/run.inp",
+        "note.txt",
     )
-    by_path = {entry.path: entry for entry in by_id.input_entries}
+    for path in paths:
+        if "/" in path:
+            parent = path.rsplit("/", 1)[0]
+            assert paths.index(parent) < paths.index(path)
+
+    by_path = {entry.path: entry for entry in streamed}
     binary = by_path["inp"]
     assert isinstance(binary, TaskInputFile)
     assert binary.content == BINARY_BYTES
+    text = by_path["note.txt"]
+    assert isinstance(text, TaskInputFile)
+    assert text.content == TEXT_BYTES
     empty_file = by_path["empty.txt"]
     assert isinstance(empty_file, TaskInputFile)
     assert empty_file.content == b""
+    nested_file = by_path["nested/deep/run.inp"]
+    assert isinstance(nested_file, TaskInputFile)
+    assert nested_file.content == b"nested-bytes"
     empty_directory = by_path["emptydir"]
     assert isinstance(empty_directory, TaskInputDirectory)
     # An empty file is a contentless directory's opposite: the file has bytes
     # (an empty byte string), the directory has no content carrier at all.
     assert not isinstance(empty_directory, TaskInputFile)
+
+    # A fresh iterator over the same task replays the same tree.
+    assert await _stream(uow_factory, task_id) == streamed
 
     # Storage keeps that distinction explicitly rather than by an empty value.
     stored = {row["path"]: row for row in _entry_rows(pg_conn, task_id)}
@@ -223,11 +244,106 @@ async def test_snapshot_round_trips_through_insert_and_every_read_path(
     assert stored["inp"]["content"] == BINARY_BYTES
 
 
-async def test_empty_snapshot_emits_insert_and_hydration_boundaries(
+# endregion FUNC_test_streamed_entries_round_trip_a_mixed_tree
+
+
+# region FUNC_test_plain_reads_carry_no_input_field
+# PURPOSE: Pin that record reads no longer carry input contents — every plain read returns a record whose fields cannot expose the snapshot, while the explicit read still returns it.
+async def test_plain_reads_carry_no_input_field(
+    uow_factory: Callable[[], PostgresUnitOfWork],
+) -> None:
+    """get/list_by_status/list_by_jobs return records without any input field."""
+    snapshot = _snapshot()
+    async with uow_factory() as uow:
+        inserted = await uow.tasks.insert(
+            NewTask(
+                label="reads",
+                engine="fleur",
+                extra=dict(EXTRA_METADATA),
+                input_entries=snapshot,
+            )
+        )
+        await uow.commit()
+        task_id = inserted.task_id
+
+    async with uow_factory() as uow:
+        by_id = await uow.tasks.get(task_id)
+        by_status = await uow.tasks.list_by_status({TaskStatus.TO_DO})
+        by_jobs = await uow.tasks.list_by_jobs([task_id])
+        await uow.commit()
+
+    assert by_id is not None
+    assert len(by_status) == 1
+    assert len(by_jobs) == 1
+    for loaded in (by_id, by_status[0], by_jobs[0]):
+        assert loaded.task_id == task_id
+        assert "input_entries" not in {field.name for field in fields(loaded)}
+        assert not hasattr(loaded, "input_entries")
+        assert loaded.extra == EXTRA_METADATA
+
+    # The bytes are not lost, only displaced: the explicit read still has them.
+    assert _by_path(await _stream(uow_factory, task_id)) == _by_path(snapshot)
+
+
+# endregion FUNC_test_plain_reads_carry_no_input_field
+
+
+# region FUNC_test_list_input_snapshots_batches_complete_trees
+# PURPOSE: Prove one batched read returns each task's complete snapshot keyed by TaskId, leaves inputless tasks out, and returns an empty mapping for an empty id list.
+async def test_list_input_snapshots_batches_complete_trees(
+    uow_factory: Callable[[], PostgresUnitOfWork],
+) -> None:
+    """Batched snapshots are complete, keyed by task, and omit tasks with no entries."""
+    mixed = _snapshot()
+    other = normalize_input_snapshot(
+        (TaskInputFile(path="only.bin", content=OTHER_BYTES),)
+    )
+    async with uow_factory() as uow:
+        mixed_task = await uow.tasks.insert(
+            NewTask(label="mixed", engine="fleur", input_entries=mixed)
+        )
+        other_task = await uow.tasks.insert(
+            NewTask(label="other", engine="fleur", input_entries=other)
+        )
+        empty_task = await uow.tasks.insert(NewTask(label="empty", engine="fleur"))
+        await uow.commit()
+        mixed_id = mixed_task.task_id
+        other_id = other_task.task_id
+        empty_id = empty_task.task_id
+
+    snapshots = await _snapshots(uow_factory, [mixed_id, other_id, empty_id])
+
+    assert set(snapshots) == {mixed_id, other_id}
+    assert _by_path(snapshots[mixed_id]) == _by_path(mixed)
+    assert _by_path(snapshots[other_id]) == _by_path(other)
+    # The batched read agrees with the streamed read.
+    assert _by_path(snapshots[mixed_id]) == _by_path(
+        await _stream(uow_factory, mixed_id)
+    )
+
+    by_path = {entry.path: entry for entry in snapshots[mixed_id]}
+    binary = by_path["inp"]
+    assert isinstance(binary, TaskInputFile)
+    assert binary.content == BINARY_BYTES
+    empty_file = by_path["empty.txt"]
+    assert isinstance(empty_file, TaskInputFile)
+    assert empty_file.content == b""
+    empty_directory = by_path["emptydir"]
+    assert isinstance(empty_directory, TaskInputDirectory)
+
+    assert await _snapshots(uow_factory, []) == {}
+
+
+# endregion FUNC_test_list_input_snapshots_batches_complete_trees
+
+
+# region FUNC_test_empty_snapshot_emits_insert_boundaries_and_reads_nothing
+# PURPOSE: Pin that an inputless task is still an observable insert boundary with zero entries and is invisible to both explicit reads.
+async def test_empty_snapshot_emits_insert_boundaries_and_reads_nothing(
     uow_factory: Callable[[], PostgresUnitOfWork],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An empty snapshot is still an observable persistence boundary with zero entries."""
+    """An empty snapshot logs zero entries and yields nothing on either explicit read."""
     caplog.set_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres")
     async with uow_factory() as uow:
         inserted = await uow.tasks.insert(NewTask(label="empty", engine="fleur"))
@@ -239,7 +355,8 @@ async def test_empty_snapshot_emits_insert_and_hydration_boundaries(
         await uow.commit()
 
     assert loaded is not None
-    assert loaded.input_entries == ()
+    assert await _stream(uow_factory, task_id) == []
+    assert await _snapshots(uow_factory, [task_id]) == {}
     for marker, expected in (
         (
             "persist_task_inputs_START",
@@ -249,15 +366,6 @@ async def test_empty_snapshot_emits_insert_and_hydration_boundaries(
             "persist_task_inputs",
             {"task_id": task_id.value, "engine": "fleur", "entry_count": 0},
         ),
-        (
-            "hydrate_task_inputs_DONE",
-            {
-                "task_id": task_id.value,
-                "engine": "fleur",
-                "task_count": 1,
-                "entry_count": 0,
-            },
-        ),
     ):
         records = [record for record in caplog.records if record.getMessage() == marker]
         assert len(records) == 1
@@ -266,6 +374,16 @@ async def test_empty_snapshot_emits_insert_and_hydration_boundaries(
             for key, value in extra_fields(records[0]).items()
             if key != "message"
         } == expected
+
+    # Reads no longer hydrate: no hydration boundary is emitted at all.
+    assert not [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("hydrate_task_inputs")
+    ]
+
+
+# endregion FUNC_test_empty_snapshot_emits_insert_boundaries_and_reads_nothing
 
 
 async def test_normalize_input_snapshot_rejects_duplicate_paths() -> None:
@@ -368,17 +486,17 @@ async def test_entry_write_failure_rolls_back_task_creation(
         if record.getMessage() == "persist_task_inputs_FAILED"
     ]
     assert len(failed) == 1
-    fields = extra_fields(failed[0])
-    assert fields["engine"] == "fleur"
-    assert fields["entry_count"] == 2
-    assert fields["failure"] == "DatabaseError"
-    assert isinstance(fields["task_id"], int)
+    fields_ = extra_fields(failed[0])
+    assert fields_["engine"] == "fleur"
+    assert fields_["entry_count"] == 2
+    assert fields_["failure"] == "DatabaseError"
+    assert isinstance(fields_["task_id"], int)
     assert not any(
         record.getMessage() == "persist_task_inputs" for record in caplog.records
     )
     rendered = LogFormatter().format(failed[0])
     assert "persist_task_inputs_FAILED" in rendered
-    assert f"task_id={fields['task_id']}" in rendered
+    assert f"task_id={fields_['task_id']}" in rendered
     assert "failure='DatabaseError'" in rendered
     leaked_markers = (
         input_secret.decode(),
@@ -436,19 +554,22 @@ async def test_deleting_a_task_cascades_only_to_its_own_entry_rows(
     assert {row["task_id"] for row in remaining} == {kept_id.value}
 
     assert await _reload(uow_factory, dropped_id) is None
-    reloaded = await _reload(uow_factory, kept_id)
-    assert reloaded is not None
-    assert tuple(entry.path for entry in reloaded.input_entries) == (
+    snapshots = await _snapshots(uow_factory, [kept_id, dropped_id])
+    assert set(snapshots) == {kept_id}
+    assert tuple(entry.path for entry in snapshots[kept_id]) == (
         "keep",
         "keep/inp",
     )
-    kept_entry = reloaded.input_entries[1]
+    kept_entry = snapshots[kept_id][1]
     assert isinstance(kept_entry, TaskInputFile)
     assert kept_entry.content == b"keep"
 
 
+# region FUNC_test_snapshot_survives_run_complete_and_fail_saves
+# PURPOSE: Prove lifecycle saves rewrite task state only — the stored task_inputs rows stay byte-identical and both explicit reads keep returning the accepted tree.
 async def test_snapshot_survives_run_complete_and_fail_saves(
     uow_factory: Callable[[], PostgresUnitOfWork],
+    pg_conn: pg8000.native.Connection,
 ) -> None:
     """Lifecycle saves alter task state fields but never rewrite the input snapshot."""
     snapshot = _snapshot()
@@ -467,11 +588,17 @@ async def test_snapshot_survives_run_complete_and_fail_saves(
         complete_id = to_complete.task_id
         fail_id = to_fail.task_id
 
+    complete_rows = _entry_rows(pg_conn, complete_id)
+    fail_rows = _entry_rows(pg_conn, fail_id)
+    assert {row["path"] for row in complete_rows} == {entry.path for entry in snapshot}
+
     # TO_DO → RUNNING keeps the snapshot.
     async with uow_factory() as uow:
         todo_task = await uow.tasks.get_todo(complete_id)
         assert todo_task is not None
-        assert todo_task.input_entries == snapshot
+        assert _by_path(
+            [entry async for entry in uow.tasks.iter_input_entries(complete_id)]
+        ) == _by_path(snapshot)
         running = todo_task.run(node_id, "/remote/completes")
         await uow.tasks.save(running, expected_status=TaskStatus.TO_DO)
         await uow.commit()
@@ -479,7 +606,8 @@ async def test_snapshot_survives_run_complete_and_fail_saves(
     reloaded = await _reload(uow_factory, complete_id)
     assert reloaded is not None
     assert isinstance(reloaded.state, Running)
-    assert reloaded.input_entries == snapshot
+    assert _by_path(await _stream(uow_factory, complete_id)) == _by_path(snapshot)
+    assert _entry_rows(pg_conn, complete_id) == complete_rows
 
     # RUNNING → DONE (success) keeps the snapshot.
     async with uow_factory() as uow:
@@ -496,7 +624,10 @@ async def test_snapshot_survives_run_complete_and_fail_saves(
     assert reloaded is not None
     assert isinstance(reloaded.state, Done)
     assert reloaded.state.error is None
-    assert reloaded.input_entries == snapshot
+    assert _by_path((await _snapshots(uow_factory, [complete_id]))[complete_id]) == (
+        _by_path(snapshot)
+    )
+    assert _entry_rows(pg_conn, complete_id) == complete_rows
 
     # The second task takes the RUNNING → DONE (failure) path.
     async with uow_factory() as uow:
@@ -522,4 +653,8 @@ async def test_snapshot_survives_run_complete_and_fail_saves(
     assert reloaded is not None
     assert isinstance(reloaded.state, Done)
     assert reloaded.state.error == "scheduler error"
-    assert reloaded.input_entries == snapshot
+    assert _by_path(await _stream(uow_factory, fail_id)) == _by_path(snapshot)
+    assert _entry_rows(pg_conn, fail_id) == fail_rows
+
+
+# endregion FUNC_test_snapshot_survives_run_complete_and_fail_saves

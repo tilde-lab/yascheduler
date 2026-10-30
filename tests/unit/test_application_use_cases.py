@@ -159,7 +159,6 @@ class TestSubmitTask:
                 webhook_url=new_task.webhook_url,
                 webhook_custom_params=new_task.webhook_custom_params,
                 extra=new_task.extra,
-                input_entries=new_task.input_entries,
                 output_selections=new_task.output_selections,
                 created_at=datetime(2025, 1, 1),
                 updated_at=datetime(2025, 1, 1),
@@ -677,6 +676,8 @@ class TestAllocateTask:
         allocation_lock = asyncio.Lock()
         clouds = MagicMock(spec=CloudProvisioner)
         start_on_machine = AsyncMock(return_value=True)
+        entries = MagicMock(name="input-entries-iterator")
+        uow.tasks.iter_input_entries = MagicMock(return_value=entries)
 
         result = await allocate_task(
             task_id=todo_task.task_id,
@@ -694,11 +695,16 @@ class TestAllocateTask:
         assert result is True
         repository.list_free.assert_called_once_with(platforms=["linux"])
         start_on_machine.assert_called_once()
-        _call_session, _call_engine, _call_task = start_on_machine.call_args[0]
+        _call_session, _call_engine, _call_task, _call_entries = (
+            start_on_machine.call_args[0]
+        )
         assert _call_session is free_session
         assert _call_engine is engine
         assert _call_task.state.allocated_node_id == NodeId(1)
         assert not hasattr(_call_task, "allocated_ip")
+        # The snapshot iterator is opened inside the claimed-row UoW and threaded through.
+        assert _call_entries is entries
+        uow.tasks.iter_input_entries.assert_called_once_with(todo_task.task_id)
         occupancy_checker.start_occupancy_check.assert_called_once_with(
             free_session,
             engine,

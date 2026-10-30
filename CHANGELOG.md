@@ -64,6 +64,11 @@
 
 ### Refactor
 
+- **persistence**: task reads no longer load the task's input snapshot; the
+  snapshot is requested only where its bytes are needed — deployment streams
+  entries one at a time in path order, and the public query fetches snapshots
+  in one batch. Public responses, the database schema, and submissions are
+  unchanged.
 - **logging**: input capture, persistence, and deployment emit structured block
   records with task and path identity; input-transfer diagnostics carry no file
   payloads and no exception text.

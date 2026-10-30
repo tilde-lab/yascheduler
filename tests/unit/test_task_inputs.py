@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
-# PURPOSE: Verify the task-input contracts of task-input-snapshots tasks 1.1–1.2 — entry value objects, kind discrimination, record-field defaults and transition preservation, facade exports, path/selection validation, component-aware glob matching, and snapshot normalization — so the shared selection language stays pinned while later tasks build capture on top.
-# SCOPE: TaskInputFile/TaskInputDirectory value semantics; NewTask/Task input_entries defaults and survival through transitions; canonical path validation rejections; selection matching for literal/`*`/`?`/class/`**` patterns, hidden names, and kind rules; normalize_input_snapshot materialization, deduplication, ordering, and conflict rejection.
+# PURPOSE: Verify the task-input contracts of task-input-snapshots tasks 1.1–1.2 — entry value objects, kind discrimination, submission-record input defaults, facade exports, path/selection validation, component-aware glob matching, and snapshot normalization — so the shared selection language stays pinned while later tasks build capture on top.
+# SCOPE: TaskInputFile/TaskInputDirectory value semantics; NewTask input_entries default and round-trip; canonical path validation rejections; selection matching for literal/`*`/`?`/class/`**` patterns, hidden names, and kind rules; normalize_input_snapshot materialization, deduplication, ordering, and conflict rejection.
 # KEYWORDS: task inputs, snapshot, entry kinds, selection, glob, path validation
 # endregion MODULE_CONTRACT
 
@@ -10,15 +10,11 @@ from yascheduler.domain import (
     InvalidTaskSnapshotError,
     MissingInputFileError,
     NewTask,
-    NodeId,
-    Task,
-    TaskId,
     TaskInputDirectory,
     TaskInputEntry,
     TaskInputFile,
     TaskInputKind,
     TaskInputSnapshot,
-    Todo,
     UnsafeTaskPathError,
     ValidationError,
     normalize_input_snapshot,
@@ -100,23 +96,6 @@ class TestRecordContracts:
         )
         nt = NewTask(engine="cp2k", input_entries=entries)
         assert nt.input_entries == entries
-
-    def test_task_defaults_to_empty_snapshot(self) -> None:
-        task = Task(task_id=TaskId(1), engine="cp2k", state=Todo())
-        assert task.input_entries == ()
-
-    def test_transitions_preserve_input_entries(self) -> None:
-        entries: tuple[TaskInputEntry, ...] = (
-            TaskInputFile(path="INPUT", content=b"body"),
-            TaskInputDirectory(path="basis"),
-        )
-        todo = Task(
-            task_id=TaskId(1), engine="cp2k", state=Todo(), input_entries=entries
-        )
-        running = todo.run(NodeId(7), "remote")
-        assert running.input_entries is entries
-        done = running.complete(local_folder="local", remote_folder="remote")
-        assert done.input_entries is entries
 
 
 class TestValidateTaskPath:

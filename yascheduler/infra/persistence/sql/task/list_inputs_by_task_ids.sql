@@ -5,4 +5,6 @@ SELECT
     content
 FROM yascheduler_task_inputs
 WHERE task_id IN (SELECT unnest(cast(:task_ids AS INT [])))
-ORDER BY task_id, path;
+-- C-collation byte order keeps the batched read consistent with the
+-- per-entry stream (parent before descendants) regardless of locale.
+ORDER BY task_id, path COLLATE "C";

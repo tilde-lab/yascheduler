@@ -35,8 +35,9 @@ from yascheduler.infra.ssh.platform.types import (
 from yascheduler.infra.ssh.repository import SSHMachineRepository
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
+    from yascheduler.domain import TaskInputEntry
     from yascheduler.infra.ssh.session import SSHMachineSession
 
 
@@ -65,6 +66,12 @@ def _make_task(remote_folder: str = "/remote/tasks/1") -> Task:
         created_at=datetime(2025, 1, 1),
         updated_at=datetime(2025, 1, 1),
     )
+
+
+async def _aiter(entries: Sequence[TaskInputEntry]) -> AsyncIterator[TaskInputEntry]:
+    """Yield snapshot entries the way the allocation use case hands them over."""
+    for entry in entries:
+        yield entry
 
 
 def _wire_realpath(state: SSHMachineSession) -> None:
@@ -192,6 +199,7 @@ class TestStartTaskRollback:
                 session,
                 _make_engine(),
                 _make_task(),
+                _aiter(()),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -230,6 +238,7 @@ class TestStartTaskRollback:
                 session,
                 _make_engine(),
                 _make_task(),
+                _aiter(()),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -262,6 +271,7 @@ class TestStartTaskRollback:
                 session,
                 _make_engine(),
                 _make_task(),
+                _aiter(()),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -285,6 +295,7 @@ class TestStartTaskRollback:
             s: object,
             task: Task,
             task_dir: object,
+            entries: object,
         ) -> bool:
             # Simulate a concurrent transition away from BUSY before rollback.
             session.release()
@@ -303,6 +314,7 @@ class TestStartTaskRollback:
                 session,
                 _make_engine(),
                 _make_task(),
+                _aiter(()),
                 4,
                 PurePosixPath("/engines"),
             )
@@ -328,6 +340,7 @@ class TestStartTaskRollback:
             s: object,
             task: Task,
             task_dir: object,
+            entries: object,
         ) -> bool:
             await session._close()
             raise OSError("boom")
@@ -348,6 +361,7 @@ class TestStartTaskRollback:
                 session,
                 _make_engine(),
                 _make_task(),
+                _aiter(()),
                 4,
                 PurePosixPath("/engines"),
             )

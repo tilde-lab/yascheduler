@@ -1,7 +1,7 @@
 """Focused unit tests for task-input persistence boundary logging."""
 # region MODULE_CONTRACT
-# PURPOSE: Pin failure/cancellation trajectories and payload redaction at the repository input-insert and hydration boundaries without a database.
-# SCOPE: Repository DEBUG markers, task/engine/count context, original-exception preservation, no success record after failure, and no file contents or credentials in record fields or rendered traces.
+# PURPOSE: Pin failure/cancellation trajectories and payload redaction at the repository input-insert and input-read boundaries without a database.
+# SCOPE: Repository DEBUG markers, task/engine/count context, original-exception preservation, no success record after failure, streamed entry counts on completion, and no file contents or credentials in record fields or rendered traces.
 # KEYWORDS: postgres persistence, task inputs, logging, cancellation, redaction
 # endregion MODULE_CONTRACT
 
@@ -11,18 +11,18 @@ import asyncio
 import base64
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from tests.log_assertions import extra_fields
-from yascheduler.domain import NewTask, Task, TaskId, TaskInputFile, Todo
+from yascheduler.domain import NewTask, TaskId, TaskInputFile
 from yascheduler.infra.persistence.postgres import PostgresTaskRepository
 from yascheduler.shared.log import LogFormatter
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncGenerator, Sequence
 
     from yascheduler.domain import TaskInputEntry
 
@@ -43,11 +43,6 @@ def _repository() -> PostgresTaskRepository:
     return PostgresTaskRepository(MagicMock(), MagicMock())
 
 
-def _task(task_id: int = 7) -> Task[Todo]:
-    """Return one persisted TO_DO task for hydration-boundary tests."""
-    return Task(task_id=TaskId(task_id), engine="fleur", state=Todo())
-
-
 def _assert_no_payload_leak(
     rendered: str, records: Sequence[logging.LogRecord]
 ) -> None:
@@ -63,10 +58,10 @@ def _assert_no_payload_leak(
         assert marker not in field_dump
 
 
-async def test_hydration_failure_preserves_error_and_emits_no_success(
+async def test_snapshot_read_failure_preserves_error_and_emits_no_success(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A hydration exception logs task context and re-raises the same exception."""
+    """A batched snapshot-read exception logs task context and re-raises unchanged."""
     repository = _repository()
     error = RuntimeError(
         f"database rejected {_SECRET!r} using credential {_CREDENTIAL!r}"
@@ -77,24 +72,24 @@ async def test_hydration_failure_preserves_error_and_emits_no_success(
         caplog.at_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres"),
         pytest.raises(RuntimeError) as info,
     ):
-        await repository._hydrate_input_entries([_task()])
+        await repository.list_input_snapshots([TaskId(7)])
 
     assert info.value is error
     failed = [
         record
         for record in caplog.records
-        if record.getMessage() == "hydrate_task_inputs_FAILED"
+        if record.getMessage() == "read_task_input_snapshots_FAILED"
     ]
     assert len(failed) == 1
     fields = extra_fields(failed[0])
     assert {key: value for key, value in fields.items() if key != "message"} == {
-        "task_id": 7,
-        "engine": "fleur",
         "task_count": 1,
+        "task_id": 7,
         "failure": "RuntimeError",
     }
     assert not any(
-        record.getMessage() == "hydrate_task_inputs_DONE" for record in caplog.records
+        record.getMessage() == "read_task_input_snapshots_DONE"
+        for record in caplog.records
     )
     rendered = LogFormatter().format(failed[0])
     assert f"task_id={7}" in rendered
@@ -102,10 +97,10 @@ async def test_hydration_failure_preserves_error_and_emits_no_success(
     _assert_no_payload_leak(rendered, caplog.records)
 
 
-async def test_hydration_cancellation_logs_failure_and_propagates_unchanged(
+async def test_snapshot_read_cancellation_logs_failure_and_propagates_unchanged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Cancellation is a failure boundary, not a silent or successful hydration."""
+    """Cancellation is a failure boundary, not a silent or successful snapshot read."""
     repository = _repository()
     cancellation = asyncio.CancelledError(
         f"cancelled while reading {_SECRET!r} with {_CREDENTIAL!r}"
@@ -116,20 +111,127 @@ async def test_hydration_cancellation_logs_failure_and_propagates_unchanged(
         caplog.at_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres"),
         pytest.raises(asyncio.CancelledError) as info,
     ):
-        await repository._hydrate_input_entries([_task()])
+        await repository.list_input_snapshots([TaskId(7), TaskId(8)])
 
     assert info.value is cancellation
     failed = [
         record
         for record in caplog.records
-        if record.getMessage() == "hydrate_task_inputs_FAILED"
+        if record.getMessage() == "read_task_input_snapshots_FAILED"
     ]
     assert len(failed) == 1
-    assert extra_fields(failed[0])["failure"] == "CancelledError"
+    # A multi-id batch reports the batch size, not a single task id.
+    assert {
+        key: value for key, value in extra_fields(failed[0]).items() if key != "message"
+    } == {
+        "task_count": 2,
+        "failure": "CancelledError",
+    }
     assert not any(
-        record.getMessage() == "hydrate_task_inputs_DONE" for record in caplog.records
+        record.getMessage() == "read_task_input_snapshots_DONE"
+        for record in caplog.records
     )
     _assert_no_payload_leak(LogFormatter().format(failed[0]), caplog.records)
+
+
+async def test_streamed_input_done_carries_entry_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Draining the entry stream logs completion with the streamed entry count."""
+    repository = _repository()
+    repository._run = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[
+            [{"path": "INPUT", "kind": "file", "content": _SECRET}],
+            [{"path": "basis", "kind": "directory", "content": None}],
+            [],
+        ]
+    )
+
+    with caplog.at_level(
+        logging.DEBUG, logger="yascheduler.infra.persistence.postgres"
+    ):
+        entries = [entry async for entry in repository.iter_input_entries(TaskId(7))]
+
+    assert [entry.path for entry in entries] == ["INPUT", "basis"]
+    done = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "stream_task_inputs_DONE"
+    ]
+    assert len(done) == 1
+    fields = extra_fields(done[0])
+    assert {key: value for key, value in fields.items() if key != "message"} == {
+        "task_id": 7,
+        "entry_count": 2,
+    }
+    _assert_no_payload_leak(LogFormatter().format(done[0]), caplog.records)
+
+
+async def test_streamed_input_failure_mid_stream_logs_and_propagates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failure after the first entry logs progress and re-raises unchanged."""
+    repository = _repository()
+    error = RuntimeError(
+        f"database rejected {_SECRET!r} using credential {_CREDENTIAL!r}"
+    )
+    repository._run = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[[{"path": "INPUT", "kind": "file", "content": _SECRET}], error]
+    )
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="yascheduler.infra.persistence.postgres"),
+        pytest.raises(RuntimeError) as info,
+    ):
+        async for _entry in repository.iter_input_entries(TaskId(7)):
+            pass
+
+    assert info.value is error
+    failed = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "stream_task_inputs_FAILED"
+    ]
+    assert len(failed) == 1
+    fields = extra_fields(failed[0])
+    assert {key: value for key, value in fields.items() if key != "message"} == {
+        "task_id": 7,
+        "entry_count": 1,
+        "failure": "RuntimeError",
+    }
+    assert not any(
+        record.getMessage() == "stream_task_inputs_DONE" for record in caplog.records
+    )
+    _assert_no_payload_leak(LogFormatter().format(failed[0]), caplog.records)
+
+
+async def test_streamed_input_early_close_is_not_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A consumer abandoning the stream mid-way is a normal end, not a failure boundary."""
+    repository = _repository()
+    repository._run = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[[{"path": "INPUT", "kind": "file", "content": _SECRET}], []]
+    )
+
+    with caplog.at_level(
+        logging.DEBUG, logger="yascheduler.infra.persistence.postgres"
+    ):
+        # The port types the stream as AsyncIterator; the repository returns an
+        # async generator, whose explicit close is exactly what this test pins.
+        stream = cast(
+            "AsyncGenerator[TaskInputEntry, None]",
+            repository.iter_input_entries(TaskId(7)),
+        )
+        async for _entry in stream:
+            break
+        await stream.aclose()
+
+    # Only the start marker: an abandoned stream is neither a failure nor a
+    # completion — the consumer owns that outcome.
+    assert [record.getMessage() for record in caplog.records] == [
+        "stream_task_inputs_START"
+    ]
 
 
 async def test_input_insert_cancellation_logs_failure_and_propagates_unchanged(

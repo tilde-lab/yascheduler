@@ -1,11 +1,11 @@
 # region MODULE_CONTRACT
 # PURPOSE: Unit tests for domain entities: TaskStatus, MachineState, ProcessResult, Task, Node, ConnectedMachine.
-# SCOPE: Enum values, dataclass defaults/frozen semantics, Task lifecycle methods (run/reject/complete/fail/abandon), ConnectedMachine state transitions, materialize_task, Task.error column format contract, public events field.
+# SCOPE: Enum values, dataclass defaults/frozen semantics, Task lifecycle methods (run/reject/complete/fail/abandon), ConnectedMachine state transitions, materialize_task, Task.error column format contract, public events field, and the input-field split (Task carries no input contents; NewTask does).
 # KEYWORDS: TaskStatus, MachineState, ConnectedMachine, Task lifecycle
 # endregion MODULE_CONTRACT
 
 import time
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 from datetime import datetime
 
 import pytest
@@ -172,6 +172,11 @@ class TestTask:
         assert not hasattr(task, "allocated_ip")
         assert isinstance(task.created_at, datetime)
         assert isinstance(task.updated_at, datetime)
+
+    def test_has_no_input_entries_field(self) -> None:
+        """A persisted task record carries no input contents; reads are explicit."""
+        assert "input_entries" not in {f.name for f in fields(Task)}
+        assert not hasattr(self.make_task(), "input_entries")
 
     def test_immutability(self) -> None:
         task = self.make_task()
@@ -644,6 +649,10 @@ class TestNewTask:
         assert not hasattr(nt, "updated_at")
         assert not hasattr(nt, "status")
         assert not hasattr(nt, "allocated_node_id")
+
+    def test_has_input_entries_field(self) -> None:
+        """Submission is the one boundary that carries input contents."""
+        assert "input_entries" in {f.name for f in fields(NewTask)}
 
     def test_has_no_task_id(self) -> None:
         nt = NewTask(label="x", engine="cp2k")

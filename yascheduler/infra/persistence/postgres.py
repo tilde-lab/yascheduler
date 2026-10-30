@@ -1,10 +1,10 @@
 """PostgreSQL repository implementations for tasks and nodes."""
 # region MODULE_CONTRACT
-# PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks (with their owned input snapshot entries) and nodes transactionally without coupling domain logic to pg8000 or SQL details.
-# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert, task-owned output-selection persistence, and batched hydration with content-free DEBUG boundary traces.
+# PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks and nodes transactionally without coupling domain logic to pg8000 or SQL details.
+# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert, task-owned output-selection persistence, the explicit batched snapshot read, the per-entry keyset stream read, and content-free DEBUG boundary traces; task records carry no input contents.
 # INVARIANTS: Every repository method is async and routes synchronous pg8000 calls through asyncio.get_running_loop().run_in_executor(self._executor, _fn).
 # DEPENDENCIES: USES API: pg8000.Connection, READS: SQL files from disk via sql_loader
-# KEYWORDS: postgres, repository, task, node, crud
+# KEYWORDS: postgres, repository, task, node, crud, input snapshot
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -45,10 +44,12 @@ from .exceptions import NodeRowNotFoundError, TaskRowNotFoundError
 from .sql_loader import load_query
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from concurrent.futures import ThreadPoolExecutor
 
     from pg8000.native import Connection
+
+    from yascheduler.domain import TaskInputSnapshot
 
 __all__ = ["PostgresNodeRepository", "PostgresTaskRepository"]
 
@@ -108,8 +109,7 @@ class PostgresTaskRepository(_PgRepository):
         rows = await self._run(load_query("task/get_by_id"), task_id=task_id.value)
         if not rows:
             return None
-        hydrated = await self._hydrate_input_entries([self._row_to_task(rows[0])])
-        return hydrated[0]
+        return self._row_to_task(rows[0])
 
     # endregion METHOD_get
 
@@ -124,8 +124,7 @@ class PostgresTaskRepository(_PgRepository):
         )
         if not rows:
             return None
-        hydrated = await self._hydrate_input_entries([self._row_to_task(rows[0])])
-        return cast("RunningTask", hydrated[0])
+        return cast("RunningTask", self._row_to_task(rows[0]))
 
     # endregion METHOD_get_running
 
@@ -140,8 +139,7 @@ class PostgresTaskRepository(_PgRepository):
         )
         if not rows:
             return None
-        hydrated = await self._hydrate_input_entries([self._row_to_task(rows[0])])
-        return cast("TodoTask", hydrated[0])
+        return cast("TodoTask", self._row_to_task(rows[0]))
 
     # endregion METHOD_get_todo
 
@@ -281,9 +279,7 @@ class PostgresTaskRepository(_PgRepository):
             },
         )
         # endregion BLOCK_insert_input_entries
-        return materialize_task(
-            replace(task, input_entries=tuple(new_task.input_entries))
-        )
+        return materialize_task(task)
 
     # endregion METHOD_insert
 
@@ -300,7 +296,7 @@ class PostgresTaskRepository(_PgRepository):
             statuses=[s.name for s in statuses],
             lim=limit,
         )
-        return await self._hydrate_input_entries([self._row_to_task(r) for r in rows])
+        return [self._row_to_task(r) for r in rows]
 
     # endregion METHOD_list_by_status
 
@@ -312,7 +308,7 @@ class PostgresTaskRepository(_PgRepository):
             load_query("task/list_by_jobs"),
             task_ids=[tid.value for tid in job_ids],
         )
-        return await self._hydrate_input_entries([self._row_to_task(r) for r in rows])
+        return [self._row_to_task(r) for r in rows]
 
     # endregion METHOD_list_by_jobs
 
@@ -325,61 +321,108 @@ class PostgresTaskRepository(_PgRepository):
 
     # endregion METHOD_count_by_status
 
-    # region METHOD__hydrate_input_entries
-    # PURPOSE: Batch-load owned input entries for already-hydrated tasks so every read recovers the complete snapshot without issuing a query per input file.
-    # INVARIANTS: One SELECT for the whole task list; entries attach by task identity and never rewrite task state fields; ordering is deterministic (task_id, path).
-    async def _hydrate_input_entries(self, tasks: list[AnyTask]) -> list[AnyTask]:
-        """Return the tasks with their owned input entries attached."""
-        if not tasks:
-            return tasks
-        # region BLOCK_load_entries
-        single_task = tasks[0] if len(tasks) == 1 else None
-        start_fields: dict[str, Any] = {"task_count": len(tasks)}
-        if single_task is not None:
-            start_fields["task_id"] = single_task.task_id.value
-            start_fields["engine"] = single_task.engine
-        logger.debug("hydrate_task_inputs_START", extra=start_fields)
+    # region METHOD_list_input_snapshots
+    # PURPOSE: Batch-load complete input snapshots for a set of tasks in one read so the client query projects exact bytes without loading them on every task read.
+    # INVARIANTS: One SELECT for the whole task list; entries group by task identity into immutable tuples; ordering is C-collation byte order (task_id, path), the same order the per-entry stream yields; tasks with no entries are absent from the mapping.
+    async def list_input_snapshots(
+        self, task_ids: Sequence[TaskId]
+    ) -> Mapping[TaskId, TaskInputSnapshot]:
+        """Return complete input snapshots keyed by task id for the given ids.
+
+        One batched SELECT (task/list_inputs_by_task_ids); tasks with no
+        entries are absent from the mapping. Task records themselves carry no
+        input contents — this is the explicit snapshot read.
+        """
+        if not task_ids:
+            return {}
+        # region BLOCK_load_snapshots
+        first_id = task_ids[0] if len(task_ids) == 1 else None
+        start_fields: dict[str, Any] = {"task_count": len(task_ids)}
+        if first_id is not None:
+            start_fields["task_id"] = first_id.value
+        logger.debug("read_task_input_snapshots_START", extra=start_fields)
         try:
             rows = await self._run(
                 load_query("task/list_inputs_by_task_ids"),
-                task_ids=[t.task_id.value for t in tasks],
+                task_ids=[tid.value for tid in task_ids],
             )
             by_task: dict[int, list[TaskInputEntry]] = {}
             for row in rows:
                 by_task.setdefault(int(row["task_id"]), []).append(
                     self._row_to_entry(row)
                 )
-            hydrated = [
-                replace(t, input_entries=tuple(by_task[t.task_id.value]))
-                if t.task_id.value in by_task
-                else t
-                for t in tasks
-            ]
+            snapshots = {
+                TaskId(tid): tuple(entries) for tid, entries in by_task.items()
+            }
         except BaseException as err:
             failed_fields: dict[str, Any] = {
-                "task_count": len(tasks),
+                "task_count": len(task_ids),
                 "failure": type(err).__name__,
             }
-            if single_task is not None:
-                failed_fields["task_id"] = single_task.task_id.value
-                failed_fields["engine"] = single_task.engine
-            logger.debug("hydrate_task_inputs_FAILED", extra=failed_fields)
+            if first_id is not None:
+                failed_fields["task_id"] = first_id.value
+            logger.debug("read_task_input_snapshots_FAILED", extra=failed_fields)
             raise
-        done_fields: dict[str, Any] = {
-            "task_count": len(tasks),
-            "entry_count": sum(len(task.input_entries) for task in hydrated),
-        }
-        if single_task is not None:
-            done_fields["task_id"] = single_task.task_id.value
-            done_fields["engine"] = single_task.engine
-        logger.debug("hydrate_task_inputs_DONE", extra=done_fields)
-        # endregion BLOCK_load_entries
-        return hydrated
+        logger.debug(
+            "read_task_input_snapshots_DONE",
+            extra={
+                "task_count": len(task_ids),
+                "entry_count": len(rows),
+            },
+        )
+        # endregion BLOCK_load_snapshots
+        return snapshots
 
-    # endregion METHOD__hydrate_input_entries
+    # endregion METHOD_list_input_snapshots
+
+    # region METHOD_iter_input_entries
+    # PURPOSE: Stream one task's snapshot entries one at a time in C-collation path order so deployment uploads the tree without ever holding it whole.
+    # INVARIANTS: Keyset pagination — each SELECT fetches the single row with the least path greater than the last yielded one, under the C collation so byte order (parent before descendants) is locale-independent; the first read seeds with the empty path; iteration ends when the read returns no row.
+    async def iter_input_entries(
+        self, task_id: TaskId
+    ) -> AsyncIterator[TaskInputEntry]:
+        """Yield one task's snapshot entries one at a time in path order."""
+        logger.debug(
+            "stream_task_inputs_START",
+            extra={"task_id": task_id.value},
+        )
+        after = ""
+        entry_count = 0
+        while True:
+            # Only the store read is guarded: a consumer stopping early
+            # (GeneratorExit at the yield) is a normal end of streaming,
+            # not a stream failure.
+            try:
+                rows = await self._run(
+                    load_query("task/next_input_entry"),
+                    task_id=task_id.value,
+                    after=after,
+                )
+            except BaseException as err:
+                logger.debug(
+                    "stream_task_inputs_FAILED",
+                    extra={
+                        "task_id": task_id.value,
+                        "entry_count": entry_count,
+                        "failure": type(err).__name__,
+                    },
+                )
+                raise
+            if not rows:
+                break
+            row = rows[0]
+            after = str(row["path"])
+            entry_count += 1
+            yield self._row_to_entry(row)
+        logger.debug(
+            "stream_task_inputs_DONE",
+            extra={"task_id": task_id.value, "entry_count": entry_count},
+        )
+
+    # endregion METHOD_iter_input_entries
 
     # region METHOD__row_to_entry
-    # PURPOSE: Deserialize one input-entry row into the domain snapshot value so hydrated tasks carry typed entries, not raw SQL data.
+    # PURPOSE: Deserialize one input-entry row into the domain snapshot value so snapshot reads return typed entries, not raw SQL data.
     @staticmethod
     def _row_to_entry(row: Mapping[str, Any]) -> TaskInputEntry:
         """Convert an input-entry row dict to a domain snapshot entry."""

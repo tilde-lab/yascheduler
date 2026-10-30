@@ -42,8 +42,13 @@ EXPECTED_KEYS = {"task_id", "label", "status", "metadata", "input_entries", "nod
 class FakeTaskRepository:
     """In-memory task repository capturing dispatched query calls."""
 
-    def __init__(self, tasks: list[Task] | None = None) -> None:
+    def __init__(
+        self,
+        tasks: list[Task] | None = None,
+        snapshots: dict[TaskId, TaskInputSnapshot] | None = None,
+    ) -> None:
         self._tasks = tasks or []
+        self._snapshots = snapshots or {}
         self.list_by_status_calls: list[set[TaskStatus]] = []
         self.list_by_jobs_calls: list[list[TaskId]] = []
 
@@ -59,6 +64,11 @@ class FakeTaskRepository:
     async def list_by_jobs(self, job_ids: list[TaskId]) -> list[Task]:
         self.list_by_jobs_calls.append(job_ids)
         return self._tasks
+
+    async def list_input_snapshots(
+        self, task_ids: list[TaskId]
+    ) -> dict[TaskId, TaskInputSnapshot]:
+        return {tid: self._snapshots[tid] for tid in task_ids if tid in self._snapshots}
 
 
 class FakeNodeRepository:
@@ -106,9 +116,9 @@ def _make_task(
     task_id: int = 1,
     status: TaskStatus = TaskStatus.TO_DO,
     allocated_node_id: NodeId | None = None,
-    input_entries: TaskInputSnapshot = (),
     extra: dict[str, object] | None = None,
 ) -> Task:
+    """Build a Task; input contents live in the repository snapshot, not the record."""
     from datetime import datetime
 
     if status is TaskStatus.TO_DO:
@@ -127,7 +137,6 @@ def _make_task(
         webhook_url=None,
         webhook_custom_params={},
         extra=extra or {},
-        input_entries=input_entries,
         created_at=datetime(2025, 1, 1),
         updated_at=datetime(2025, 1, 1),
     )
@@ -298,11 +307,8 @@ class TestQueryInputProjection:
 
     async def test_file_entries_keep_legacy_metadata_text_value(self) -> None:
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(
-                    input_entries=(TaskInputFile(path="fort.34", content=b"hello"),)
-                )
-            ],
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputFile(path="fort.34", content=b"hello"),)},
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -317,11 +323,8 @@ class TestQueryInputProjection:
     ) -> None:
         payload = b"\x00\xff"
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(
-                    input_entries=(TaskInputFile(path="blob.bin", content=payload),)
-                )
-            ],
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputFile(path="blob.bin", content=payload),)},
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -335,9 +338,8 @@ class TestQueryInputProjection:
 
     async def test_file_entries_keep_empty_legacy_metadata_value(self) -> None:
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(input_entries=(TaskInputFile(path="empty", content=b""),))
-            ],
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputFile(path="empty", content=b""),)},
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -348,7 +350,8 @@ class TestQueryInputProjection:
 
     async def test_directory_entries_are_absent_from_metadata(self) -> None:
         repo = FakeTaskRepository(
-            tasks=[_make_task(input_entries=(TaskInputDirectory(path="basis"),))],
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputDirectory(path="basis"),)},
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -361,11 +364,8 @@ class TestQueryInputProjection:
 
     async def test_input_path_never_overwrites_a_typed_field(self) -> None:
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(
-                    input_entries=(TaskInputFile(path="engine", content=b"g09"),)
-                )
-            ],
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputFile(path="engine", content=b"g09"),)},
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -399,7 +399,10 @@ class TestQueryInputProjection:
             TaskInputFile(path="INPUT", content=b"in"),
             TaskInputDirectory(path="basis"),
         )
-        repo = FakeTaskRepository(tasks=[_make_task(input_entries=unsorted_snapshot)])
+        repo = FakeTaskRepository(
+            tasks=[_make_task()],
+            snapshots={TaskId(1): unsorted_snapshot},
+        )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
 
@@ -411,15 +414,14 @@ class TestQueryInputProjection:
 
     async def test_file_entries_use_padded_standard_base64(self) -> None:
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(
-                    input_entries=(
-                        TaskInputFile(path="empty.bin", content=b""),
-                        TaskInputFile(path="hi.bin", content=b"hi"),
-                        TaskInputFile(path="a.bin", content=b"a"),
-                    )
+            tasks=[_make_task()],
+            snapshots={
+                TaskId(1): (
+                    TaskInputFile(path="empty.bin", content=b""),
+                    TaskInputFile(path="hi.bin", content=b"hi"),
+                    TaskInputFile(path="a.bin", content=b"a"),
                 )
-            ],
+            },
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -440,11 +442,8 @@ class TestQueryInputProjection:
     async def test_binary_file_content_round_trips_without_line_breaks(self) -> None:
         payload = bytes(range(256))
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(
-                    input_entries=(TaskInputFile(path="blob.bin", content=payload),)
-                )
-            ],
+            tasks=[_make_task()],
+            snapshots={TaskId(1): (TaskInputFile(path="blob.bin", content=payload),)},
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -463,14 +462,13 @@ class TestQueryInputProjection:
 
     async def test_directory_entries_carry_no_content(self) -> None:
         repo = FakeTaskRepository(
-            tasks=[
-                _make_task(
-                    input_entries=(
-                        TaskInputDirectory(path="basis"),
-                        TaskInputFile(path="basis/Si.orb", content=b"orb"),
-                    )
+            tasks=[_make_task()],
+            snapshots={
+                TaskId(1): (
+                    TaskInputDirectory(path="basis"),
+                    TaskInputFile(path="basis/Si.orb", content=b"orb"),
                 )
-            ],
+            },
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -491,19 +489,21 @@ class TestQueryInputProjection:
         repo = FakeTaskRepository(
             tasks=[
                 _make_task(
-                    input_entries=(
-                        TaskInputFile(path="fort.34", content=b"legacy bytes"),
-                        TaskInputFile(path="INPUT", content=b"in"),
-                        TaskInputDirectory(path="basis"),
-                    ),
                     extra={
                         "fort.34": "legacy text",
                         "INPUT": "legacy text",
                         "basis": "directory entry",
                         "user_note": "keep me",
-                    },
+                    }
                 )
             ],
+            snapshots={
+                TaskId(1): (
+                    TaskInputFile(path="fort.34", content=b"legacy bytes"),
+                    TaskInputFile(path="INPUT", content=b"in"),
+                    TaskInputDirectory(path="basis"),
+                )
+            },
         )
         uow = FakeUnitOfWork(repo)
         client = _build_client(uow)
@@ -544,9 +544,9 @@ class TestQueryInputProjection:
                     task_id=1,
                     status=TaskStatus.RUNNING,
                     allocated_node_id=NodeId(7),
-                    input_entries=(TaskInputFile(path="INPUT", content=b"in"),),
                 )
             ],
+            snapshots={TaskId(1): (TaskInputFile(path="INPUT", content=b"in"),)},
         )
         nodes_repo = FakeNodeRepository(nodes=[node])
         uow = FakeUnitOfWork(repo, nodes=nodes_repo)

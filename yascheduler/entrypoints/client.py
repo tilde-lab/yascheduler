@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping, Sequence
     from pathlib import PurePath
 
+    from yascheduler.domain import TaskInputSnapshot
     from yascheduler.entrypoints.config import Config
 __all__ = ["Yascheduler"]
 
@@ -104,9 +105,13 @@ def _legacy_input_metadata_value(content: bytes) -> str:
 
 
 # region FUNC__task_to_dict
-# PURPOSE: Project a Task plus its optional allocated Node into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId; inputs project top-level as `input_entries` while metadata keeps legacy filename/value file keys for consumer compatibility.
-# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; entries ordered by task-relative path; file entries stay visible in metadata under their legacy encoding (old CLI: UTF-8 text, else base64), derived from the immutable snapshot — never a second stored copy; pre-migration `extra` copies of input keys (the normalizer and the forward migration strip them) keep precedence over derived values while they exist; directories never appear in metadata; typed fields are never overwritten by input paths.
-def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, Any]:
+# PURPOSE: Project a Task plus its optional allocated Node and its input snapshot into a flat JSON-serializable mapping so the public client API returns plain dicts to sync callers that cannot see domain value objects like TaskId / NodeId; inputs project top-level as `input_entries` while metadata keeps legacy filename/value file keys for consumer compatibility.
+# INVARIANTS: Exactly the top-level keys task_id/label/status/metadata/input_entries/node; the snapshot comes from the query's explicit batched read, never from the task record; entries ordered by task-relative path; file entries stay visible in metadata under their legacy encoding (old CLI: UTF-8 text, else base64), derived from the immutable snapshot — never a second stored copy; pre-migration `extra` copies of input keys (the normalizer and the forward migration strip them) keep precedence over derived values while they exist; directories never appear in metadata; typed fields are never overwritten by input paths.
+def _task_to_dict(
+    t: AnyTask,
+    nodes_by_id: dict[NodeId, Node],
+    snapshot: TaskInputSnapshot = (),
+) -> Mapping[str, Any]:
     allocated_node_id = allocated_node_id_of(t)
     node = nodes_by_id.get(allocated_node_id) if allocated_node_id else None
     metadata: dict[str, Any] = {"engine": t.engine}
@@ -131,7 +136,7 @@ def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, A
     # metadata view is derived from the immutable entries, so queries keep the
     # legacy shape without a second stored copy. Keys already present
     # (typed fields or a transitional extra copy) keep their value.
-    for entry in t.input_entries:
+    for entry in snapshot:
         if not isinstance(entry, TaskInputFile):
             continue
         if entry.path in metadata:
@@ -145,7 +150,7 @@ def _task_to_dict(t: AnyTask, nodes_by_id: dict[NodeId, Node]) -> Mapping[str, A
         "metadata": metadata,
         "input_entries": [
             _input_entry_to_public(entry)
-            for entry in sorted(t.input_entries, key=lambda entry: entry.path)
+            for entry in sorted(snapshot, key=lambda entry: entry.path)
         ],
         "node": (
             {
@@ -265,8 +270,12 @@ class Yascheduler:
         # before crossing into the use case (public jobs: list[int] preserved).
         job_ids: list[TaskId] | None = [TaskId(i) for i in jobs] if jobs else None
         deps = self._deps_factory(self.config)
-        tasks, nodes_by_id = await query_tasks(job_ids, statuses, deps.uow_factory)
-        return [_task_to_dict(t, nodes_by_id) for t in tasks]
+        tasks, nodes_by_id, snapshots = await query_tasks(
+            job_ids, statuses, deps.uow_factory
+        )
+        return [
+            _task_to_dict(t, nodes_by_id, snapshots.get(t.task_id, ())) for t in tasks
+        ]
 
     # endregion METHOD_queue_get_tasks_async
 

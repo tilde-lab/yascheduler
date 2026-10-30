@@ -316,12 +316,23 @@ async def test_task_input_snapshot_survives_source_removal_and_deployment(
     assert projection["metadata"]["tags"] == _EXTRA_METADATA["tags"]
     assert projection["metadata"]["nested"] == _EXTRA_METADATA["nested"]
     assert projection["metadata"]["local_folder"] == str(source_dir)
+    # Legacy metadata: text inputs keep their UTF-8 value, binary ones base64,
+    # both derived from the snapshot the query read explicitly.
+    assert projection["metadata"]["INPUT"] == _TEXT_INPUT.decode()
+    assert projection["metadata"]["basis/.cache/key.bin"] == base64.b64encode(
+        _BINARY_INPUT
+    ).decode("ascii")
 
     async with uow_factory() as uow:
         persisted = await uow.tasks.get(TaskId(task_id))
-    assert persisted is not None
-    assert _snapshot_mapping(persisted.input_entries) == _EXPECTED_TREE
-    assert persisted.extra == _EXTRA_METADATA
+        assert persisted is not None
+        assert persisted.extra == _EXTRA_METADATA
+        # The record itself carries no input contents; the explicit per-task
+        # stream returns the accepted tree.
+        accepted_entries = [
+            entry async for entry in uow.tasks.iter_input_entries(TaskId(task_id))
+        ]
+    assert _snapshot_mapping(accepted_entries) == _EXPECTED_TREE
 
     spawn_calls: list[tuple[str, str | None]] = []
     spawn_failures: list[str] = []
@@ -370,7 +381,9 @@ async def test_task_input_snapshot_survives_source_removal_and_deployment(
         assert "run.sh" in spawn_calls[0][0]
         assert task.status == TaskStatus.DONE
         assert error_of(task) is None
-        assert _snapshot_mapping(task.input_entries) == _EXPECTED_TREE
+        async with uow_factory() as uow:
+            snapshots = await uow.tasks.list_input_snapshots([TaskId(task_id)])
+        assert _snapshot_mapping(snapshots[TaskId(task_id)]) == _EXPECTED_TREE
         assert task.extra == _EXTRA_METADATA
 
         output_file = source_dir / "result.out"

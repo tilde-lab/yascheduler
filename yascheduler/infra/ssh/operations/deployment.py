@@ -26,15 +26,16 @@ from yascheduler.domain import (
     TaskId,
     TaskInputFile,
     UnsafeTaskPathError,
-    normalize_input_snapshot,
+    validate_task_path,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from pathlib import PurePath
 
     from asyncssh.sftp import SFTPClient
 
-    from yascheduler.domain import Engine, MachineSession, RunningTask
+    from yascheduler.domain import Engine, MachineSession, RunningTask, TaskInputEntry
 
 __all__ = ["TaskDeployer"]
 
@@ -163,28 +164,26 @@ class TaskDeployer:
         """Stateless deployer — no initialisation needed."""
 
     # region METHOD__upload_task_data
-    # PURPOSE: Reconstruct the task's stored input tree under the remote task root — directories parent-first, then exact file bytes — from the immutable snapshot, without consulting live engine input declarations or task metadata.
-    # INVARIANTS: Stored entries are re-validated at this trust boundary (normalize_input_snapshot rejects unsafe/duplicate/conflicting paths and orders parents before descendants); each entry's destination is joined component-wise in the remote platform's path flavor and lstat-checked without following links — symbolic links and file/directory conflicts fail with the offending path, while an existing ordinary file at a file path is replaced; the whole tree is uploaded before this returns. The ancestor checks are leaf-per-entry by design: normalize_input_snapshot materializes every parent directory entry, so each in-tree ancestor is itself lstat-checked — symlinked ancestors are caught through their own materialized entries. Ancestors above the task root are scheduler-controlled (resolved through realpath at session level) and are deliberately not re-inspected per deploy, per the accepted-risk clause on non-atomic SFTP type checks.
+    # PURPOSE: Reconstruct the task's stored input tree under the remote task root — directories parent-first, then exact file bytes — from the streamed snapshot entries, without consulting live engine input declarations or task metadata and without ever holding the whole snapshot in memory.
+    # INVARIANTS: Entries arrive from the store's keyset stream in C-collation path order (parent before descendants); each entry path is re-validated at this trust boundary (validate_task_path) before the remote write — unsafe paths must not reach SFTP path joining even if storage were corrupted; each entry's destination is joined component-wise in the remote platform's path flavor and lstat-checked without following links — symbolic links and file/directory conflicts fail with the offending path, while an existing ordinary file at a file path is replaced; a failing entry fails the transfer after its predecessors were written (a retry overwrites the partial tree). The ancestor checks are leaf-per-entry by design: the normalized snapshot materializes every parent directory entry, so each in-tree ancestor is itself lstat-checked — symlinked ancestors are caught through their own materialized entries. Ancestors above the task root are scheduler-controlled (resolved through realpath at session level) and are deliberately not re-inspected per deploy, per the accepted-risk clause on non-atomic SFTP type checks.
     async def _upload_task_data(
         self,
         session: MachineSession,
         task: RunningTask,
         remote_dir: PurePath,
+        entries: AsyncIterator[TaskInputEntry],
     ) -> bool:
 
         # region BLOCK_upload
-        # Trust boundary: re-validate the stored snapshot before any remote
-        # write — unsafe paths, duplicates, and kind conflicts must not reach
-        # SFTP path joining even if storage or hydration were corrupted.
+        # Trust boundary: validate each entry's stored path before its remote
+        # write — an unsafe path must not reach SFTP path joining even if
+        # storage were corrupted. Per-entry validation replaces the former
+        # whole-snapshot re-validation: a corrupt row now fails
+        # after its predecessors reached the machine, and the retry overwrites.
         path = "."
         entry_count = 0
-        logger.debug(
-            "UPLOAD_INPUTS",
-            extra={"task_id": task.task_id.value, "entry_count": entry_count},
-        )
+        logger.debug("UPLOAD_INPUTS", extra={"task_id": task.task_id.value})
         try:
-            entries = normalize_input_snapshot(task.input_entries)
-            entry_count = len(entries)
             async with session.open_sftp() as sftp:
                 # Check the task root before creating it so a pre-existing symlink
                 # or a regular file at the root path fails with the same
@@ -197,8 +196,9 @@ class TaskDeployer:
                 )
                 await _make_remote_directory(sftp, remote_dir, task.task_id)
 
-                for entry in entries:
-                    path = entry.path
+                async for entry in entries:
+                    path = validate_task_path(entry.path)
+                    entry_count += 1
                     target = remote_dir.joinpath(*path.split("/"))
                     # Confinement guard: a component like ``a:b`` is drive-parsed
                     # by the Windows path flavor and would discard the task root
@@ -296,6 +296,7 @@ class TaskDeployer:
         session: MachineSession,
         engine: Engine,
         task: RunningTask,
+        entries: AsyncIterator[TaskInputEntry],
         ncpus: int,
         engines_dir: PurePath,
     ) -> bool:
@@ -332,6 +333,7 @@ class TaskDeployer:
                         session,
                         task,
                         task_dir,
+                        entries,
                     )
                 except Exception as err:
                     # Traceback would leak arbitrary exception content.
