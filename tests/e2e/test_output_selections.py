@@ -2,20 +2,20 @@
 # PURPOSE: Prove through real PostgreSQL + SSH that output selections accepted with a task remain authoritative after the engine configuration changes and survive persistence, allocation, and retrieval.
 # SCOPE: Isolated test_shell engine with an output set changed between submission and daemon start; parameterized added and removed selections; exact local files and bytes; persisted record equality; task DONE outcome; and a task-sourced resolution log.
 # INVARIANTS: Expected output bytes are independent literals in this module; each case uses its own remote/local roots and leaves live cloud providers untouched; the daemon reads config B while the task keeps config A's selection record.
-# DEPENDENCIES: USES API: testcontainers (PostgreSQL + SSH), Yascheduler client, CLI node management, make_daemon.
+# DEPENDENCIES: USES API: testcontainers (PostgreSQL + SSH), Yascheduler client, CLI node management, make_daemon, tests.e2e.helpers (daemon teardown).
 # KEYWORDS: e2e, output selections, acceptance record, config change, postgres, ssh
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
 
+from tests.e2e.helpers import stop_orchestrator
 from tests.log_assertions import extra_fields
 from yascheduler.domain.model import TaskId, TaskStatus
 from yascheduler.entrypoints import Config, Yascheduler
@@ -121,24 +121,6 @@ async def _wait_for_done(
 
 
 # endregion FUNC__wait_for_done
-
-
-# region FUNC__stop_orchestrator
-# PURPOSE: Stop the real daemon and collect its task without leaking a hanging task on failure.
-async def _stop_orchestrator(
-    orchestrator: Orchestrator,
-    orch_task: asyncio.Task[None],
-) -> None:
-    await orchestrator.stop()
-    try:
-        await asyncio.wait_for(orch_task, timeout=10)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        orch_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await orch_task
-
-
-# endregion FUNC__stop_orchestrator
 
 
 # region FUNC_test_recorded_output_selections_survive_engine_config_change
@@ -262,7 +244,7 @@ async def test_recorded_output_selections_survive_engine_config_change(
         )
     finally:
         if orchestrator is not None and orch_task is not None:
-            await _stop_orchestrator(orchestrator, orch_task)
+            await stop_orchestrator(orchestrator, orch_task)
 
 
 # endregion FUNC_test_recorded_output_selections_survive_engine_config_change

@@ -2,6 +2,7 @@
 # PURPOSE: Prove through the real PostgreSQL + SSH daemon that recursive output retrieval preserves a tree-producing engine's task-relative layout in the local result folder, cleans the remote tree only after the terminal transition, and keeps the defer/finalise lifecycle for tree selections.
 # SCOPE: Tree engine e2e — a declared directory plus an overlapping glob and an explicit root file in one clean pass; a mixed transient/permanent pass that defers; a later clean pass that finalises; cleanup-ordering evidence captured inside cleanup_remote; exact local layout/bytes; and per-entry resolution logs.
 # INVARIANTS: Expected bytes and relative paths are independent literals in this module. Observations recorded inside daemon hooks are asserted outside them, because consume_task swallows cleanup exceptions and could otherwise hide a failed assertion. No ABACUS binary, parser change, or cloud account is involved.
+# DEPENDENCIES: USES API: tests.e2e.helpers (node setup, polling, event capture, remote probes, daemon teardown).
 # KEYWORDS: e2e, output tree, recursive retrieval, selections, glob overlap, cleanup ordering, defer, finalise
 # endregion MODULE_CONTRACT
 
@@ -13,32 +14,33 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from asyncssh.sftp import SFTPFailure, SFTPNoSuchFile
+from asyncssh.sftp import SFTPFailure
 
+from tests.e2e.helpers import (
+    capture_events,
+    cleanup_node,
+    remote_path_exists,
+    setup_node_and_submit,
+    stop_orchestrator,
+    task_or_fail,
+    terminal_events_for,
+    wait_remote_path_absent,
+    wait_status,
+    wait_until,
+)
 from tests.log_assertions import extra_fields
-from yascheduler.application import MessageBus
 from yascheduler.domain import (
-    DomainEvent,
     TaskCompleted,
-    TaskFailed,
     allocated_node_id_of,
 )
-from yascheduler.domain.model import (
-    NewNode,
-    Node,
-    NodeId,
-    Task,
-    TaskId,
-)
+from yascheduler.domain.model import TaskId
 from yascheduler.domain.model import TaskStatus as DomainTaskStatus
-from yascheduler.entrypoints.di import make_cli_deps, make_daemon
-from yascheduler.infra.ssh.repository import SSHMachineRepository
+from yascheduler.entrypoints.di import make_daemon
 from yascheduler.infra.ssh.session import SSHMachineSession
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from yascheduler.application.orchestrator import Orchestrator
     from yascheduler.domain import MachineSession
     from yascheduler.entrypoints import Config
     from yascheduler.infra.persistence.postgres_uow import PostgresUnitOfWork
@@ -63,194 +65,6 @@ _RESULT_TREE: dict[str, bytes | None] = {
     "root.dat": _ROOT_RESULT,
 }
 _MISSING_SELECTION = "missing.out"
-
-
-# region FUNC__setup_node_and_submit
-# PURPOSE: Insert an SSH node, deploy every configured engine, and submit one task for the tree engine so the test exercises the real allocation/upload/spawn/consume path.
-async def _setup_node_and_submit(
-    e2e_config: Config,
-    uow_factory: Callable[[], PostgresUnitOfWork],
-    ssh_container: dict[str, Any],
-) -> TaskId:
-    """Connect, deploy engines, add a node row, submit a task. Returns task_id."""
-    async with uow_factory() as uow:
-        db_node = await uow.nodes.insert(
-            NewNode(
-                hostname=ssh_container["host"],
-                username=ssh_container["username"],
-                port=ssh_container["port"],
-                enabled=True,
-                ncpus=None,
-            ),
-        )
-        await uow.commit()
-
-    repository = SSHMachineRepository()
-    session = await repository.connect(
-        node=db_node,
-        client_keys=[ssh_container["key_path"]],
-        data_dir=e2e_config.remote.data_dir,
-        engines_dir=e2e_config.remote.engines_dir,
-        tasks_dir=e2e_config.remote.tasks_dir,
-    )
-    await session.setup_node(e2e_config.engines)
-    await repository.disconnect(db_node.node_id)
-
-    deps = make_cli_deps(e2e_config)
-    task_id = await deps.submit(
-        "e2e output tree test",
-        {_INPUT_NAME: _INPUT_TEXT},
-        _ENGINE,
-    )
-    assert task_id.value > 0
-    return task_id
-
-
-# endregion FUNC__setup_node_and_submit
-
-
-# region FUNC__wait_status
-# PURPOSE: Poll a fresh UoW until the task reaches the target status so the test never inspects a stale snapshot.
-async def _wait_status(
-    uow_factory: Callable[[], PostgresUnitOfWork],
-    task_id: TaskId,
-    target: DomainTaskStatus,
-    timeout_s: float = 45.0,
-) -> Task | None:
-    """Poll until task reaches target status or timeout. Returns the task."""
-    deadline = asyncio.get_running_loop().time() + timeout_s
-    task = None
-    while asyncio.get_running_loop().time() < deadline:
-        async with uow_factory() as uow:
-            task = await uow.tasks.get(task_id)
-        if task and task.status == target:
-            return task
-        await asyncio.sleep(0.25)
-    return task
-
-
-# endregion FUNC__wait_status
-
-
-# region FUNC__capture_events
-# PURPOSE: Record domain events dispatched by every UoW commit in this test so cleanup ordering can be checked against the terminal transition.
-def _capture_events(monkeypatch: pytest.MonkeyPatch) -> list[DomainEvent]:
-    """Record domain events dispatched by every UoW commit in this test."""
-    events: list[DomainEvent] = []
-    real_dispatch = MessageBus.dispatch
-
-    async def capture_dispatch(
-        bus: MessageBus,
-        domain_events: Sequence[DomainEvent],
-    ) -> None:
-        events.extend(domain_events)
-        await real_dispatch(bus, domain_events)
-
-    monkeypatch.setattr(MessageBus, "dispatch", capture_dispatch)
-    return events
-
-
-# endregion FUNC__capture_events
-
-
-# region FUNC__terminal_events_for
-# PURPOSE: Select the task's terminal events so tests can count them exactly.
-def _terminal_events_for(
-    events: Sequence[DomainEvent],
-    task_id: TaskId,
-) -> list[DomainEvent]:
-    return [
-        event
-        for event in events
-        if event.task_id == task_id and isinstance(event, (TaskCompleted, TaskFailed))
-    ]
-
-
-# endregion FUNC__terminal_events_for
-
-
-# region FUNC__wait_until
-# PURPOSE: Await a same-event-loop predicate without sleeping on wall-clock assumptions.
-async def _wait_until(
-    predicate: Callable[[], bool],
-    timeout_s: float = 15.0,
-) -> bool:
-    deadline = asyncio.get_running_loop().time() + timeout_s
-    while asyncio.get_running_loop().time() < deadline:
-        if predicate():
-            return True
-        await asyncio.sleep(0.05)
-    return predicate()
-
-
-# endregion FUNC__wait_until
-
-
-# region FUNC__remote_path_exists
-# PURPOSE: Read one remote path through a fresh SSH session so tests can assert the task directory's lifecycle independently of the daemon's sessions.
-async def _remote_path_exists(
-    ssh_container: dict[str, Any],
-    remote_path: str,
-) -> bool:
-    repository = SSHMachineRepository()
-    node = Node(
-        node_id=NodeId(9999),
-        hostname=ssh_container["host"],
-        ncpus=None,
-        enabled=True,
-        cloud=None,
-        username=ssh_container["username"],
-        port=ssh_container["port"],
-    )
-    session = await repository.connect(
-        node=node,
-        client_keys=[ssh_container["key_path"]],
-    )
-    try:
-        async with session.open_sftp() as sftp:
-            try:
-                await sftp.stat(str(session.path(remote_path)))
-            except SFTPNoSuchFile:
-                return False
-            return True
-    finally:
-        await repository.disconnect(session.machine.node_id)
-
-
-# endregion FUNC__remote_path_exists
-
-
-# region FUNC__wait_remote_path_absent
-# PURPOSE: Poll until the remote task directory is gone so cleanup is observed as an asynchronous consequence of finalisation rather than a race.
-async def _wait_remote_path_absent(
-    ssh_container: dict[str, Any],
-    remote_path: str,
-    timeout_s: float = 15.0,
-) -> bool:
-    deadline = asyncio.get_running_loop().time() + timeout_s
-    while asyncio.get_running_loop().time() < deadline:
-        if not await _remote_path_exists(ssh_container, remote_path):
-            return True
-        await asyncio.sleep(0.05)
-    return not await _remote_path_exists(ssh_container, remote_path)
-
-
-# endregion FUNC__wait_remote_path_absent
-
-
-# region FUNC__task_or_fail
-# PURPOSE: Load the task or fail the test instead of dereferencing a missing row.
-async def _task_or_fail(
-    uow_factory: Callable[[], PostgresUnitOfWork],
-    task_id: TaskId,
-) -> Task:
-    async with uow_factory() as uow:
-        task = await uow.tasks.get(task_id)
-    assert task is not None
-    return task
-
-
-# endregion FUNC__task_or_fail
 
 
 # region FUNC__local_tree
@@ -304,8 +118,15 @@ async def test_output_tree_lands_nested_layout_and_cleans_after_finalisation(
     log_records: list[logging.LogRecord],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    task_id = await _setup_node_and_submit(e2e_config, uow_factory, ssh_container)
-    events = _capture_events(monkeypatch)
+    task_id = await setup_node_and_submit(
+        e2e_config,
+        uow_factory,
+        ssh_container,
+        engine=_ENGINE,
+        inputs={_INPUT_NAME: _INPUT_TEXT},
+        label="e2e output tree test",
+    )
+    events = capture_events(monkeypatch)
     orchestrator = await make_daemon(e2e_config)
     task_id_from_setup = task_id
 
@@ -348,9 +169,7 @@ async def test_output_tree_lands_nested_layout_and_cleans_after_finalisation(
         cleanup_observations.append(
             {
                 "remote_dir": remote_dir,
-                "terminal_events": len(
-                    _terminal_events_for(events, task_id_from_setup)
-                ),
+                "terminal_events": len(terminal_events_for(events, task_id_from_setup)),
                 "status": finalised_task.status if finalised_task else None,
                 "nested": _read_bytes_if_file(
                     local_folder / "OUT.aiida/nested/result.dat"
@@ -360,7 +179,7 @@ async def test_output_tree_lands_nested_layout_and_cleans_after_finalisation(
                 "root": _read_bytes_if_file(local_folder / "root.dat")
                 if local_folder
                 else None,
-                "remote_present": await _remote_path_exists(ssh_container, remote_dir),
+                "remote_present": await remote_path_exists(ssh_container, remote_dir),
             },
         )
         await real_cleanup(
@@ -378,21 +197,21 @@ async def test_output_tree_lands_nested_layout_and_cleans_after_finalisation(
         assert len(spawn_cwds) == 1, "the tree engine must spawn exactly once"
         # The task directory exists while the task is still pending/RUNNING;
         # cleanup has not had a chance to remove it.
-        pre_terminal = await _task_or_fail(uow_factory, task_id)
+        pre_terminal = await task_or_fail(uow_factory, task_id)
         assert pre_terminal.status in (
             DomainTaskStatus.TO_DO,
             DomainTaskStatus.RUNNING,
         )
-        assert await _remote_path_exists(ssh_container, spawn_cwds[0]), (
+        assert await remote_path_exists(ssh_container, spawn_cwds[0]), (
             "the remote task directory must exist before retrieval/finalisation"
         )
 
-        task = await _wait_status(uow_factory, task_id, DomainTaskStatus.DONE)
+        task = await wait_status(uow_factory, task_id, DomainTaskStatus.DONE)
 
         assert task is not None, "Task did not reach DONE"
         assert task.status == DomainTaskStatus.DONE
         assert task.state.error is None
-        assert await _wait_until(lambda: len(cleanup_observations) == 1), (
+        assert await wait_until(lambda: len(cleanup_observations) == 1), (
             "cleanup_remote must run exactly once after finalisation"
         )
         assert len(cleanup_calls) == 1
@@ -409,7 +228,7 @@ async def test_output_tree_lands_nested_layout_and_cleans_after_finalisation(
             "cleanup must observe exactly one terminal event and the already "
             f"downloaded local tree; got {cleanup_observations}"
         )
-        assert await _wait_remote_path_absent(ssh_container, cleanup_calls[0]), (
+        assert await wait_remote_path_absent(ssh_container, cleanup_calls[0]), (
             "finalisation must remove the remote task directory"
         )
 
@@ -445,17 +264,17 @@ async def test_output_tree_lands_nested_layout_and_cleans_after_finalisation(
 
         node_id = allocated_node_id_of(task)
         assert node_id is not None
-        assert await _wait_until(lambda: task_id not in orchestrator._tracker)
-        assert await _wait_until(
+        assert await wait_until(lambda: task_id not in orchestrator._tracker)
+        assert await wait_until(
             lambda: node_id not in orchestrator._occupancy_started
         ), "occupancy slot must be released at finalisation"
 
-        terminal_events = _terminal_events_for(events, task_id)
+        terminal_events = terminal_events_for(events, task_id)
         assert len(terminal_events) == 1
         assert isinstance(terminal_events[0], TaskCompleted)
     finally:
-        await _stop_orchestrator(orchestrator, orch_task)
-        await _cleanup_node(uow_factory, ssh_container)
+        await stop_orchestrator(orchestrator, orch_task)
+        await cleanup_node(uow_factory, ssh_container)
 
 
 # endregion FUNC_test_output_tree_lands_nested_layout_and_cleans_after_finalisation
@@ -469,8 +288,15 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
     ssh_container: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    task_id = await _setup_node_and_submit(e2e_config, uow_factory, ssh_container)
-    events = _capture_events(monkeypatch)
+    task_id = await setup_node_and_submit(
+        e2e_config,
+        uow_factory,
+        ssh_container,
+        engine=_ENGINE,
+        inputs={_INPUT_NAME: _INPUT_TEXT},
+        label="e2e output tree test",
+    )
+    events = capture_events(monkeypatch)
     orchestrator = await make_daemon(e2e_config)
     task_id_from_setup = task_id
 
@@ -554,14 +380,14 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
         await asyncio.wait_for(first_pass_seen.wait(), timeout=30)
         await asyncio.wait_for(second_pass_started.wait(), timeout=30)
 
-        task = await _task_or_fail(uow_factory, task_id)
+        task = await task_or_fail(uow_factory, task_id)
         assert task.status == DomainTaskStatus.RUNNING, (
             f"mixed transient+permanent pass must defer, got {task.status}"
         )
-        assert not _terminal_events_for(events, task_id)
+        assert not terminal_events_for(events, task_id)
         assert cleanup_calls == [], "a deferred pass must not clean the remote dir"
         assert remote_dirs, "download_outputs was never called"
-        assert await _remote_path_exists(ssh_container, remote_dirs[0]), (
+        assert await remote_path_exists(ssh_container, remote_dirs[0]), (
             "mixed transient+permanent errors must preserve the remote directory"
         )
         assert [entry[0] for entry in first_permanent] == [_MISSING_SELECTION], (
@@ -581,7 +407,7 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
         )
 
         allow_second_pass.set()
-        task = await _wait_status(uow_factory, task_id, DomainTaskStatus.DONE)
+        task = await wait_status(uow_factory, task_id, DomainTaskStatus.DONE)
 
         assert task is not None, "Task did not reach DONE"
         assert task.status == DomainTaskStatus.DONE
@@ -594,62 +420,20 @@ async def test_output_tree_mixed_errors_defer_then_clean_pass_finalises(
         local_folder = task.local_folder
         assert local_folder, "Task metadata missing local_folder"
         assert _local_tree(Path(str(local_folder))) == _RESULT_TREE
-        assert await _wait_until(lambda: len(cleanup_calls) == 1), (
+        assert await wait_until(lambda: len(cleanup_calls) == 1), (
             "cleanup_remote must run exactly once after finalisation"
         )
-        assert await _wait_remote_path_absent(ssh_container, cleanup_calls[0]), (
+        assert await wait_remote_path_absent(ssh_container, cleanup_calls[0]), (
             "finalisation must remove the remote task directory"
         )
 
-        terminal_events = _terminal_events_for(events, task_id)
+        terminal_events = terminal_events_for(events, task_id)
         assert len(terminal_events) == 1
         assert isinstance(terminal_events[0], TaskCompleted)
     finally:
         allow_second_pass.set()
-        await _stop_orchestrator(orchestrator, orch_task)
-        await _cleanup_node(uow_factory, ssh_container)
+        await stop_orchestrator(orchestrator, orch_task)
+        await cleanup_node(uow_factory, ssh_container)
 
 
 # endregion FUNC_test_output_tree_mixed_errors_defer_then_clean_pass_finalises
-
-
-# region FUNC__stop_orchestrator
-# PURPOSE: Stop the real daemon and collect its task without leaking a hanging task on failure.
-async def _stop_orchestrator(
-    orchestrator: Orchestrator,
-    orch_task: asyncio.Task[None],
-) -> None:
-    await orchestrator.stop()
-    try:
-        await asyncio.wait_for(orch_task, timeout=10)
-    except (asyncio.CancelledError, asyncio.TimeoutError):
-        orch_task.cancel()
-
-
-# endregion FUNC__stop_orchestrator
-
-
-# region FUNC__cleanup_node
-# PURPOSE: Remove the test node row and abandon any RUNNING task bound to it so a failed test cannot poison the next one.
-async def _cleanup_node(
-    uow_factory: Callable[[], PostgresUnitOfWork],
-    ssh_container: dict[str, Any],
-) -> None:
-    async with uow_factory() as uow:
-        all_nodes = await uow.nodes.list_all()
-        matching = [n for n in all_nodes if n.hostname == ssh_container["host"]]
-        if matching:
-            node_id = matching[0].node_id
-            # Abandon any RUNNING tasks on this node before removing it.
-            # task_status_field_invariants CHECK forbids RUNNING with NULL
-            # allocated_node_id, so the FK ON DELETE SET NULL would violate it.
-            running = await uow.tasks.list_running()
-            for running_task in running:
-                if running_task.state.allocated_node_id == node_id:
-                    abandoned = running_task.abandon(error="test cleanup")
-                    await uow.tasks.save(abandoned)
-            await uow.nodes.remove(node_id)
-        await uow.commit()
-
-
-# endregion FUNC__cleanup_node
