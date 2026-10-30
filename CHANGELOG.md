@@ -91,6 +91,12 @@
 - **logging**: input capture, persistence, and deployment emit structured block
   records with task and path identity; input-transfer diagnostics carry no file
   payloads and no exception text.
+- **inputs**: the selection language now has one implementation. Whether an
+  entry matches, whether anything can still match below a directory, and
+  whether a selection component names an entry are three answers from one
+  domain state machine; local capture asks them instead of re-deriving the
+  pattern while it scans, so no component matching lives outside the domain.
+  Matching, error messages, and the accepted snapshot are unchanged.
 
 ## v2.0.2 (2026-10-08)
 

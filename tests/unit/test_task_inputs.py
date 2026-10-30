@@ -1,7 +1,7 @@
 # region MODULE_CONTRACT
-# PURPOSE: Verify the task-input contracts of task-input-snapshots tasks 1.1–1.2 — entry value objects, kind discrimination, submission-record input defaults, facade exports, path/selection validation, component-aware glob matching, and snapshot normalization — so the shared selection language stays pinned while later tasks build capture on top.
-# SCOPE: TaskInputFile/TaskInputDirectory value semantics; NewTask input_entries default and round-trip; canonical path validation rejections; selection matching for literal/`*`/`?`/class/`**` patterns, hidden names, and kind rules; normalize_input_snapshot materialization, deduplication, ordering, and conflict rejection.
-# KEYWORDS: task inputs, snapshot, entry kinds, selection, glob, path validation
+# PURPOSE: Pin the shared task-input contracts — entry value objects, kind discrimination, submission-record input defaults, canonical path and selection validation, the glob language and the traversal questions asked over it, missing-declaration reporting, and snapshot normalization — so capture, boundary normalization, submit validation, deployment, and legacy conversion cannot drift apart.
+# SCOPE: TaskInputFile/TaskInputDirectory value semantics and kind discrimination; NewTask input_entries default and round-trip; submission-record contracts; facade exports; canonical path validation rejections; selection matching for literal/`*`/`?`/class/`**` patterns, hidden names, and kind rules; whether anything can still match below a directory and whether a selection component names an entry; normalize_input_snapshot materialization, deduplication, ordering, and conflict rejection; capture error shape.
+# KEYWORDS: task inputs, snapshot, entry kinds, selection, glob, reachability, path validation
 # endregion MODULE_CONTRACT
 
 import pytest
@@ -19,6 +19,8 @@ from yascheduler.domain import (
     ValidationError,
     normalize_input_snapshot,
     selection_matches,
+    selection_names_entry,
+    selection_reaches,
     validate_selection,
     validate_snapshot_selections,
     validate_task_path,
@@ -302,6 +304,59 @@ class TestSelectionMatchesDoubleStar:
         """`**` matches directory entries; the caller expands their subtrees."""
         assert selection_matches("**", "basis", TaskInputKind.DIRECTORY)
         assert not selection_matches("basis/**", "basis/Si.orb", TaskInputKind.FILE)
+
+
+class TestSelectionReaches:
+    """Descent asks whether anything below a directory can still match."""
+
+    def test_literal_selection_reaches_below_its_parent_only(self) -> None:
+        assert selection_reaches("a/b", "")
+        assert selection_reaches("a/b", "a")
+        assert not selection_reaches("a/b", "a/b")
+        assert not selection_reaches("a/b", "c")
+
+    def test_glob_component_must_cover_the_prefix(self) -> None:
+        assert selection_reaches("*.txt", "")
+        assert not selection_reaches("*.txt", "sub")
+        assert selection_reaches("dir/*/x", "dir")
+
+    def test_double_star_reaches_everywhere(self) -> None:
+        assert selection_reaches("**", "")
+        assert selection_reaches("**", "a/b")
+        assert selection_reaches("a/**", "a")
+        assert selection_reaches("a/**", "a/b/c")
+
+    def test_middle_double_star_reaches_below_any_level(self) -> None:
+        assert selection_reaches("a/**/b", "a")
+        assert selection_reaches("a/**/b", "a/x/y")
+        assert not selection_reaches("a/**/b", "z")
+
+    def test_reaches_differs_from_matching_the_path_itself(self) -> None:
+        assert selection_matches("a", "a", TaskInputKind.DIRECTORY)
+        assert not selection_reaches("a", "a")
+
+
+class TestSelectionNamesEntry:
+    """An untransferable entry is rejected only when a component names it."""
+
+    def test_literal_component_names_the_entry(self) -> None:
+        assert selection_names_entry("a", "", "a")
+        assert not selection_names_entry("a", "", "b")
+
+    def test_glob_component_names_the_entry(self) -> None:
+        assert selection_names_entry("*.txt", "", "x.txt")
+        assert selection_names_entry("dir/*", "dir", "x")
+        assert not selection_names_entry("dir/*", "other", "x")
+
+    def test_double_star_names_nothing(self) -> None:
+        assert not selection_names_entry("**", "", "anything")
+        assert not selection_names_entry("a/**", "a", "anything")
+        assert not selection_names_entry("**", "a", "anything")
+
+    def test_nested_component_names_at_its_depth(self) -> None:
+        assert selection_names_entry("a/**/b", "a/x", "b")
+        assert not selection_names_entry("a/**/b", "a/x", "c")
+        assert selection_names_entry("**/x", "", "x")
 
 
 class TestValidateSnapshotSelections:

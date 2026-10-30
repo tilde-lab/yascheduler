@@ -3,13 +3,15 @@
 # PURPOSE: Give task-owned inputs one typed, engine-independent model — validated task-relative paths, component-aware glob selection, and immutable snapshot entries — so submission capture, normalization, persistence, and deployment share a single contract.
 # SCOPE:
 # - Value objects TaskInputFile/TaskInputDirectory, the TaskInputEntry union, the TaskInputSnapshot alias, and the TaskInputKind discriminator.
-# - Pure selection rules: explicit path validation, selection validation, and per-component matching over relative paths and entry kinds.
+# - Pure selection rules: explicit path validation, selection validation, and the glob language itself — whether an entry matches, whether anything can still match below a directory, and which component names an entry.
 # - Snapshot normalization: materializing missing parents, rejecting duplicates and kind conflicts, copying to an immutable tuple.
 # - NOT: filesystem traversal and byte reads (infra local-input module), engine input declarations, SQL storage, or SFTP deployment.
 # INVARIANTS: No filesystem, SQL, SSH, or config imports — pure data and rules only; every exported rule is total over validated input and raises a domain ValidationError subclass otherwise; entry contents are bytes and are never decoded here.
 # RATIONALE:
 # - Q: Why in the domain layer instead of the entrypoints normalizer or infra capture?
 #   A: The selection language and snapshot invariants are scheduler business rules consumed by several layers (capture, boundary normalization, submit validation, deployment). Keeping them pure in the domain prevents each consumer from re-implementing these semantics.
+# - Q: Why three questions over the language instead of one matcher?
+#   A: A tree walk needs more than "does this entry qualify": it needs to know whether descending can still find anything, and whether an untransferable entry is what the pattern named. Answering only the first forced every tree consumer to re-derive the other two, and the traversal rules drifted copy by copy. All three now read one state machine.
 # - Q: Why does a kind property exist when the entry type already encodes it?
 #   A: Selection matching and later persistence need a uniform discriminator without isinstance dispatch at every consumer.
 # KEYWORDS: task inputs, snapshot, selection, glob, path validation, entry kinds
@@ -41,6 +43,8 @@ __all__ = [
     "is_glob_pattern",
     "normalize_input_snapshot",
     "selection_matches",
+    "selection_names_entry",
+    "selection_reaches",
     "validate_selection",
     "validate_snapshot_selections",
     "validate_task_path",
@@ -230,38 +234,102 @@ def selection_matches(selection: str, path: str, kind: TaskInputKind) -> bool:
     # caller's subtree expansion of matched directories).
     if parts[-1] == "**" and kind is not TaskInputKind.DIRECTORY:
         return False
-    return _components_match(parts, tuple(path.split("/")), kind)
+    states = _states_after(parts, _components(path))
+    return len(parts) in _closure(parts, states)
 
 
 # endregion FUNC_selection_matches
 
 
-# region FUNC__components_match
-# PURPOSE: Component-wise matcher implementing the shared glob language — fnmatchcase per component plus `**` as zero or more directory levels — so both transfer directions get identical semantics.
-# INVARIANTS: Pure recursion over component tuples; `*`/`?`/classes never cross `/` (fnmatchcase is case-sensitive); `**` consumes only directory components — a final component is consumable only for a directory entry, so `**` never matches a file.
-def _components_match(
-    selection_parts: tuple[str, ...],
-    path_parts: tuple[str, ...],
-    kind: TaskInputKind,
-) -> bool:
-    """Match canonical path components against selection components."""
-    if not selection_parts:
-        return not path_parts
-    head, rest = selection_parts[0], selection_parts[1:]
-    if head == "**":
-        if _components_match(rest, path_parts, kind):
-            return True
-        if not path_parts:
-            return False
-        if len(path_parts) == 1 and kind is not TaskInputKind.DIRECTORY:
-            return False
-        return _components_match(selection_parts, path_parts[1:], kind)
-    if not path_parts or not fnmatchcase(path_parts[0], head):
-        return False
-    return _components_match(rest, path_parts[1:], kind)
+# region FUNC_selection_reaches
+# PURPOSE: Answer whether a selection can still select something strictly below a directory, so traversal descends into exactly the branches the pattern can cover instead of guessing a depth bound.
+# REQUIRES: selection passed validate_selection; directory is canonical and names a directory, the implicit root ("") included.
+# ENSURES: True exactly when some path strictly below ``directory`` matches the selection; False when no component can match this prefix, when the pattern is already fully consumed, and when only ``directory`` itself matches.
+def selection_reaches(selection: str, directory: str) -> bool:
+    """Return True when the selection can still match a path below ``directory``.
+
+    Matching answers "does this entry qualify"; traversal needs the other
+    question, "is there anything left to find below here". Both come from one
+    reading of the selection language, so a caller never re-implements how
+    ``**`` and component globs behave.
+    """
+    parts = tuple(selection.split("/"))
+    states = _states_after(parts, _components(directory))
+    return bool(_closure(parts, states) - {len(parts)})
 
 
-# endregion FUNC__components_match
+# endregion FUNC_selection_reaches
+
+
+# region FUNC_selection_names_entry
+# PURPOSE: Answer whether a named entry in a directory is what the selection asked for, so a caller can reject an untransferable entry the pattern names without knowing the glob rules.
+# REQUIRES: selection passed validate_selection; directory is canonical and names a directory, the implicit root ("") included; name is one listing entry name, never "." or "..".
+# ENSURES: True when a component other than "**" matches ``name`` at a position the selection can reach after ``directory``; False for names only ``**`` could pass over, which consume directory levels and therefore name nothing.
+def selection_names_entry(selection: str, directory: str, name: str) -> bool:
+    """Return True when a non-``**`` component of the selection names the entry."""
+    parts = tuple(selection.split("/"))
+    states = _closure(parts, _states_after(parts, _components(directory)))
+    return any(
+        state < len(parts) and parts[state] != "**" and fnmatchcase(name, parts[state])
+        for state in states
+    )
+
+
+# endregion FUNC_selection_names_entry
+
+
+# region FUNC__components
+# PURPOSE: Split a canonical task-relative path into components, treating the implicit root as the single spelling that has none.
+# INVARIANTS: Pure; "" yields (), every other validated path yields its "/" components unchanged.
+def _components(path: str) -> tuple[str, ...]:
+    """Return the path's components, empty for the implicit root."""
+    return tuple(path.split("/")) if path else ()
+
+
+# endregion FUNC__components
+
+
+# region FUNC__closure
+# PURPOSE: Add the selection positions reachable by skipping ``**`` components, so "zero directory levels" is expressed once instead of at every call site.
+# INVARIANTS: Pure; a state is an index into the selection components; skipping is transitive across consecutive ``**`` components.
+def _closure(parts: tuple[str, ...], states: frozenset[int]) -> frozenset[int]:
+    """Return the states plus every position reachable by skipping ``**``."""
+    reached = set(states)
+    for state in states:
+        index = state
+        while index < len(parts) and parts[index] == "**":
+            index += 1
+            reached.add(index)
+    return frozenset(reached)
+
+
+# endregion FUNC__closure
+
+
+# region FUNC__states_after
+# PURPOSE: Consume path components through the selection's state machine, so matching, reachability, and naming all answer from one traversal of the one glob language instead of three parallel matchers.
+# INVARIANTS: Pure; state i means "components i.. may still apply"; a ``**`` state consumes a level and stays, every other state advances only on a component ``fnmatchcase`` match; an empty state set never recovers.
+def _states_after(
+    parts: tuple[str, ...], path_parts: tuple[str, ...]
+) -> frozenset[int]:
+    """Return the selection states still possible after consuming ``path_parts``."""
+    states = _closure(parts, frozenset({0}))
+    for component in path_parts:
+        advanced: set[int] = set()
+        for state in _closure(parts, states):
+            if state >= len(parts):
+                continue
+            if parts[state] == "**":
+                advanced.add(state)
+            elif fnmatchcase(component, parts[state]):
+                advanced.add(state + 1)
+        states = frozenset(advanced)
+        if not states:
+            break
+    return states
+
+
+# endregion FUNC__states_after
 
 
 # region FUNC_normalize_input_snapshot

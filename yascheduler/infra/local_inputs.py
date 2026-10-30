@@ -12,8 +12,8 @@
 # - Traversal only joins validated components onto the root, and every traversed ancestor is rechecked as a real non-link directory before each scan and read, so enumeration cannot escape the task root.
 # - Every selection is required: a missing explicit path or a glob with no matches fails the whole capture, naming the selection.
 # RATIONALE:
-# - Q: Why does traversal mirror the pure selection language instead of reusing a generic walker?
-#   A: The domain matcher (task 1.2) pins the glob semantics; capture must agree exactly, so descent applies the same component rules (fnmatchcase per component, `**` as directory levels, trailing `**` directories-only) while pruning branches no pattern can reach.
+# - Q: Why does traversal ask the domain instead of keeping its own component matcher?
+#   A: The domain pins the glob semantics; capture must agree exactly. Capture owns listing, classification, and error policy, and asks the domain the three questions a walk needs — does this entry match, can anything still match below this directory, does a component name this entry — so pruning stays exact and no part of the language lives here.
 # - Q: Why are unselected symlinks under a `**` branch skipped, but selected ones rejected?
 #   A: `**` consumes directory levels only; a link is not a directory, so it is not consumable and not selected — rejecting every unrelated link would invalidate otherwise valid selections. A link matched by a name pattern, or living inside a matched directory's subtree, is selected and therefore rejected explicitly.
 # - Q: Why lstat-then-O_NOFOLLOW-open-then-fstat identity checks?
@@ -29,7 +29,6 @@ import errno
 import logging
 import os
 import stat
-from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,6 +40,9 @@ from yascheduler.domain import (
     TaskInputSnapshot,
     is_glob_pattern,
     normalize_input_snapshot,
+    selection_matches,
+    selection_names_entry,
+    selection_reaches,
     validate_selection,
 )
 
@@ -102,9 +104,8 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
         validated = [validate_selection(selection) for selection in selections]
         _require_root_directory(root)
         for raw, selection in zip(selections, validated):
-            parts = tuple(selection.split("/"))
             if not _select_matches(
-                root, parts, (), at_root=True, matches=matches, identities=identities
+                root, selection, (), matches=matches, identities=identities
             ):
                 reason = (
                     "glob selection matched no entries"
@@ -172,78 +173,56 @@ def _require_root_directory(root: Path) -> None:
 
 
 # region FUNC__select_matches
-# PURPOSE: Apply one validated selection's components to the filesystem, recording matched entries and returning whether anything matched, mirroring the domain matcher's semantics exactly while scanning only branches the pattern can reach.
-# REQUIRES: parts come from a validated selection; rel is the scanned directory's canonical components (empty tuple at the root); matches/identities accumulate across selections (overlaps deduplicate by path).
-# ENSURES: A name component matches entries with fnmatchcase (hidden names included); a matched symlink or unsupported type fails explicitly; a matched directory with pattern remainder is descended into; `**` applies its remainder at the current directory (zero levels) and descends into real subdirectories (more levels); a trailing `**` records the scanned directory itself but never the implicit root.
+# PURPOSE: Apply one validated selection to the filesystem, recording the entries it selects and answering whether it selected anything, while scanning only the branches the selection can still cover.
+# REQUIRES: selection passed validate_selection; rel is the scanned directory's canonical components (empty tuple at the root); matches/identities accumulate across selections (overlaps deduplicate by path).
+# ENSURES: The scanned directory itself is recorded when the selection selects it, never at the implicit root; an entry is recorded exactly when the selection selects it; an untransferable entry the selection names, or one inside a selected directory, fails explicitly; a directory is descended into only while the selection can still match below it.
 def _select_matches(
     root: Path,
-    parts: tuple[str, ...],
+    selection: str,
     rel: tuple[str, ...],
     *,
-    at_root: bool,
     matches: dict[str, TaskInputKind],
     identities: dict[str, _Identity],
 ) -> bool:
-    """Scan one directory level for pattern ``parts``; True when anything matched."""
+    """Scan one directory for ``selection``; True when it selected anything."""
+    directory = "/".join(rel)
     matched = False
-    head, rest = parts[0], parts[1:]
-    if head == "**":
-        if not rest:
-            if not at_root:
-                _record_match(
-                    rel, TaskInputKind.DIRECTORY, matches=matches, identities=identities
-                )
-                matched = True
-        else:
-            matched = _select_matches(
-                root, rest, rel, at_root=at_root, matches=matches, identities=identities
-            )
-        for name, kind, _what, _ in _scan_directory(root, rel):
-            # `**` consumes directory levels only: files, links, and special
-            # entries under the branch are not consumable and stay unselected.
-            if kind is TaskInputKind.DIRECTORY:
-                matched = (
-                    _select_matches(
-                        root,
-                        parts,
-                        (*rel, name),
-                        at_root=False,
-                        matches=matches,
-                        identities=identities,
-                    )
-                    or matched
-                )
-    else:
-        for name, kind, what, identity in _scan_directory(root, rel):
-            if not fnmatchcase(name, head):
-                continue
-            if kind is None:
+    # A selection covering this directory selects it; the implicit root is
+    # never a task entry.
+    if directory and selection_matches(selection, directory, TaskInputKind.DIRECTORY):
+        _record_match(
+            rel, TaskInputKind.DIRECTORY, matches=matches, identities=identities
+        )
+        matched = True
+    for name, kind, what, identity in _scan_directory(root, rel):
+        child = (*rel, name)
+        path = "/".join(child)
+        if kind is None:
+            # An untransferable entry is rejected only when a component names
+            # it; `**` passes over directory levels and names nothing.
+            if selection_names_entry(selection, directory, name):
                 raise TaskInputCaptureError(
-                    "/".join((*rel, name)),
-                    f"selected path is a {what}; only ordinary files and directories are supported",
+                    path,
+                    f"selected path is a {what}; "
+                    "only ordinary files and directories are supported",
                 )
-            if not rest:
-                _record_match(
-                    (*rel, name),
-                    kind,
-                    identity=identity,
-                    matches=matches,
-                    identities=identities,
+            continue
+        if selection_matches(selection, path, kind):
+            _record_match(
+                child,
+                kind,
+                identity=identity,
+                matches=matches,
+                identities=identities,
+            )
+            matched = True
+        if kind is TaskInputKind.DIRECTORY and selection_reaches(selection, path):
+            matched = (
+                _select_matches(
+                    root, selection, child, matches=matches, identities=identities
                 )
-                matched = True
-            elif kind is TaskInputKind.DIRECTORY:
-                matched = (
-                    _select_matches(
-                        root,
-                        rest,
-                        (*rel, name),
-                        at_root=False,
-                        matches=matches,
-                        identities=identities,
-                    )
-                    or matched
-                )
-            # A matched file with pattern remainder cannot complete the pattern.
+                or matched
+            )
     return matched
 
 
