@@ -60,7 +60,6 @@ _OPEN_FLAGS: int = (
     | getattr(os, "O_NONBLOCK", 0)
     | getattr(os, "O_BINARY", 0)
 )
-_READ_CHUNK_BYTES: int = 1 << 20
 # Diagnostic path for the implicit task root itself (it has no stored entry).
 _IMPLICIT_ROOT_PATH: str = "."
 
@@ -288,15 +287,10 @@ def _read_file(root: Path, rel: tuple[str, ...]) -> bytes:
 
 def _read_all_bytes(fd: int, path: str) -> bytes:
     """Drain one regular-file descriptor to exact bytes without decoding."""
-    chunks: list[bytes] = []
-    while True:
-        try:
-            chunk = os.read(fd, _READ_CHUNK_BYTES)
-        except OSError as err:
-            raise TaskInputCaptureError(path, f"cannot read source: {err}") from err
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
+    try:
+        return os.fdopen(fd, "rb", closefd=False).read()
+    except OSError as err:
+        raise TaskInputCaptureError(path, f"cannot read source: {err}") from err
 
 
 # endregion FUNC__read_files

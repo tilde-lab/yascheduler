@@ -10,6 +10,7 @@ from .legacy_inputs import (
     legacy_input_snapshot,
     legacy_input_value,
     legacy_selection_selects,
+    normalize_task_inputs,
 )
 from .message_bus import MessageBus
 from .orchestrator import Orchestrator
@@ -26,6 +27,7 @@ __all__ = [
     "legacy_input_snapshot",
     "legacy_input_value",
     "legacy_selection_selects",
+    "normalize_task_inputs",
     "query_tasks",
     "submit_task",
 ]

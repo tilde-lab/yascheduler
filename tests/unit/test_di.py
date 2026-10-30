@@ -103,6 +103,7 @@ class TestCLIDeps:
             "g09",
             engines,
             uow_factory,
+            input_snapshot=(),
             output_selections=None,
         )
 
@@ -170,10 +171,10 @@ class TestCLIDeps:
         )
 
     @pytest.mark.asyncio
-    async def test_submit_unknown_engine_forwards_without_snapshot_kwarg(
+    async def test_submit_unknown_engine_forwards_empty_snapshot(
         self,
     ) -> None:
-        """Unknown engines pass through unchanged so the use case can reject them."""
+        """Unknown engines pass metadata through unnormalized so the use case can reject them."""
         engines = EngineRepository(data={})
         uow_factory = MagicMock()
         deps = CLIDeps(engines=engines, uow_factory=uow_factory)
@@ -200,11 +201,9 @@ class TestCLIDeps:
             "missing-engine",
             engines,
             uow_factory,
+            input_snapshot=(),
             output_selections=selections,
         )
-        await_args = mock_submit.await_args
-        assert await_args is not None
-        assert "input_snapshot" not in await_args.kwargs
 
     @pytest.mark.asyncio
     async def test_submit_forwards_supplied_output_selections(self) -> None:

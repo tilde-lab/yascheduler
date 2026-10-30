@@ -42,6 +42,11 @@ __all__ = ["TaskDeployer"]
 logger = logging.getLogger(__name__)
 
 _ABSENT_SFTP_CODES = frozenset({FX_NO_SUCH_FILE, FX_NO_SUCH_PATH})
+_DESTINATION_REJECTION_MESSAGES = {
+    "symbolic link": "destination traversal met a symbolic link",
+    "not a directory": "destination traversal met a non-directory entry",
+    "not an ordinary file": "destination traversal met a non-ordinary-file entry",
+}
 
 
 # region FUNC__write_remote_file
@@ -120,31 +125,22 @@ async def _check_destination(
     task_id: TaskId,
 ) -> None:
     kind = await _lstat_type(sftp, path)
-    if kind is None:
+    wanted = FILEXFER_TYPE_DIRECTORY if need_directory else FILEXFER_TYPE_REGULAR
+    if kind is None or kind == wanted:
         return
+    reason = (
+        "symbolic link"
+        if kind == FILEXFER_TYPE_SYMLINK
+        else "not a directory"
+        if need_directory
+        else "not an ordinary file"
+    )
     posix = path.as_posix()
-    if kind == FILEXFER_TYPE_SYMLINK:
-        logger.debug(
-            "DESTINATION_REJECTED",
-            extra={"path": posix, "reason": "symbolic link", "task_id": task_id},
-        )
-        raise UnsafeTaskPathError(posix, "destination traversal met a symbolic link")
-    if need_directory and kind != FILEXFER_TYPE_DIRECTORY:
-        logger.debug(
-            "DESTINATION_REJECTED",
-            extra={"path": posix, "reason": "not a directory", "task_id": task_id},
-        )
-        raise UnsafeTaskPathError(
-            posix, "destination traversal met a non-directory entry"
-        )
-    if not need_directory and kind != FILEXFER_TYPE_REGULAR:
-        logger.debug(
-            "DESTINATION_REJECTED",
-            extra={"path": posix, "reason": "not an ordinary file", "task_id": task_id},
-        )
-        raise UnsafeTaskPathError(
-            posix, "destination traversal met a non-ordinary-file entry"
-        )
+    logger.debug(
+        "DESTINATION_REJECTED",
+        extra={"path": posix, "reason": reason, "task_id": task_id},
+    )
+    raise UnsafeTaskPathError(posix, _DESTINATION_REJECTION_MESSAGES[reason])
 
 
 # endregion FUNC__check_destination
@@ -159,9 +155,6 @@ class TaskDeployer:
     the session BUSY marking under `except BaseException` on any deploy/spawn
     failure.
     """
-
-    def __init__(self) -> None:
-        """Stateless deployer — no initialisation needed."""
 
     # region METHOD__upload_task_data
     # PURPOSE: Reconstruct the task's stored input tree under the remote task root — directories parent-first, then exact file bytes — from the streamed snapshot entries, without consulting live engine input declarations or task metadata and without ever holding the whole snapshot in memory.
@@ -218,21 +211,15 @@ class TaskDeployer:
                         raise UnsafeTaskPathError(  # noqa: TRY301
                             path, "destination escapes the task root"
                         )
+                    await _check_destination(
+                        sftp,
+                        target,
+                        need_directory=not isinstance(entry, TaskInputFile),
+                        task_id=task.task_id,
+                    )
                     if isinstance(entry, TaskInputFile):
-                        await _check_destination(
-                            sftp,
-                            target,
-                            need_directory=False,
-                            task_id=task.task_id,
-                        )
                         await _write_remote_file(sftp, target.as_posix(), entry.content)
                     else:
-                        await _check_destination(
-                            sftp,
-                            target,
-                            need_directory=True,
-                            task_id=task.task_id,
-                        )
                         await _make_remote_directory(sftp, target, task.task_id)
         except BaseException as err:
             logger.debug(

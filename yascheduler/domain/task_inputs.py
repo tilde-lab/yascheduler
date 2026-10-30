@@ -105,12 +105,12 @@ TaskInputEntry: TypeAlias = Union[TaskInputFile, TaskInputDirectory]
 TaskInputSnapshot: TypeAlias = "tuple[TaskInputEntry, ...]"
 
 
-# region FUNC__validated_components
-# PURPOSE: Apply the shared task-root safety rules to one raw path or selection and return its canonical components, so validate_task_path and validate_selection cannot diverge.
-# INVARIANTS: Pure string rules; rejects Windows drive roots and drive-shaped components, backslashes, leading separators, `..` components, and the task root itself (UnsafeTaskPathError); drops empty and `.` components without touching glob metacharacters.
 _DRIVE_ROOT = re.compile(r"[A-Za-z]:")
 
 
+# region FUNC__validated_components
+# PURPOSE: Apply the shared task-root safety rules to one raw path or selection and return its canonical components, so validate_task_path and validate_selection cannot diverge.
+# INVARIANTS: Pure string rules; rejects Windows drive roots and drive-shaped components, backslashes, leading separators, `..` components, and the task root itself (UnsafeTaskPathError); drops empty and `.` components without touching glob metacharacters.
 def _validated_components(raw: object, what: str) -> tuple[str, ...]:
     """Return the canonical safe components of one path or selection."""
     if not isinstance(raw, str):

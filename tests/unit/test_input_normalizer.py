@@ -13,6 +13,7 @@ import logging
 import pytest
 
 from tests.log_assertions import extra_fields
+from yascheduler.application import legacy_inputs, normalize_task_inputs
 from yascheduler.domain import (
     TYPED_METADATA_KEYS,
     Engine,
@@ -22,8 +23,6 @@ from yascheduler.domain import (
     TaskInputFile,
     UnsafeTaskPathError,
 )
-from yascheduler.entrypoints import input_normalizer
-from yascheduler.entrypoints.input_normalizer import normalize_task_inputs
 
 
 def _engine(*input_files: str) -> Engine:
@@ -38,7 +37,7 @@ def _find_log_record(
     records = [
         record
         for record in caplog.records
-        if record.name == "yascheduler.entrypoints.input_normalizer"
+        if record.name == "yascheduler.application.legacy_inputs"
         and record.getMessage() == message
         and (source is None or extra_fields(record).get("source") == source)
     ]
@@ -199,8 +198,8 @@ class TestPurity:
         assert explicit_snapshot == (TaskInputFile(path="explicit", content=b"data"),)
 
     def test_module_imports_no_filesystem_modules(self) -> None:
-        assert not hasattr(input_normalizer, "os")
-        assert not hasattr(input_normalizer, "Path")
+        assert not hasattr(legacy_inputs, "os")
+        assert not hasattr(legacy_inputs, "Path")
 
 
 class TestLogs:
@@ -210,7 +209,7 @@ class TestLogs:
         engine = _engine("INPUT")
 
         with caplog.at_level(
-            logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+            logging.DEBUG, logger="yascheduler.application.legacy_inputs"
         ):
             normalize_task_inputs({"INPUT": "body"}, engine, None)
 
@@ -232,7 +231,7 @@ class TestLogs:
         engine = _engine("INPUT")
 
         with caplog.at_level(
-            logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+            logging.DEBUG, logger="yascheduler.application.legacy_inputs"
         ):
             normalize_task_inputs(
                 {}, engine, [TaskInputFile(path="basis/x", content=b"x")]
@@ -257,7 +256,7 @@ class TestLogs:
 
         with (
             caplog.at_level(
-                logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
             ),
             pytest.raises(InvalidTaskSnapshotError),
         ):
@@ -279,7 +278,7 @@ class TestLogs:
     ) -> None:
         with (
             caplog.at_level(
-                logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
             ),
             pytest.raises(MissingInputFileError),
         ):
@@ -298,7 +297,7 @@ class TestLogs:
 
         with (
             caplog.at_level(
-                logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
             ),
             pytest.raises(InvalidTaskSnapshotError),
         ):
@@ -331,7 +330,7 @@ class TestLogs:
 
         with (
             caplog.at_level(
-                logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+                logging.DEBUG, logger="yascheduler.application.legacy_inputs"
             ),
             pytest.raises(InvalidTaskSnapshotError),
         ):
@@ -359,7 +358,7 @@ class TestLogs:
         marker = "UNIQUE_NORMALIZER_SECRET_MARKER_6d4c2e"
 
         with caplog.at_level(
-            logging.DEBUG, logger="yascheduler.entrypoints.input_normalizer"
+            logging.DEBUG, logger="yascheduler.application.legacy_inputs"
         ):
             normalize_task_inputs({"INPUT": marker}, _engine("INPUT"), None)
             normalize_task_inputs(

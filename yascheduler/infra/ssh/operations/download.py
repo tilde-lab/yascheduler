@@ -57,15 +57,14 @@ def _lstat_mode(path: Path) -> int | None:
 def _reject_destination(mode: int, path: str, *, need_directory: bool) -> None:
     """Raise when an existing destination entry is unsafe for the required kind."""
     if stat.S_ISLNK(mode):
-        raise UnsafeTaskPathError(path, "destination traversal met a symbolic link")
-    if need_directory and not stat.S_ISDIR(mode):
-        raise UnsafeTaskPathError(
-            path, "destination traversal met a non-directory entry"
-        )
-    if not need_directory and not stat.S_ISREG(mode):
-        raise UnsafeTaskPathError(
-            path, "destination traversal met a non-ordinary-file entry"
-        )
+        reason = "destination traversal met a symbolic link"
+    elif need_directory and not stat.S_ISDIR(mode):
+        reason = "destination traversal met a non-directory entry"
+    elif not need_directory and not stat.S_ISREG(mode):
+        reason = "destination traversal met a non-ordinary-file entry"
+    else:
+        return
+    raise UnsafeTaskPathError(path, reason)
 
 
 # endregion FUNC__reject_destination

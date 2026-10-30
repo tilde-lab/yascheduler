@@ -336,11 +336,10 @@ class PostgresTaskRepository(_PgRepository):
         if not task_ids:
             return {}
         # region BLOCK_load_snapshots
-        first_id = task_ids[0] if len(task_ids) == 1 else None
-        start_fields: dict[str, Any] = {"task_count": len(task_ids)}
-        if first_id is not None:
-            start_fields["task_id"] = first_id.value
-        logger.debug("read_task_input_snapshots_START", extra=start_fields)
+        context: dict[str, Any] = {"task_count": len(task_ids)}
+        if len(task_ids) == 1:
+            context["task_id"] = task_ids[0].value
+        logger.debug("read_task_input_snapshots_START", extra=context)
         try:
             rows = await self._run(
                 load_query("task/list_inputs_by_task_ids"),
@@ -355,13 +354,10 @@ class PostgresTaskRepository(_PgRepository):
                 TaskId(tid): tuple(entries) for tid, entries in by_task.items()
             }
         except BaseException as err:
-            failed_fields: dict[str, Any] = {
-                "task_count": len(task_ids),
-                "failure": type(err).__name__,
-            }
-            if first_id is not None:
-                failed_fields["task_id"] = first_id.value
-            logger.debug("read_task_input_snapshots_FAILED", extra=failed_fields)
+            logger.debug(
+                "read_task_input_snapshots_FAILED",
+                extra={**context, "failure": type(err).__name__},
+            )
             raise
         logger.debug(
             "read_task_input_snapshots_DONE",

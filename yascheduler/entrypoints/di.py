@@ -23,6 +23,7 @@ from yascheduler.application import (
     AllocationTracker,
     MessageBus,
     Orchestrator,
+    normalize_task_inputs,
     submit_task,
 )
 from yascheduler.domain import (
@@ -46,8 +47,6 @@ from yascheduler.infra import (
     resolve_adapter,
     webhook_handler,
 )
-
-from .input_normalizer import normalize_task_inputs
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -88,27 +87,21 @@ class CLIDeps:
         output_selections: list[str] | None = None,
     ) -> TaskId:
         """Submit a new task via the submit_task use case."""
-        if engine_name in self.engines:
-            input_snapshot, remaining_metadata = normalize_task_inputs(
-                metadata, self.engines[engine_name], input_entries
-            )
-            return await submit_task(
-                label,
-                remaining_metadata,
-                engine_name,
-                self.engines,
-                self.uow_factory,
-                input_snapshot=input_snapshot,
-                output_selections=output_selections,
-            )
-        # Unknown engine: normalization needs declarations, so let the use
-        # case raise UnsupportedEngineError before any write.
+        engine = self.engines.get(engine_name)
+        # An unknown engine needs no declarations, so it skips normalization;
+        # the use case raises UnsupportedEngineError before any write.
+        input_snapshot, remaining_metadata = (
+            ((), metadata)
+            if engine is None
+            else normalize_task_inputs(metadata, engine, input_entries)
+        )
         return await submit_task(
             label,
-            metadata,
+            remaining_metadata,
             engine_name,
             self.engines,
             self.uow_factory,
+            input_snapshot=input_snapshot,
             output_selections=output_selections,
         )
 

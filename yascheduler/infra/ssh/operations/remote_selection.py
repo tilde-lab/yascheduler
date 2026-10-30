@@ -14,8 +14,8 @@
 # RATIONALE:
 # - Q: Why does resolution take a listing reader instead of an SFTP client?
 #   A: The downloader owns the retried transport callable and the pass-level channel; resolution stays free of asyncssh session lifecycles and is unit-testable against a fake listing.
-# - Q: Why walk with selection_matches instead of a second component matcher?
-#   A: The domain matcher pins the one glob language; resolution asks it about each visited entry and only prunes depth for selections without "**", so both directions cannot drift.
+# - Q: Why walk with the domain matcher and reachability rule instead of a local depth bound?
+#   A: The domain pins the one glob language; resolution asks it whether an entry matches and whether anything can still match below a directory, so the remote and the local capture prune identically and neither can drift.
 # KEYWORDS: output retrieval, selection, glob, sftp, symlinks, task-relative paths
 # endregion MODULE_CONTRACT
 
@@ -37,6 +37,7 @@ from yascheduler.domain import (
     TaskInputKind,
     UnsafeTaskPathError,
     selection_matches,
+    selection_reaches,
     validate_selection,
 )
 
@@ -94,8 +95,8 @@ async def resolve_output_selections(
             continue
         errors_before = len(errors)
         try:
-            matched = await _resolve_selection(
-                read_dir, remote_root, selection, entries, errors
+            matched = await _walk_selection(
+                read_dir, remote_root, selection, (), entries=entries, errors=errors
             )
         except Exception as err:
             # A listing or metadata failure is reported for this selection and
@@ -151,43 +152,15 @@ def _deduplicate_errors(
 # endregion FUNC__deduplicate_errors
 
 
-# region FUNC__resolve_selection
-# PURPOSE: Resolve one validated selection under the remote root, accumulating matched entries and per-path errors, and answer whether anything matched.
-# INVARIANTS: Selection depth bounds the walk for patterns without "**"; a missing remote root is "matched nothing" rather than an exception, so callers can report the required-selection error.
-async def _resolve_selection(
-    read_dir: ListingReader,
-    remote_root: PurePath,
-    selection: str,
-    entries: dict[str, TaskInputKind],
-    errors: list[tuple[str | None, Exception]],
-) -> bool:
-    """Resolve one validated selection, returning whether it matched anything."""
-    parts = tuple(selection.split("/"))
-    max_depth = None if "**" in parts else len(parts)
-    return await _walk_selection(
-        read_dir,
-        remote_root,
-        selection,
-        (),
-        max_depth=max_depth,
-        entries=entries,
-        errors=errors,
-    )
-
-
-# endregion FUNC__resolve_selection
-
-
 # region FUNC__walk_selection
 # PURPOSE: Walk one directory level applying the domain matcher to each real entry, expanding matched directories to their subtree and descending only where the selection can still match.
-# INVARIANTS: Only ordinary files and directories are candidates; a matched directory is expanded completely and not walked again as a branch; depth pruning stops descent once no remaining component can match; a failed listing propagates for per-selection classification.
+# INVARIANTS: Only ordinary files and directories are candidates; a matched directory is expanded completely and not walked again as a branch; descent follows the domain reachability rule (selection_reaches), so a branch the selection cannot cover is never listed; a failed listing propagates for per-selection classification.
 async def _walk_selection(
     read_dir: ListingReader,
     remote_root: PurePath,
     selection: str,
     rel: tuple[str, ...],
     *,
-    max_depth: int | None,
     entries: dict[str, TaskInputKind],
     errors: list[tuple[str | None, Exception]],
 ) -> bool:
@@ -215,19 +188,16 @@ async def _walk_selection(
             continue
         if selection_matches(selection, path, kind):
             matched = True
-            _record_entry(entries, path, kind)
+            entries.setdefault(path, kind)
             if kind is TaskInputKind.DIRECTORY:
                 await _expand_subtree(read_dir, remote_root, child, entries, errors)
-        elif kind is TaskInputKind.DIRECTORY and (
-            max_depth is None or len(child) < max_depth
-        ):
+        elif kind is TaskInputKind.DIRECTORY and selection_reaches(selection, path):
             matched = (
                 await _walk_selection(
                     read_dir,
                     remote_root,
                     selection,
                     child,
-                    max_depth=max_depth,
                     entries=entries,
                     errors=errors,
                 )
@@ -264,7 +234,7 @@ async def _expand_subtree(
                 )
             )
             continue
-        _record_entry(entries, path, kind)
+        entries.setdefault(path, kind)
         if kind is TaskInputKind.DIRECTORY:
             await _expand_subtree(read_dir, remote_root, child, entries, errors)
 
@@ -313,19 +283,6 @@ def _unsupported_reason(entry_type: int) -> str:
 
 
 # endregion FUNC__unsupported_reason
-
-
-# region FUNC__record_entry
-# PURPOSE: Record one resolved path once, keeping the first kind when overlapping selections meet the same entry.
-# INVARIANTS: Pure dict bookkeeping; insertion order is irrelevant because the public result is sorted by path.
-def _record_entry(
-    entries: dict[str, TaskInputKind], path: str, kind: TaskInputKind
-) -> None:
-    """Add one resolved entry path to the accumulator."""
-    entries.setdefault(path, kind)
-
-
-# endregion FUNC__record_entry
 
 
 # region FUNC__remote_path
