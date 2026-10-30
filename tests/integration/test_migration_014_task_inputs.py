@@ -190,6 +190,35 @@ _EXPECTED_FAILURE_PATHS = {
 _EXPECTED_FAILURE_SELECTION_LABELS = frozenset({"missing-input", "unsafe-path"})
 
 
+_SECRET_MARKERS = (
+    LOG_SECRET,
+    LOG_CREDENTIAL,
+    base64.b64encode(LOG_SECRET.encode()).decode(),
+)
+
+
+def _records(
+    caplog: pytest.LogCaptureFixture,
+    marker: str,
+    task_id: int | None = None,
+) -> list[logging.LogRecord]:
+    """Records carrying the block marker, optionally narrowed to one task."""
+    return [
+        record
+        for record in caplog.records
+        if record.getMessage() == marker
+        and (task_id is None or getattr(record, "task_id", None) == task_id)
+    ]
+
+
+def _assert_no_secret_leak(caplog: pytest.LogCaptureFixture) -> None:
+    """A secret must not reach the rendered log text or any structured field."""
+    dumped_fields = repr([extra_fields(record) for record in caplog.records])
+    for marker in _SECRET_MARKERS:
+        assert marker not in caplog.text, f"secret in log text: {marker}"
+        assert marker not in dumped_fields, f"secret in a log field: {marker}"
+
+
 def _make_config(pg: PostgresContainer) -> PostgresDbConfig:
     url = urlparse(pg.get_connection_url())
     return PostgresDbConfig(
@@ -692,47 +721,22 @@ def test_modern_013_migration_creates_table_and_converts_all_statuses(
         with caplog.at_level(logging.DEBUG, logger=MIGRATION_LOGGER):
             apply_migrations(config, engine_inputs={ENGINE: DECLARATIONS}, upto="014")
 
-        overall_start = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_INPUTS_START"
-        ]
+        overall_start = _records(caplog, "MIGRATE_INPUTS_START")
         assert len(overall_start) == 1
         assert overall_start[0].name == MIGRATION_LOGGER
-        assert {
-            key: value
-            for key, value in extra_fields(overall_start[0]).items()
-            if key != "message"
-        } == {"entry_count": 0}
+        assert extra_fields(overall_start[0]) == {"entry_count": 0}
 
-        overall_done = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_INPUTS_DONE"
-        ]
+        overall_done = _records(caplog, "MIGRATE_INPUTS_DONE")
         assert len(overall_done) == 1
         assert overall_done[0].name == MIGRATION_LOGGER
-        assert {
-            key: value
-            for key, value in extra_fields(overall_done[0]).items()
-            if key != "message"
-        } == {
+        assert extra_fields(overall_done[0]) == {
             "tasks": len(task_ids),
             "entry_count": len(task_ids) * len(EXPECTED_INPUT_ENTRIES),
         }
         for task_id in task_ids:
-            storage_done = [
-                record
-                for record in caplog.records
-                if record.getMessage() == "MIGRATE_TASK_STORAGE_DONE"
-                and getattr(record, "task_id", None) == task_id
-            ]
+            storage_done = _records(caplog, "MIGRATE_TASK_STORAGE_DONE", task_id)
             assert len(storage_done) == 1
-            assert {
-                key: value
-                for key, value in extra_fields(storage_done[0]).items()
-                if key != "message"
-            } == {
+            assert extra_fields(storage_done[0]) == {
                 "task_id": task_id,
                 "engine": ENGINE,
                 "entry_count": len(EXPECTED_INPUT_ENTRIES),
@@ -1059,11 +1063,7 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         )
 
         assert caplog.records[0].getMessage() == "MIGRATE_INPUTS_START"
-        overall_failed = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_INPUTS_FAILED"
-        ]
+        overall_failed = _records(caplog, "MIGRATE_INPUTS_FAILED")
         assert len(overall_failed) == 1
         overall_failed_fields = extra_fields(overall_failed[0])
         assert overall_failed_fields["task_id"] == broken_task_id
@@ -1071,12 +1071,7 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         assert overall_failed_fields["failure"] == "RuntimeError"
         assert overall_failed_fields["entry_count"] == len(EXPECTED_INPUT_ENTRIES)
 
-        task_failed = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_TASK_INPUTS_FAILED"
-            and getattr(record, "task_id", None) == broken_task_id
-        ]
+        task_failed = _records(caplog, "MIGRATE_TASK_INPUTS_FAILED", broken_task_id)
         assert len(task_failed) == 1
         failed_record = task_failed[0]
         assert failed_record.name == MIGRATION_LOGGER
@@ -1096,19 +1091,9 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         else:
             assert "selection" not in failed_fields
 
-        assert not any(
-            record.getMessage() == "MIGRATE_TASK_INPUTS"
-            and getattr(record, "task_id", None) == broken_task_id
-            for record in caplog.records
-        )
-        assert not any(
-            record.getMessage() == "MIGRATE_TASK_STORAGE_DONE"
-            and getattr(record, "task_id", None) == broken_task_id
-            for record in caplog.records
-        )
-        assert not any(
-            record.getMessage() == "MIGRATE_INPUTS_DONE" for record in caplog.records
-        )
+        assert _records(caplog, "MIGRATE_TASK_INPUTS", broken_task_id) == []
+        assert _records(caplog, "MIGRATE_TASK_STORAGE_DONE", broken_task_id) == []
+        assert _records(caplog, "MIGRATE_INPUTS_DONE") == []
 
         rendered = LogFormatter().format(failed_record)
         assert "MIGRATE_TASK_INPUTS_FAILED" in rendered
@@ -1116,14 +1101,7 @@ def test_migration_014_failure_rolls_back_and_repaired_retry_is_idempotent(
         assert f"failure='{expected_failure}'" in rendered
         if expected_path is not None:
             assert f"path='{expected_path}'" in rendered
-        all_field_dump = repr([extra_fields(record) for record in caplog.records])
-        for marker in (
-            LOG_SECRET,
-            LOG_CREDENTIAL,
-            base64.b64encode(LOG_SECRET.encode()).decode(),
-        ):
-            assert marker not in rendered
-            assert marker not in all_field_dump
+        _assert_no_secret_leak(caplog)
         assert all(record.exc_info is None for record in caplog.records)
 
         # A fresh connection must see the complete pre-migration state: the
@@ -1292,18 +1270,9 @@ def test_migration_014_skips_unconvertible_started_task(
                 upto="014",
             )
 
-        skipped = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
-            and getattr(record, "task_id", None) == task_id
-        ]
+        skipped = _records(caplog, "MIGRATE_TASK_INPUTS_SKIPPED", task_id)
         assert len(skipped) == 1
-        skipped_fields = {
-            key: value
-            for key, value in extra_fields(skipped[0]).items()
-            if key != "message"
-        }
+        skipped_fields = extra_fields(skipped[0])
         expected_fields: dict[str, object] = {
             "task_id": task_id,
             "engine": case.engine,
@@ -1339,24 +1308,13 @@ def test_migration_014_skips_unconvertible_started_task(
         assert warnings[0].getMessage() == (
             f"Migration 014 left 1 task(s) unconverted for engine {case.engine!r}"
         )
-        warning_fields = {
-            key: value
-            for key, value in extra_fields(warnings[0]).items()
-            if key != "message"
-        }
+        warning_fields = extra_fields(warnings[0])
         assert warning_fields == {"engine": case.engine, "skipped_count": 1}
         assert any(
             record.getMessage() == "MIGRATE_INPUTS_DONE" for record in caplog.records
         )
 
-        all_log_fields = repr([extra_fields(record) for record in caplog.records])
-        for marker in (
-            LOG_SECRET,
-            LOG_CREDENTIAL,
-            base64.b64encode(LOG_SECRET.encode()).decode(),
-        ):
-            assert marker not in caplog.text
-            assert marker not in all_log_fields
+        _assert_no_secret_leak(caplog)
 
         conn = _connect(config)
         try:
@@ -1533,11 +1491,7 @@ def test_migration_014_mixed_cohort_aggregates_skipped_engine_warning(
         finally:
             conn.close()
 
-        skipped_records = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
-        ]
+        skipped_records = _records(caplog, "MIGRATE_TASK_INPUTS_SKIPPED")
         assert {getattr(record, "task_id", None) for record in skipped_records} == {
             skipped_running_id,
             skipped_done_id,
@@ -1550,11 +1504,7 @@ def test_migration_014_mixed_cohort_aggregates_skipped_engine_warning(
         }
         for record in skipped_records:
             task_id = cast(int, getattr(record, "task_id", None))
-            fields = {
-                key: value
-                for key, value in extra_fields(record).items()
-                if key != "message"
-            }
+            fields = extra_fields(record)
             assert fields == {
                 "task_id": task_id,
                 "engine": UNKNOWN_ENGINE,
@@ -1585,21 +1535,13 @@ def test_migration_014_mixed_cohort_aggregates_skipped_engine_warning(
         assert warnings[0].getMessage() == (
             f"Migration 014 left 2 task(s) unconverted for engine {UNKNOWN_ENGINE!r}"
         )
-        warning_fields = {
-            key: value
-            for key, value in extra_fields(warnings[0]).items()
-            if key != "message"
-        }
+        warning_fields = extra_fields(warnings[0])
         assert warning_fields == {"engine": UNKNOWN_ENGINE, "skipped_count": 2}
         assert not any(
             record.levelno == logging.WARNING and ENGINE in record.getMessage()
             for record in caplog.records
         )
-        all_log_fields = repr([extra_fields(record) for record in caplog.records])
-        assert LOG_SECRET not in caplog.text
-        assert LOG_CREDENTIAL not in caplog.text
-        assert LOG_SECRET not in all_log_fields
-        assert LOG_CREDENTIAL not in all_log_fields
+        _assert_no_secret_leak(caplog)
 
         # The skipped rows are terminal for migration 014: a rerun under a
         # tracker at 014 is a complete no-op even without engine context.
@@ -1710,18 +1652,9 @@ def test_migration_014_non_object_extra_status_boundary(
                 conn.close()
             return
 
-        skipped = [
-            record
-            for record in caplog.records
-            if record.getMessage() == "MIGRATE_TASK_INPUTS_SKIPPED"
-            and getattr(record, "task_id", None) == task_id
-        ]
+        skipped = _records(caplog, "MIGRATE_TASK_INPUTS_SKIPPED", task_id)
         assert len(skipped) == 1
-        skipped_fields = {
-            key: value
-            for key, value in extra_fields(skipped[0]).items()
-            if key != "message"
-        }
+        skipped_fields = extra_fields(skipped[0])
         assert skipped_fields == {
             "task_id": task_id,
             "engine": ENGINE,
