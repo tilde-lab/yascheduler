@@ -35,9 +35,13 @@ from yascheduler.application.orchestrator import Orchestrator
 from yascheduler.application.queue import UMessage, UniqueQueue
 from yascheduler.domain import Engine, EngineRepository, LocalSettings, RemoteDefaults
 from yascheduler.domain.events import TaskAbandoned
+from yascheduler.domain.exceptions import CloudAllocateError
 from yascheduler.domain.model import (
     AnyTask,
+    ConnectedMachine,
     Done,
+    MachineState,
+    Node,
     NodeId,
     Running,
     Task,
@@ -337,10 +341,27 @@ class TestOrchestratorLifecycle:
     # Test 5: concurrency limits (allocate_limit) respected
     # ------------------------------------------------------------------ #
 
+    @pytest.mark.parametrize(
+        ("limit_kwarg", "limit_value", "queue_attr", "start_order"),
+        [
+            pytest.param(
+                "conn_machine_limit", 4, "_conn_machine_q", 0, id="conn-machine"
+            ),
+            pytest.param("allocate_limit", 3, "_allocate_q", 1, id="allocate"),
+            pytest.param("consume_limit", 7, "_consume_q", 2, id="consume"),
+            pytest.param("deallocate_limit", 5, "_deallocate_q", 3, id="deallocate"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_concurrency_limits_allocate_limit(self) -> None:
-        """allocate_limit config value is passed as workers_num to _create_producer_consumers."""
-        orch = make_orchestrator(allocate_limit=3)
+    async def test_concurrency_limit_reaches_workers_num(
+        self,
+        limit_kwarg: str,
+        limit_value: int,
+        queue_attr: str,
+        start_order: int,
+    ) -> None:
+        """Each per-queue limit arrives as workers_num to _create_producer_consumers."""
+        orch = make_orchestrator(**cast("Any", {limit_kwarg: limit_value}))
 
         orch._cancellation_event.set()
         orch._repository.__len__ = MagicMock(return_value=1)  # type: ignore[method-assign]
@@ -358,103 +379,11 @@ class TestOrchestratorLifecycle:
         ):
             await orch.start()
 
-        # _create_producer_consumers is called 4 times (conn_machine / allocate / consume / deallocate)
+        # start() wires four queues, in a fixed order
         assert mock_pc.call_count == 4
-
-        # Second call is for the allocate queue
-        allocate_call = mock_pc.call_args_list[1]
-        assert allocate_call.kwargs["queue"] is orch._allocate_q
-        assert allocate_call.kwargs["workers_num"] == 3
-
-    # ------------------------------------------------------------------ #
-    # Test 6: concurrency limits (deallocate_limit) respected
-    # ------------------------------------------------------------------ #
-
-    @pytest.mark.asyncio
-    async def test_concurrency_limits_deallocate_limit(self) -> None:
-        """deallocate_limit config value is passed as workers_num to _create_producer_consumers."""
-        orch = make_orchestrator(deallocate_limit=5)
-
-        orch._cancellation_event.set()
-        orch._repository.__len__ = MagicMock(return_value=1)  # type: ignore[method-assign]
-
-        with (
-            patch.object(
-                orch,
-                "_create_producer_consumers",
-                wraps=orch._create_producer_consumers,
-            ) as mock_pc,
-            patch(
-                "yascheduler.application.orchestrator.asyncio.sleep",
-                new_callable=AsyncMock,
-            ),
-        ):
-            await orch.start()
-
-        # Fourth call is for the deallocate queue
-        deallocate_call = mock_pc.call_args_list[3]
-        assert deallocate_call.kwargs["queue"] is orch._deallocate_q
-        assert deallocate_call.kwargs["workers_num"] == 5
-
-    # ------------------------------------------------------------------ #
-    # Test 7: concurrency limits (conn_machine_limit) respected
-    # ------------------------------------------------------------------ #
-
-    @pytest.mark.asyncio
-    async def test_concurrency_limits_conn_machine_limit(self) -> None:
-        """conn_machine_limit config value is passed as workers_num to _create_producer_consumers."""
-        orch = make_orchestrator(conn_machine_limit=4)
-
-        orch._cancellation_event.set()
-        orch._repository.__len__ = MagicMock(return_value=1)  # type: ignore[method-assign]
-
-        with (
-            patch.object(
-                orch,
-                "_create_producer_consumers",
-                wraps=orch._create_producer_consumers,
-            ) as mock_pc,
-            patch(
-                "yascheduler.application.orchestrator.asyncio.sleep",
-                new_callable=AsyncMock,
-            ),
-        ):
-            await orch.start()
-
-        # First call is for the conn_machine queue
-        conn_machine_call = mock_pc.call_args_list[0]
-        assert conn_machine_call.kwargs["queue"] is orch._conn_machine_q
-        assert conn_machine_call.kwargs["workers_num"] == 4
-
-    # ------------------------------------------------------------------ #
-    # Test 8: concurrency limits (consume_limit) respected
-    # ------------------------------------------------------------------ #
-
-    @pytest.mark.asyncio
-    async def test_concurrency_limits_consume_limit(self) -> None:
-        """consume_limit config value is passed as workers_num to _create_producer_consumers."""
-        orch = make_orchestrator(consume_limit=7)
-
-        orch._cancellation_event.set()
-        orch._repository.__len__ = MagicMock(return_value=1)  # type: ignore[method-assign]
-
-        with (
-            patch.object(
-                orch,
-                "_create_producer_consumers",
-                wraps=orch._create_producer_consumers,
-            ) as mock_pc,
-            patch(
-                "yascheduler.application.orchestrator.asyncio.sleep",
-                new_callable=AsyncMock,
-            ),
-        ):
-            await orch.start()
-
-        # Third call is for the consume queue
-        consume_call = mock_pc.call_args_list[2]
-        assert consume_call.kwargs["queue"] is orch._consume_q
-        assert consume_call.kwargs["workers_num"] == 7
+        call = mock_pc.call_args_list[start_order]
+        assert call.kwargs["queue"] is getattr(orch, queue_attr)
+        assert call.kwargs["workers_num"] == limit_value
 
 
 class TestOrchestratorTaskAbandoned:
@@ -462,8 +391,6 @@ class TestOrchestratorTaskAbandoned:
 
     async def test_machine_gone_records_task_abandoned_event(self) -> None:
         """When a machine is gone for > broken_tasks_passes cycles, TaskAbandoned is recorded and tracker slot released."""
-        from yascheduler.application.queue import UMessage
-
         tracker = MagicMock(spec=AllocationTracker)
         orch = make_orchestrator(allocation_tracker=tracker)
 
@@ -560,8 +487,6 @@ class TestCloudsGetCapacity:
         cfg_aws.prefix = "aws"
         orch = make_orchestrator(active_clouds=[cfg_aws])
 
-        from yascheduler.domain.model import Node, NodeId
-
         nodes = [
             Node(node_id=NodeId(i + 1), hostname=str(i + 1), ncpus=2, cloud=cloud)
             for i, cloud in enumerate(clouds)
@@ -614,8 +539,6 @@ class TestDeallocatorConsumer:
     @pytest.mark.asyncio
     async def test_calls_deallocate_node_with_uow_factory(self) -> None:
         """deallocate_node called with the Node from msg.payload directly (no uow.nodes.get)."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import Node, NodeId
 
         orch = make_orchestrator()
 
@@ -638,8 +561,6 @@ class TestDeallocatorConsumer:
     @pytest.mark.asyncio
     async def test_consumer_does_not_duplicate_ssh_teardown(self) -> None:
         """Consumer does NOT call repository.contains/disconnect directly (owned by deallocate_node)."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import Node, NodeId
 
         orch = make_orchestrator()
         orch._repository.contains = MagicMock(return_value=True)  # type: ignore[method-assign]
@@ -663,8 +584,6 @@ class TestDeallocatorConsumer:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """deallocate_node raises -> error log includes both node_id=%s and hostname=%s."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import Node, NodeId
 
         caplog.set_level(logging.ERROR)
 
@@ -695,8 +614,6 @@ class TestAllocatorConsumer:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """CloudAllocateError from allocate_task is caught + logged; worker survives."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.exceptions import CloudAllocateError
 
         caplog.set_level(logging.ERROR)
         orch = make_orchestrator()
@@ -720,8 +637,6 @@ class TestAllocatorConsumer:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Any Exception from allocate_task is caught; worker survives."""
-        from yascheduler.application.queue import UMessage
-
         caplog.set_level(logging.ERROR)
         orch = make_orchestrator()
 
@@ -742,8 +657,6 @@ class TestAllocatorConsumer:
     @pytest.mark.asyncio
     async def test_propagates_allocate_task_args(self) -> None:
         """_allocator_consumer passes all expected kwargs to allocate_task."""
-        from yascheduler.application.queue import UMessage
-
         orch = make_orchestrator()
 
         task_payload = cast(
@@ -788,8 +701,6 @@ class TestConsumeConditionalDiscard:
         in_occupancy: bool,
     ) -> None:
         """consume_task True discards the occupancy slot; False keeps it for the next cycle."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import ConnectedMachine, MachineState
 
         orch = make_orchestrator()
         machine = ConnectedMachine(
@@ -859,8 +770,6 @@ class TestConsumeInFlightGuard:
     @pytest.mark.asyncio
     async def test_guard_released_after_consume_true(self) -> None:
         """consume_task returns True -> task_id removed from _consuming in finally."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import ConnectedMachine, MachineState
 
         orch = make_orchestrator()
         machine = ConnectedMachine(
@@ -895,8 +804,6 @@ class TestConsumeInFlightGuard:
     @pytest.mark.asyncio
     async def test_guard_released_after_consume_false(self) -> None:
         """consume_task returns False -> task_id still removed from _consuming in finally."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import ConnectedMachine, MachineState
 
         orch = make_orchestrator()
         machine = ConnectedMachine(
@@ -933,8 +840,6 @@ class TestConsumeInFlightGuard:
     @pytest.mark.asyncio
     async def test_guard_released_on_consume_exception(self) -> None:
         """consume_task raises -> finally still removes task_id from _consuming."""
-        from yascheduler.application.queue import UMessage
-        from yascheduler.domain.model import ConnectedMachine, MachineState
 
         orch = make_orchestrator()
         machine = ConnectedMachine(
