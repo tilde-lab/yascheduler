@@ -141,12 +141,44 @@ def test_migration_status_preflight_reads_real_tracker() -> None:
         assert current.required == "015"
 
 
-def test_legacy_db_runs_all_migrations() -> None:
+@pytest.mark.parametrize(
+    ("tracker_seed", "expected_before", "expected_after"),
+    [
+        pytest.param(
+            None,
+            [],
+            [f"{n:03d}" for n in range(1, 16)],
+            id="legacy-db-no-tracker",
+        ),
+        pytest.param(
+            "000",
+            ["000"],
+            [f"{n:03d}" for n in range(16)],
+            id="modern-db-tracker-at-000",
+        ),
+    ],
+)
+def test_legacy_and_modern_db_apply_pending_migrations(
+    tracker_seed: str | None,
+    expected_before: list[str],
+    expected_after: list[str],
+) -> None:
+    """A legacy DB gets the full chain; a modern DB starts from its tracker."""
     with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
         config = _make_config(pg)
 
         conn = _connect(config)
         try:
+            if tracker_seed is not None:
+                conn.run(
+                    "CREATE TABLE yascheduler_migrations "
+                    "(migration_id TEXT PRIMARY KEY, "
+                    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+                )
+                conn.run(
+                    "INSERT INTO yascheduler_migrations (migration_id) VALUES (:m)",
+                    m=tracker_seed,
+                )
             conn.run(
                 "CREATE TABLE yascheduler_nodes ("
                 "ip VARCHAR(15) UNIQUE, cloud VARCHAR(32) DEFAULT NULL, "
@@ -169,7 +201,7 @@ def test_legacy_db_runs_all_migrations() -> None:
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == []
+            assert _tracker_rows(conn) == expected_before
         finally:
             conn.close()
 
@@ -177,86 +209,7 @@ def test_legacy_db_runs_all_migrations() -> None:
 
         conn = _connect(config)
         try:
-            assert _tracker_rows(conn) == [
-                "001",
-                "002",
-                "003",
-                "004",
-                "005",
-                "006",
-                "007",
-                "008",
-                "009",
-                "010",
-                "011",
-                "012",
-                "013",
-                "014",
-                "015",
-            ]
-            assert {"username", "port", "node_id"} <= set(
-                _columns(conn, "yascheduler_nodes"),
-            )
-        finally:
-            conn.close()
-
-
-def test_modern_db_skips_bootstrap_and_applies_only_pending() -> None:
-    with PostgresContainer("docker.io/library/postgres:16-alpine") as pg:
-        config = _make_config(pg)
-
-        conn = _connect(config)
-        try:
-            conn.run(
-                "CREATE TABLE yascheduler_migrations "
-                "(migration_id TEXT PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
-            )
-            conn.run(
-                "CREATE TABLE yascheduler_nodes ("
-                "ip VARCHAR(15) UNIQUE, cloud VARCHAR(32) DEFAULT NULL, "
-                "ncpus SMALLINT DEFAULT NULL)",
-            )
-            conn.run("INSERT INTO yascheduler_migrations (migration_id) VALUES ('000')")
-            # Pre-create yascheduler_tasks at the pre-004 era schema (no
-            # allocated_node_id) so migration 004's ALTER ADD COLUMN is valid.
-            conn.run(
-                "CREATE TABLE yascheduler_tasks ("
-                "task_id SERIAL PRIMARY KEY, label VARCHAR(256), "
-                "metadata JSONB, ip VARCHAR(15), status SMALLINT)",
-            )
-        finally:
-            conn.close()
-
-        apply_schema(config)
-
-        conn = _connect(config)
-        try:
-            assert _tracker_rows(conn) == ["000"]
-        finally:
-            conn.close()
-
-        apply_migrations(config, engine_inputs={})
-
-        conn = _connect(config)
-        try:
-            assert _tracker_rows(conn) == [
-                "000",
-                "001",
-                "002",
-                "003",
-                "004",
-                "005",
-                "006",
-                "007",
-                "008",
-                "009",
-                "010",
-                "011",
-                "012",
-                "013",
-                "014",
-                "015",
-            ]
+            assert _tracker_rows(conn) == expected_after
             assert {"username", "port", "node_id"} <= set(
                 _columns(conn, "yascheduler_nodes"),
             )
