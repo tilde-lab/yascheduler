@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple
 
 from yascheduler.domain import (
     MachineSession,
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         TaskInputEntry,
     )
     from yascheduler.infra import OccupancyChecker
+    from yascheduler.shared import TypeAlias
 
     from .allocation_tracker import AllocationTracker
     from .uow import AbstractUnitOfWork
