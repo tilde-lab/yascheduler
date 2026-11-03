@@ -1,4 +1,4 @@
-## v2.1.0 (2026-10-30)
+## v3.1.0 (2026-11-03)
 
 ### Upgrade notes
 
@@ -88,6 +88,8 @@
   fixes; resubmit those tasks.
 - **cli**: no command-line or flag changes; `yastatus` view follows the task's
   recorded first selection and names a pattern instead of tailing it.
+- **vultr**: duplicate ssh keys
+- **tests**: adapt to rootless podman
 
 ### Refactor
 
@@ -117,19 +119,7 @@
   different ordinary file between the listing and the read is now read
   silently.
 
-## v2.0.2 (2026-10-08)
-
-### Fix
-
-- **vultr**: duplicate ssh keys
-
-## v2.0.1 (2026-10-08)
-
-### Fix
-
-- **tests**: adapt to rootless podman
-
-## v2.0.0 (2026-10-08)
+## v3.0.0 (2026-10-08)
 
 ### BREAKING CHANGE
 
@@ -137,7 +127,7 @@
 
 ### Feat
 
-- yascheduler 2.0.0
+- yascheduler 3.0.0
 - **cloud**: vastai select_filters + CancellationError
 - **cloud**: vultr non root user owns /data
 - **cloud**: label is configurable for every cloud
