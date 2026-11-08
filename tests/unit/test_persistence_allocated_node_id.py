@@ -71,8 +71,13 @@ class TestRowToTaskAllocatedNodeId:
 
     async def test_reads_allocated_node_id(self, mocker: MockerFixture) -> None:
         repo = _make_repo(mocker)
-        repo._run.return_value = [  # type: ignore[attr-defined]
-            _row(task_id=1, status="RUNNING", allocated_node_id=5, remote_folder="/r")
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [
+                _row(
+                    task_id=1, status="RUNNING", allocated_node_id=5, remote_folder="/r"
+                )
+            ],
+            [],
         ]
 
         task = await repo.get(TaskId(1))
@@ -83,7 +88,10 @@ class TestRowToTaskAllocatedNodeId:
 
     async def test_handles_null_allocated_node_id(self, mocker: MockerFixture) -> None:
         repo = _make_repo(mocker)
-        repo._run.return_value = [_row(task_id=1, allocated_node_id=None)]  # type: ignore[attr-defined]
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [_row(task_id=1, allocated_node_id=None)],
+            [],
+        ]
 
         task = await repo.get(TaskId(1))
 
@@ -98,7 +106,7 @@ class TestRowToTaskAllocatedNodeId:
         repo = _make_repo(mocker)
         r = _row(task_id=1, allocated_node_id=None)
         del r["allocated_node_id"]
-        repo._run.return_value = [r]  # type: ignore[attr-defined]
+        repo._run.side_effect = [[r], []]  # type: ignore[attr-defined]
 
         task = await repo.get(TaskId(1))
 
@@ -108,7 +116,10 @@ class TestRowToTaskAllocatedNodeId:
     async def test_reads_title_as_label(self, mocker: MockerFixture) -> None:
         """DB column is title; domain field is label."""
         repo = _make_repo(mocker)
-        repo._run.return_value = [_row(task_id=1, title="my_job")]  # type: ignore[attr-defined]
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [_row(task_id=1, title="my_job")],
+            [],
+        ]
 
         task = await repo.get(TaskId(1))
 
@@ -118,7 +129,10 @@ class TestRowToTaskAllocatedNodeId:
     async def test_reads_status_by_name_lookup(self, mocker: MockerFixture) -> None:
         """Status is read via TaskStatus[row["status"]] (name lookup, was int cast)."""
         repo = _make_repo(mocker)
-        repo._run.return_value = [_row(task_id=1, status="RUNNING")]  # type: ignore[attr-defined]
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [_row(task_id=1, status="RUNNING")],
+            [],
+        ]
 
         task = await repo.get(TaskId(1))
 
@@ -130,8 +144,9 @@ class TestRowToTaskAllocatedNodeId:
         repo = _make_repo(mocker)
         created = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         updated = datetime(2026, 1, 2, 0, 0, 0, tzinfo=timezone.utc)
-        repo._run.return_value = [  # type: ignore[attr-defined]
-            _row(task_id=1, created_at=created, updated_at=updated),
+        repo._run.side_effect = [  # type: ignore[attr-defined]
+            [_row(task_id=1, created_at=created, updated_at=updated)],
+            [],
         ]
 
         task = await repo.get(TaskId(1))
@@ -143,7 +158,7 @@ class TestRowToTaskAllocatedNodeId:
     async def test_does_not_read_allocated_ip(self, mocker: MockerFixture) -> None:
         """_row_to_task does not read an ip/allocated_ip column (column dropped)."""
         repo = _make_repo(mocker)
-        repo._run.return_value = [_row(task_id=1)]  # type: ignore[attr-defined]
+        repo._run.side_effect = [[_row(task_id=1)], []]  # type: ignore[attr-defined]
 
         task = await repo.get(TaskId(1))
 

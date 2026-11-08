@@ -10,16 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Generator
 from contextlib import AbstractContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
 
+from tests.log_assertions import extra_fields
 from yascheduler.infra.cloud.cloud_configs import ConfigCloudVastAI
 from yascheduler.infra.cloud.providers.vastai import VastAIInstance, VastAIOffer
-from yascheduler.shared.log import _NATIVE_KEYS
 
 pytestmark = pytest.mark.unit
 
@@ -97,38 +96,6 @@ def _key(pubkey: bytes = _PUBKEY) -> MagicMock:
     mock_key = MagicMock()
     mock_key.export_public_key.return_value = pubkey
     return mock_key
-
-
-class LogCaptureHandler(logging.Handler):
-    def __init__(self, records: list[logging.LogRecord]) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._records = records
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(record)
-
-
-@pytest.fixture
-def log_records() -> Generator[list[logging.LogRecord], None, None]:
-    logger = logging.getLogger("yascheduler.infra.cloud.providers.vastai")
-    records: list[logging.LogRecord] = []
-    handler = LogCaptureHandler(records)
-    prev = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(prev)
-
-
-def extra_fields(record: logging.LogRecord) -> dict[str, object]:
-    return {
-        k: getattr(record, k)
-        for k in record.__dict__
-        if k not in _NATIVE_KEYS and k != "message"
-    }
 
 
 def _markers(records: list[logging.LogRecord]) -> list[str]:

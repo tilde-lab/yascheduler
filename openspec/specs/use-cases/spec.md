@@ -4,37 +4,57 @@ Application-layer use cases orchestrate task submission, allocation,
 consumption, and node deallocation. They drive the domain entities
 through the repository, SSH, and cloud ports. They do not own business
 rules; the domain entities do.
+
 ## Requirements
+
 ### Requirement: Submit a task
 
-The system SHALL create a new task in `TO_DO` state when the engine is
-known and the inputs are valid. The system SHALL reject an unknown
-engine before any write to the task store.
+The system SHALL reject unknown engines and invalid input before any
+task-store write. Accepted input SHALL include a complete snapshot satisfying
+`task-input-snapshots` and its engine's selections in `task-file-selection`. It
+SHALL atomically persist a `TO_DO` task and snapshot, returning its identity
+only after commit. A persistence failure SHALL leave neither a task nor partial
+input entries.
 
 #### Scenario: a known engine creates a TO_DO task
 
-- **WHEN** a task is submitted with a known engine and valid inputs
-- **THEN** a task is persisted in `TO_DO` state, the change is committed, and the new task identity is returned
+- **WHEN** a task is submitted with a known engine and a complete valid input snapshot
+- **THEN** a task is persisted in `TO_DO` state with its snapshot, the change is committed, and the new task identity is returned
 
 #### Scenario: an unknown engine prevents the write
 
 - **WHEN** a task is submitted with an engine the system does not know
-- **THEN** the submission fails before any write and no task is persisted
+- **THEN** the submission fails before any write and no task or input entries are persisted
+
+#### Scenario: invalid submission or failed persistence prevents acceptance
+
+- **WHEN** required inputs are invalid or incomplete, or persistence fails
+- **THEN** submission fails and neither an accepted task nor partial input entries are committed
+
+### Requirement: Record output selections at acceptance
+
+An accepted task SHALL record its engine's output selections in force at
+acceptance and keep them for its whole lifecycle. A submission MAY supply a
+replacement list. It SHALL be non-empty and each entry SHALL satisfy
+`task-file-selection`; otherwise submission SHALL fail before any task-store
+write. A valid supplied list SHALL replace the engine's selections for that
+task.
+
+#### Scenario: a submission records the selections it supplies
+
+- **WHEN** a submission supplies its own output selections for a known engine
+- **THEN** the accepted task records those selections, and the engine's configured selections do not apply to that task
 
 ### Requirement: Allocate a task
 
-The system SHALL match a TO_DO task to a free compatible machine. When
-a match is found, the task SHALL transition to RUNNING on that machine.
-When no match is found, the system SHALL request cloud provisioning and
-the task SHALL stay pending.
+The system SHALL match a `TO_DO` task to a free compatible machine. When a
+match is found, the task SHALL transition to `RUNNING` on that machine. When no
+match is found, the system SHALL request cloud provisioning and the task SHALL
+stay pending.
 
-Concurrent allocations SHALL be serialised at the capacity check so
-they do not over-provision. A failure inside the cloud-fallback path
-SHALL remove the temporary node row and SHALL NOT leave a partial
-allocation.
-
-When the task engine is unknown or has no platforms, the task SHALL be
-marked as failed and no provisioning SHALL be requested.
+Concurrent allocations SHALL be serialised at the capacity check so they do not
+over-provision. A failure inside the cloud-fallback path SHALL remove the
+temporary node row and SHALL NOT leave a partial allocation.
 
 #### Scenario: a free compatible machine runs the task
 
@@ -50,6 +70,17 @@ marked as failed and no provisioning SHALL be requested.
 
 - **WHEN** a failure occurs after the temporary node is inserted but before the allocation completes
 - **THEN** the temporary node row is removed and no partial allocation is committed
+
+### Requirement: Reject allocation for an unusable task engine
+
+When the task engine is unknown or has no platforms, the task SHALL be marked as
+failed and no provisioning SHALL be requested.
+
+#### Scenario: an unusable task engine fails the allocation
+
+- **WHEN** a `TO_DO` task is allocated and its engine is unknown or has no
+  platforms
+- **THEN** the task is marked as failed and no provisioning is requested
 
 ### Requirement: Deallocate idle nodes
 
@@ -67,21 +98,11 @@ can be deleted.
 ### Requirement: Abandon a node
 
 The system SHALL clean up a cloud node that never established its SSH
-connection. The system SHALL disable the node's DB row before it
-attempts to delete the cloud VM.
-
-On a successful VM deletion, the system SHALL remove the DB row. If
-that removal fails, the system SHALL report the failure.
-
-On a failed VM deletion, the system SHALL leave the DB row disabled so
-a later deallocate cycle can retry the VM deletion. The system SHALL
-report the failure.
-
-In all cases, the system SHALL release all in-flight allocation entries
-linked to the node and SHALL report the count released.
-
-When the node has no cloud, the system SHALL skip VM deletion, remove
-the DB row, and release the in-flight allocation entries.
+connection. The system SHALL disable the node's DB row before it attempts to
+delete the cloud VM. In all cases, the system SHALL release all in-flight
+allocation entries linked to the node and SHALL report the count released. The
+DB-row removal, failure reporting, and no-cloud behavior SHALL follow the abandon
+scenarios.
 
 #### Scenario: an abandoned cloud node is fully cleaned up
 
@@ -93,24 +114,85 @@ the DB row, and release the in-flight allocation entries.
 - **WHEN** the VM deletion fails during the abandon of a cloud node with one in-flight allocation entry
 - **THEN** the DB row stays disabled so the VM deletion can be retried, and the in-flight allocation entry is released
 
+#### Scenario: an abandoned node without a cloud VM is removed
+
+- **WHEN** an abandoned node has no cloud
+- **THEN** VM deletion is skipped, the DB row is removed, and the in-flight
+  allocation entries are released
+
+#### Scenario: a cleanup failure is reported
+
+- **WHEN** VM deletion fails during abandonment or DB-row removal fails after a
+  successful VM deletion
+- **THEN** the failure is reported
+
 ### Requirement: Consume a task
 
-The system SHALL download a RUNNING task's outputs from its remote
-machine. When the download succeeds or fails permanently, the system
-SHALL finalise the task: apply the terminal transition, clean the
-remote directory, and release the in-flight allocation slot. When the
-download fails transiently, the system SHALL defer the task: leave it
-RUNNING, preserve the remote directory, and keep the slot.
+The system SHALL resolve a RUNNING task's recorded output selections against
+its remote task root following `task-file-selection` and retrieve them into the
+local result root with their task-relative layout. The selections recorded at
+acceptance SHALL remain authoritative for every retrieval pass. A task accepted
+before output selections were recorded SHALL use its engine's configuration in
+force at retrieval, and the fallback SHALL be logged with the task identity.
 
-#### Scenario: a completed or permanently failed download finalises the task
+#### Scenario: a nested output tree reaches the result root
 
-- **WHEN** the download completes with no transient errors
-- **THEN** the task reaches a terminal state, the remote directory is cleaned, and the in-flight allocation slot is released
+- **WHEN** a task declares an output directory whose tree contains `OUT.aiida/nested/result.dat`
+- **THEN** the task finalises as done and that file is readable at the same relative path under the result root
+
+#### Scenario: an accepted task keeps the selections it recorded
+
+- **WHEN** the engine's configured output selections change after a task is accepted, and that task is later retrieved
+- **THEN** the task retrieves the selections recorded at acceptance, and its outcome does not depend on the changed configuration
+
+#### Scenario: a task without recorded selections uses the configuration
+
+- **WHEN** a task accepted before output selections were recorded is retrieved
+- **THEN** it retrieves its engine's configured output selections, and the fallback is reported in the log with the task identity
+
+### Requirement: Classify and defer retrieval failures
+
+Retrieval SHALL classify failures as transient or permanent while continuing
+others. An absent explicit path or unmatched pattern SHALL be a permanent error
+naming that selection. While any transient failure remains, even with permanent
+failures, the system SHALL defer: leave the task RUNNING, preserve the remote
+directory, and keep its allocation slot. Each pass SHALL re-attempt every
+selection and derive errors from that pass; without transient failures it SHALL
+finalise on those errors.
 
 #### Scenario: a transient download failure defers the task
 
 - **WHEN** the download fails with only transient errors
 - **THEN** the task is left RUNNING, the remote directory is preserved, and the in-flight allocation slot is kept
+
+#### Scenario: mixed permanent and transient failures defer the task
+
+- **WHEN** one output fails permanently and another fails transiently in the same pass
+- **THEN** the task is left RUNNING, the remote directory is preserved, and a later pass with no transient failures finalises on that pass's own errors
+
+### Requirement: Finalise before remote cleanup
+
+Finalisation SHALL precede remote deletion: the system SHALL commit the terminal
+transition, publish its terminal event, and release the in-flight allocation slot
+before removing the remote task directory. Remote cleanup SHALL be one
+best-effort attempt whose failure is logged and leaves the directory to node
+teardown; cleanup SHALL NOT change the task's outcome. A task whose engine was
+removed from configuration SHALL finalise as failed.
+
+#### Scenario: a completed or permanently failed download finalises the task
+
+- **WHEN** the download completes with no transient errors
+- **THEN** the task reaches a terminal state, the terminal transition and event land before the remote directory is removed, the remote directory is cleaned, and the in-flight allocation slot is released
+
+#### Scenario: a removed engine fails the task and cleans up
+
+- **WHEN** a RUNNING task's engine is no longer in configuration during retrieval
+- **THEN** the task finalises as failed and its remote directory is cleaned after the failure is committed
+
+#### Scenario: a cleanup failure does not change the outcome
+
+- **WHEN** the remote directory cannot be deleted after the task finalised
+- **THEN** the task keeps its committed outcome, the failure is logged, and the remaining directory is left for node teardown
 
 ### Requirement: Query tasks
 
@@ -152,4 +234,3 @@ and SHALL report the count released.
 
 - **WHEN** allocations linked to a node are released
 - **THEN** every allocation linked to that node is removed and the count removed is reported
-

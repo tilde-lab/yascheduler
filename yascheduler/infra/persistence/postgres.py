@@ -1,16 +1,17 @@
 """PostgreSQL repository implementations for tasks and nodes."""
 # region MODULE_CONTRACT
 # PURPOSE: Bridge domain repository ports to PostgreSQL so the orchestrator persists and loads tasks and nodes transactionally without coupling domain logic to pg8000 or SQL details.
-# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor.
+# SCOPE: Async task and node CRUD over pg8000 via ThreadPoolExecutor, including task-owned input snapshot entry insert, task-owned output-selection persistence, the explicit batched snapshot read, the per-entry keyset stream read, and content-free DEBUG boundary traces; task records carry no input contents.
 # INVARIANTS: Every repository method is async and routes synchronous pg8000 calls through asyncio.get_running_loop().run_in_executor(self._executor, _fn).
 # DEPENDENCIES: USES API: pg8000.Connection, READS: SQL files from disk via sql_loader
-# KEYWORDS: postgres, repository, task, node, crud
+# KEYWORDS: postgres, repository, task, node, crud, input snapshot
 # endregion MODULE_CONTRACT
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -26,6 +27,10 @@ from yascheduler.domain import (
     RunningTask,
     Task,
     TaskId,
+    TaskInputDirectory,
+    TaskInputEntry,
+    TaskInputFile,
+    TaskInputKind,
     TaskStatus,
     Todo,
     TodoTask,
@@ -39,12 +44,16 @@ from .exceptions import NodeRowNotFoundError, TaskRowNotFoundError
 from .sql_loader import load_query
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from concurrent.futures import ThreadPoolExecutor
 
     from pg8000.native import Connection
 
+    from yascheduler.domain import TaskInputSnapshot
+
 __all__ = ["PostgresNodeRepository", "PostgresTaskRepository"]
+
+logger = logging.getLogger(__name__)
 
 
 # region CLASS__PgRepository
@@ -153,6 +162,7 @@ class PostgresTaskRepository(_PgRepository):
             error=error_of(task),
             webhook_custom_params=task.webhook_custom_params,
             extra=task.extra,
+            output_selections=list(task.output_selections) or None,
             status=task.status.name,
             node_id=(
                 nid.value if (nid := allocated_node_id_of(task)) is not None else None
@@ -209,9 +219,10 @@ class PostgresTaskRepository(_PgRepository):
     # endregion METHOD_list_ids_by_node_id_and_status
 
     # region METHOD_insert
-    # PURPOSE: Accept a new task submission so the orchestrator tracks it through its lifecycle — the returned Task carries a TaskCreated event for cross-layer notification.
+    # PURPOSE: Accept a new task submission with its owned input entries so the orchestrator tracks it through its lifecycle — the returned Task carries a TaskCreated event for cross-layer notification.
+    # ENSURES: Task row and input entries commit in the caller's UoW transaction; a failed entry write rolls back task creation; entries are never rewritten after insert.
     async def insert(self, new_task: NewTask) -> TodoTask:
-        """Insert a NewTask, return the persisted Task with TaskCreated in events."""
+        """Insert a NewTask and its owned input entries, return the persisted Task with TaskCreated in events."""
         rows = await self._run(
             load_query("task/insert"),
             title=new_task.label,
@@ -221,8 +232,54 @@ class PostgresTaskRepository(_PgRepository):
             webhook_url=new_task.webhook_url,
             webhook_custom_params=new_task.webhook_custom_params,
             extra=new_task.extra,
+            output_selections=list(new_task.output_selections) or None,
         )
-        return materialize_task(self._row_to_task(rows[0]))
+        task = self._row_to_task(rows[0])
+        # region BLOCK_insert_input_entries
+        # Owns nothing but the entry rows; task_id comes from RETURNING so the
+        # entries share the caller's transaction and never outlive their task.
+        entries = tuple(new_task.input_entries)
+        logger.debug(
+            "persist_task_inputs_START",
+            extra={
+                "task_id": task.task_id.value,
+                "engine": new_task.engine,
+                "entry_count": len(entries),
+            },
+        )
+        try:
+            if entries:
+                await self._run(
+                    load_query("task/insert_inputs"),
+                    task_id=task.task_id.value,
+                    paths=[e.path for e in entries],
+                    kinds=[e.kind.value for e in entries],
+                    contents=[
+                        e.content if isinstance(e, TaskInputFile) else None
+                        for e in entries
+                    ],
+                )
+        except BaseException as err:
+            logger.debug(
+                "persist_task_inputs_FAILED",
+                extra={
+                    "task_id": task.task_id.value,
+                    "engine": new_task.engine,
+                    "entry_count": len(entries),
+                    "failure": type(err).__name__,
+                },
+            )
+            raise
+        logger.debug(
+            "persist_task_inputs",
+            extra={
+                "task_id": task.task_id.value,
+                "engine": new_task.engine,
+                "entry_count": len(entries),
+            },
+        )
+        # endregion BLOCK_insert_input_entries
+        return materialize_task(task)
 
     # endregion METHOD_insert
 
@@ -264,6 +321,113 @@ class PostgresTaskRepository(_PgRepository):
 
     # endregion METHOD_count_by_status
 
+    # region METHOD_list_input_snapshots
+    # PURPOSE: Batch-load complete input snapshots for a set of tasks in one read so the client query projects exact bytes without loading them on every task read.
+    # INVARIANTS: One SELECT for the whole task list; entries group by task identity into immutable tuples; ordering is C-collation byte order (task_id, path), the same order the per-entry stream yields; tasks with no entries are absent from the mapping.
+    async def list_input_snapshots(
+        self, task_ids: Sequence[TaskId]
+    ) -> Mapping[TaskId, TaskInputSnapshot]:
+        """Return complete input snapshots keyed by task id for the given ids.
+
+        One batched SELECT (task/list_inputs_by_task_ids); tasks with no
+        entries are absent from the mapping. Task records themselves carry no
+        input contents — this is the explicit snapshot read.
+        """
+        if not task_ids:
+            return {}
+        # region BLOCK_load_snapshots
+        context: dict[str, Any] = {"task_count": len(task_ids)}
+        if len(task_ids) == 1:
+            context["task_id"] = task_ids[0].value
+        logger.debug("read_task_input_snapshots_START", extra=context)
+        try:
+            rows = await self._run(
+                load_query("task/list_inputs_by_task_ids"),
+                task_ids=[tid.value for tid in task_ids],
+            )
+            by_task: dict[int, list[TaskInputEntry]] = {}
+            for row in rows:
+                by_task.setdefault(int(row["task_id"]), []).append(
+                    self._row_to_entry(row)
+                )
+            snapshots = {
+                TaskId(tid): tuple(entries) for tid, entries in by_task.items()
+            }
+        except BaseException as err:
+            logger.debug(
+                "read_task_input_snapshots_FAILED",
+                extra={**context, "failure": type(err).__name__},
+            )
+            raise
+        logger.debug(
+            "read_task_input_snapshots_DONE",
+            extra={
+                "task_count": len(task_ids),
+                "entry_count": len(rows),
+            },
+        )
+        # endregion BLOCK_load_snapshots
+        return snapshots
+
+    # endregion METHOD_list_input_snapshots
+
+    # region METHOD_iter_input_entries
+    # PURPOSE: Stream one task's snapshot entries one at a time in C-collation path order so deployment uploads the tree without ever holding it whole.
+    # INVARIANTS: Keyset pagination — each SELECT fetches the single row with the least path greater than the last yielded one, under the C collation so byte order (parent before descendants) is locale-independent; the first read seeds with the empty path; iteration ends when the read returns no row.
+    async def iter_input_entries(
+        self, task_id: TaskId
+    ) -> AsyncIterator[TaskInputEntry]:
+        """Yield one task's snapshot entries one at a time in path order."""
+        logger.debug(
+            "stream_task_inputs_START",
+            extra={"task_id": task_id.value},
+        )
+        after = ""
+        entry_count = 0
+        while True:
+            # Only the store read is guarded: a consumer stopping early
+            # (GeneratorExit at the yield) is a normal end of streaming,
+            # not a stream failure.
+            try:
+                rows = await self._run(
+                    load_query("task/next_input_entry"),
+                    task_id=task_id.value,
+                    after=after,
+                )
+            except BaseException as err:
+                logger.debug(
+                    "stream_task_inputs_FAILED",
+                    extra={
+                        "task_id": task_id.value,
+                        "entry_count": entry_count,
+                        "failure": type(err).__name__,
+                    },
+                )
+                raise
+            if not rows:
+                break
+            row = rows[0]
+            after = str(row["path"])
+            entry_count += 1
+            yield self._row_to_entry(row)
+        logger.debug(
+            "stream_task_inputs_DONE",
+            extra={"task_id": task_id.value, "entry_count": entry_count},
+        )
+
+    # endregion METHOD_iter_input_entries
+
+    # region METHOD__row_to_entry
+    # PURPOSE: Deserialize one input-entry row into the domain snapshot value so snapshot reads return typed entries, not raw SQL data.
+    @staticmethod
+    def _row_to_entry(row: Mapping[str, Any]) -> TaskInputEntry:
+        """Convert an input-entry row dict to a domain snapshot entry."""
+        if TaskInputKind(row["kind"]) is TaskInputKind.DIRECTORY:
+            return TaskInputDirectory(path=row["path"])
+        return TaskInputFile(path=row["path"], content=row["content"])
+
+    # endregion METHOD__row_to_entry
+
     # region METHOD__row_to_task
     # PURPOSE: Deserialize raw DB rows into domain Task entities so the application layer works with typed model objects, not raw dicts or manual JSON parsing.
     @staticmethod
@@ -288,6 +452,7 @@ class PostgresTaskRepository(_PgRepository):
             webhook_url=row["webhook_url"],
             webhook_custom_params=webhook_custom_params,
             local_folder=row["local_folder"],
+            output_selections=tuple(row.get("output_selections") or ()),
         )
 
         if status is TaskStatus.TO_DO:

@@ -32,12 +32,20 @@ from yascheduler.application.allocation_tracker import AllocationTracker
 from yascheduler.application.deallocate_nodes import deallocate_node, deallocate_nodes
 from yascheduler.application.submit_task import submit_task
 from yascheduler.application.uow import AbstractUnitOfWork
-from yascheduler.domain import Engine, EngineRepository
+from yascheduler.domain import (
+    Engine,
+    EngineRepository,
+    TaskInputDirectory,
+    TaskInputFile,
+)
 from yascheduler.domain.events import TaskCreated
 from yascheduler.domain.exceptions import (
     CloudAllocateError,
+    InvalidTaskSnapshotError,
     MissingInputFileError,
+    UnsafeTaskPathError,
     UnsupportedEngineError,
+    ValidationError,
 )
 from yascheduler.domain.model import (
     NewNode,
@@ -59,14 +67,14 @@ from yascheduler.infra.cloud import ConfigCloudAzure
 
 
 class TestSubmitTask:
-    """submit_task — validates engine & inputs, persists via UoW."""
+    """submit_task — validates engine and typed snapshot coverage, then persists."""
 
     async def test_submit_task_unknown_engine(
         self,
         mock_engine_repo: MagicMock,
         mock_uow_factory: MagicMock,
     ) -> None:
-        """Engine not in repository -> UnsupportedEngineError."""
+        """Engine not in repository -> UnsupportedEngineError before any write."""
         mock_engine_repo.__contains__.return_value = False
 
         with pytest.raises(UnsupportedEngineError) as exc_info:
@@ -77,25 +85,58 @@ class TestSubmitTask:
                 engines=mock_engine_repo,
                 uow_factory=mock_uow_factory,
             )
+
         assert "nonexistent_engine" in str(exc_info.value)
         mock_uow_factory.assert_not_called()
 
-    async def test_submit_task_missing_input_file(
+    async def test_submit_task_empty_snapshot_satisfies_engine_without_declarations(
+        self,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """An engine without input declarations accepts an empty snapshot."""
+        engine = Engine(name="no_inputs", spawn="run", output_files=("OUTPUT",))
+        engines = EngineRepository(data={"no_inputs": engine})
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="no_inputs",
+                state=Todo(),
+            )
+        )
+
+        task_id = await submit_task(
+            label="empty-ok",
+            metadata={"unrelated": "kept"},
+            engine_name="no_inputs",
+            engines=engines,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(),
+        )
+
+        assert task_id == TaskId(42)
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.input_entries == ()
+        assert inserted_arg.extra == {"unrelated": "kept"}
+
+    async def test_submit_task_empty_snapshot_cannot_use_legacy_metadata_key(
         self,
         mock_engine_repo: MagicMock,
         mock_uow_factory: MagicMock,
     ) -> None:
-        """Engine requires 'inp' but metadata lacks it -> MissingInputFileError."""
+        """Typed snapshot coverage ignores legacy metadata keys entirely."""
         with pytest.raises(MissingInputFileError) as exc_info:
             await submit_task(
-                label="test",
-                metadata={"other": "data"},  # 'inp' is missing
+                label="empty-missing",
+                metadata={"inp": "legacy-data"},
                 engine_name="test_engine",
                 engines=mock_engine_repo,
                 uow_factory=mock_uow_factory,
+                input_snapshot=(),
             )
-        assert "inp" in str(exc_info.value)
-        assert "test_engine" in str(exc_info.value)
+
+        assert exc_info.value.filename == "inp"
+        assert exc_info.value.engine_name == "test_engine"
         mock_uow_factory.assert_not_called()
 
     async def test_submit_task_success_returns_task_id(
@@ -104,7 +145,7 @@ class TestSubmitTask:
         mock_engine_repo: MagicMock,
         mock_uow_factory: MagicMock,
     ) -> None:
-        """Happy path: validates, inserts, saves, commits, returns id."""
+        """Happy path: validates snapshot, inserts, saves, commits, returns id."""
         uow = mock_uow_factory.return_value
 
         def _insert_side_effect(new_task: NewTask) -> Task:
@@ -118,6 +159,7 @@ class TestSubmitTask:
                 webhook_url=new_task.webhook_url,
                 webhook_custom_params=new_task.webhook_custom_params,
                 extra=new_task.extra,
+                output_selections=new_task.output_selections,
                 created_at=datetime(2025, 1, 1),
                 updated_at=datetime(2025, 1, 1),
             )
@@ -127,13 +169,15 @@ class TestSubmitTask:
             return materialize_task(task)
 
         uow.tasks.insert = AsyncMock(side_effect=_insert_side_effect)
+        snapshot = (TaskInputFile(path="inp", content=b"content"),)
 
         task_id = await submit_task(
             label="my_job",
-            metadata={"inp": "content"},
+            metadata={"unrelated": "content"},
             engine_name="test_engine",
             engines=mock_engine_repo,
             uow_factory=mock_uow_factory,
+            input_snapshot=snapshot,
         )
 
         assert task_id == TaskId(42)
@@ -142,8 +186,9 @@ class TestSubmitTask:
         uow.tasks.insert.assert_called_once()
         inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
         assert inserted_arg.label == "my_job"
-        assert inserted_arg.extra == {"inp": "content"}
+        assert inserted_arg.extra == {"unrelated": "content"}
         assert inserted_arg.engine == "test_engine"
+        assert inserted_arg.input_entries == snapshot
 
         # save was called with the task that has TaskCreated in events
         uow.tasks.save.assert_called_once()
@@ -156,6 +201,364 @@ class TestSubmitTask:
         assert isinstance(saved_arg.events[0], TaskCreated)
 
         uow.commit.assert_called_once()
+
+    async def test_submit_task_non_empty_snapshot_is_normalized_for_new_task(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """The persisted snapshot is materialized and sorted by path."""
+        snapshot = (
+            TaskInputFile(path="basis/Si.orb", content=b"orb"),
+            TaskInputFile(path="inp", content=b"x"),
+        )
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="normalized-snapshot",
+            metadata={"unrelated": "kept"},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=snapshot,
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.input_entries == (
+            TaskInputDirectory(path="basis"),
+            TaskInputFile(path="basis/Si.orb", content=b"orb"),
+            TaskInputFile(path="inp", content=b"x"),
+        )
+        assert inserted_arg.input_entries is not snapshot
+
+    async def test_submit_task_snapshot_strips_typed_metadata_from_extra(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Typed metadata fields never leak into extra."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+        metadata = {
+            "engine": "wrong-engine",
+            "remote_folder": "remote",
+            "local_folder": "local",
+            "webhook_url": "https://example.invalid/hook",
+            "webhook_custom_params": {"token": "redacted"},
+            "error": "previous-error",
+            "unrelated": 42,
+        }
+
+        await submit_task(
+            label="typed-explicit",
+            metadata=metadata,
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.extra == {"unrelated": 42}
+        assert inserted_arg.local_folder == "local"
+        assert inserted_arg.webhook_url == "https://example.invalid/hook"
+        assert inserted_arg.webhook_custom_params == {"token": "redacted"}
+
+    async def test_submit_task_cleaned_boundary_metadata_strips_typed_fields(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """CLIDeps-cleaned metadata still has typed fields stripped from extra."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+        metadata = {
+            "engine": "wrong-engine",
+            "remote_folder": "remote",
+            "local_folder": "local",
+            "webhook_url": "https://example.invalid/hook",
+            "webhook_custom_params": {"token": "redacted"},
+            "error": "previous-error",
+            "unrelated": 42,
+        }
+
+        await submit_task(
+            label="typed-cleaned",
+            metadata=metadata,
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"legacy-body"),),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.extra == {"unrelated": 42}
+
+    async def test_submit_task_glob_declaration_satisfied_by_matching_entry(
+        self,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """A glob declaration is satisfied by a matching file and materialized parent."""
+        engine = Engine(
+            name="glob_engine",
+            spawn="run",
+            input_files=("basis/**/*.orb",),
+            output_files=("OUTPUT",),
+        )
+        engines = EngineRepository(data={"glob_engine": engine})
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="glob_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="glob-ok",
+            metadata={"unrelated": "kept"},
+            engine_name="glob_engine",
+            engines=engines,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="basis/a.orb", content=b"x"),),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.input_entries == (
+            TaskInputDirectory(path="basis"),
+            TaskInputFile(path="basis/a.orb", content=b"x"),
+        )
+
+    async def test_submit_task_glob_declaration_not_satisfied_by_directory_only(
+        self,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """A glob declaration needs a matching entry, not just an empty parent."""
+        engine = Engine(
+            name="glob_engine",
+            spawn="run",
+            input_files=("basis/**/*.orb",),
+            output_files=("OUTPUT",),
+        )
+        engines = EngineRepository(data={"glob_engine": engine})
+
+        with pytest.raises(MissingInputFileError) as exc_info:
+            await submit_task(
+                label="glob-missing",
+                metadata={},
+                engine_name="glob_engine",
+                engines=engines,
+                uow_factory=mock_uow_factory,
+                input_snapshot=(TaskInputDirectory(path="basis"),),
+            )
+
+        assert exc_info.value.filename == "basis/**/*.orb"
+        mock_uow_factory.assert_not_called()
+
+    async def test_submit_task_literal_directory_satisfied_by_directory_entry(
+        self,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """A literal directory declaration matches an explicit directory entry."""
+        engine = Engine(
+            name="dir_engine",
+            spawn="run",
+            input_files=("basis",),
+            output_files=("OUTPUT",),
+        )
+        engines = EngineRepository(data={"dir_engine": engine})
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="dir_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="dir-ok",
+            metadata={},
+            engine_name="dir_engine",
+            engines=engines,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputDirectory(path="basis"),),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.input_entries == (TaskInputDirectory(path="basis"),)
+
+    async def test_submit_task_invalid_snapshot_fails_before_write(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Duplicate snapshot paths raise before any UoW is opened."""
+        duplicate_snapshot = [
+            TaskInputFile(path="inp", content=b"first"),
+            TaskInputFile(path="inp", content=b"second"),
+        ]
+
+        with pytest.raises(InvalidTaskSnapshotError) as exc_info:
+            await submit_task(
+                label="invalid",
+                metadata={},
+                engine_name="test_engine",
+                engines=mock_engine_repo,
+                uow_factory=mock_uow_factory,
+                input_snapshot=duplicate_snapshot,  # type: ignore[arg-type]
+            )
+
+        assert exc_info.value.path == "inp"
+        mock_uow_factory.assert_not_called()
+
+    async def test_submit_task_copies_snapshot_list_to_immutable_tuple(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Mutating the caller's list after submission cannot alter NewTask inputs."""
+        source = [TaskInputFile(path="inp", content=b"x")]
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="copied",
+            metadata={},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=source,  # type: ignore[arg-type]
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert isinstance(inserted_arg.input_entries, tuple)
+        assert inserted_arg.input_entries == (TaskInputFile(path="inp", content=b"x"),)
+        source.append(TaskInputFile(path="other", content=b"y"))
+        assert inserted_arg.input_entries == (TaskInputFile(path="inp", content=b"x"),)
+
+    async def test_submit_task_records_engine_output_selections_by_default(
+        self,
+        engine: Engine,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """Acceptance snapshots the engine's output contract into the new task."""
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="default-output-selections",
+            metadata={},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.output_selections == tuple(engine.output_files)
+        assert inserted_arg.output_selections == ("OUTPUT",)
+
+    async def test_submit_task_records_explicit_output_selections_verbatim(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+    ) -> None:
+        """An explicit list keeps its order, duplicates, and spelling, and is copied."""
+        source = ["OUT//*.dat", "root.dat", "OUT//*.dat"]
+        uow = mock_uow_factory.return_value
+        uow.tasks.insert = AsyncMock(
+            return_value=Task(
+                task_id=TaskId(42),
+                engine="test_engine",
+                state=Todo(),
+            )
+        )
+
+        await submit_task(
+            label="explicit-output-selections",
+            metadata={},
+            engine_name="test_engine",
+            engines=mock_engine_repo,
+            uow_factory=mock_uow_factory,
+            input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+            output_selections=source,
+        )
+
+        inserted_arg: NewTask = uow.tasks.insert.call_args[0][0]
+        assert inserted_arg.output_selections == (
+            "OUT//*.dat",
+            "root.dat",
+            "OUT//*.dat",
+        )
+        assert inserted_arg.output_selections is not source
+        source.append("late.dat")
+        assert inserted_arg.output_selections == (
+            "OUT//*.dat",
+            "root.dat",
+            "OUT//*.dat",
+        )
+
+    @pytest.mark.parametrize(
+        ("output_selections", "expected_error"),
+        [
+            ([], ValidationError),
+            (["../escape.dat"], UnsafeTaskPathError),
+        ],
+    )
+    async def test_submit_task_rejects_invalid_output_selections_before_write(
+        self,
+        mock_engine_repo: MagicMock,
+        mock_uow_factory: MagicMock,
+        output_selections: list[str],
+        expected_error: type[Exception],
+    ) -> None:
+        """Empty and unsafe overrides fail before opening a UoW."""
+        with pytest.raises(expected_error):
+            await submit_task(
+                label="invalid-output-selections",
+                metadata={},
+                engine_name="test_engine",
+                engines=mock_engine_repo,
+                uow_factory=mock_uow_factory,
+                input_snapshot=(TaskInputFile(path="inp", content=b"x"),),
+                output_selections=output_selections,
+            )
+
+        mock_uow_factory.assert_not_called()
 
 
 # =============================================================================
@@ -273,6 +676,8 @@ class TestAllocateTask:
         allocation_lock = asyncio.Lock()
         clouds = MagicMock(spec=CloudProvisioner)
         start_on_machine = AsyncMock(return_value=True)
+        entries = MagicMock(name="input-entries-iterator")
+        uow.tasks.iter_input_entries = MagicMock(return_value=entries)
 
         result = await allocate_task(
             task_id=todo_task.task_id,
@@ -290,11 +695,16 @@ class TestAllocateTask:
         assert result is True
         repository.list_free.assert_called_once_with(platforms=["linux"])
         start_on_machine.assert_called_once()
-        _call_session, _call_engine, _call_task = start_on_machine.call_args[0]
+        _call_session, _call_engine, _call_task, _call_entries = (
+            start_on_machine.call_args[0]
+        )
         assert _call_session is free_session
         assert _call_engine is engine
         assert _call_task.state.allocated_node_id == NodeId(1)
         assert not hasattr(_call_task, "allocated_ip")
+        # The snapshot iterator is opened inside the claimed-row UoW and threaded through.
+        assert _call_entries is entries
+        uow.tasks.iter_input_entries.assert_called_once_with(todo_task.task_id)
         occupancy_checker.start_occupancy_check.assert_called_once_with(
             free_session,
             engine,

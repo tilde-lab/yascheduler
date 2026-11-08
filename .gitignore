@@ -31,6 +31,7 @@ docker/
 
 # working files
 /aiida
+.scratch/
 
 # node modules
 node_modules

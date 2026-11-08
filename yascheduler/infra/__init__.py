@@ -6,6 +6,7 @@
 # endregion MODULE_CONTRACT
 
 from .cloud import CloudAdapter, CloudProvisionerImpl, resolve_adapter
+from .local_inputs import capture_input_snapshot
 from .notifier import webhook_handler
 from .persistence import (
     MigrationState,
@@ -39,6 +40,7 @@ __all__ = [
     "TaskDeployer",
     "apply_migrations",
     "apply_schema",
+    "capture_input_snapshot",
     "check_migration_status",
     "list_private_keys",
     "resolve_adapter",

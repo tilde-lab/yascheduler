@@ -36,7 +36,10 @@ from yascheduler.entrypoints import Config
 from yascheduler.infra.persistence import PostgresDbConfig
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Sequence
+
     from yascheduler.application.uow import AbstractUnitOfWork
+    from yascheduler.domain import TaskInputEntry
 
 
 # =============================================================================
@@ -85,6 +88,12 @@ def _make_task(**overrides: Any) -> Task:
     }
     base.update(overrides)
     return Task(**base)  # type: ignore[arg-type]
+
+
+async def _aiter(entries: Sequence[TaskInputEntry]) -> AsyncIterator[TaskInputEntry]:
+    """Yield snapshot entries the way the allocation use case hands them over."""
+    for entry in entries:
+        yield entry
 
 
 def make_orchestrator() -> Orchestrator:
@@ -186,7 +195,8 @@ class TestStartTaskOnMachine:
         mock_uow.__aexit__ = AsyncMock(return_value=False)
         orch._uow_factory = lambda: mock_uow  # type: ignore[method-assign]
 
-        result = await orch._start_task_on_machine(session, engine, task)
+        entries = _aiter(())
+        result = await orch._start_task_on_machine(session, engine, task, entries)
 
         assert result is True
         session.get_cpu_cores.assert_not_called()
@@ -194,6 +204,7 @@ class TestStartTaskOnMachine:
             session,
             engine,
             task,
+            entries,
             8,
             orch._remote_defaults.engines_dir,
         )
@@ -225,7 +236,8 @@ class TestStartTaskOnMachine:
         mock_uow.__aexit__ = AsyncMock(return_value=False)
         orch._uow_factory = lambda: mock_uow  # type: ignore[method-assign]
 
-        result = await orch._start_task_on_machine(session, engine, task)
+        entries = _aiter(())
+        result = await orch._start_task_on_machine(session, engine, task, entries)
 
         assert result is True
         session.get_cpu_cores.assert_awaited_once()
@@ -233,6 +245,7 @@ class TestStartTaskOnMachine:
             session,
             engine,
             task,
+            entries,
             4,
             orch._remote_defaults.engines_dir,
         )
@@ -261,7 +274,8 @@ class TestStartTaskOnMachine:
         mock_uow.__aexit__ = AsyncMock(return_value=False)
         orch._uow_factory = lambda: mock_uow  # type: ignore[method-assign]
 
-        result = await orch._start_task_on_machine(session, engine, task)
+        entries = _aiter(())
+        result = await orch._start_task_on_machine(session, engine, task, entries)
 
         assert result is True
         session.get_cpu_cores.assert_awaited_once()
@@ -269,6 +283,7 @@ class TestStartTaskOnMachine:
             session,
             engine,
             task,
+            entries,
             4,
             orch._remote_defaults.engines_dir,
         )

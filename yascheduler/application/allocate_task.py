@@ -24,7 +24,7 @@ from yascheduler.domain.exceptions import NodeRowNotFoundError
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
     from pathlib import PurePath
 
     from yascheduler.domain import (
@@ -32,11 +32,20 @@ if TYPE_CHECKING:
         Engine,
         EngineRepository,
         MachineRepository,
+        RunningTask,
+        TaskInputEntry,
     )
     from yascheduler.infra import OccupancyChecker
+    from yascheduler.shared import TypeAlias
 
     from .allocation_tracker import AllocationTracker
     from .uow import AbstractUnitOfWork
+
+    # Engine spawn hook: one signature, three use sites in this module.
+    StartTaskOnMachine: TypeAlias = Callable[
+        [MachineSession, Engine, RunningTask, AsyncIterator[TaskInputEntry]],
+        Awaitable[bool],
+    ]
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +96,7 @@ async def _try_start_on_machine(
     task: TodoTask,
     occupancy_checker: OccupancyChecker,
     uow_factory: Callable[[], AbstractUnitOfWork],
-    start_task_on_machine: Callable[
-        [MachineSession, Engine, RunningTask], Awaitable[bool]
-    ],
+    start_task_on_machine: StartTaskOnMachine,
     tracker: AllocationTracker,
     remote_tasks_dir: PurePath,
 ) -> bool:
@@ -110,7 +117,11 @@ async def _try_start_on_machine(
     # created on the losing host.
     async with uow_factory() as uow:
         await uow.tasks.save(running, expected_status=TaskStatus.TO_DO)
-        if not await start_task_on_machine(session, engine, running):
+        # Stream the snapshot entries from the same connection and transaction
+        # that holds the claimed row: deployment reads one entry at a time and
+        # never materialises the tree.
+        entries = uow.tasks.iter_input_entries(running.task_id)
+        if not await start_task_on_machine(session, engine, running, entries):
             await uow.rollback()
             return False
         await uow.commit()
@@ -168,9 +179,7 @@ async def _allocate_free_machine(
     uow_factory: Callable[[], AbstractUnitOfWork],
     repository: MachineRepository,
     occupancy_checker: OccupancyChecker,
-    start_task_on_machine: Callable[
-        [MachineSession, Engine, RunningTask], Awaitable[bool]
-    ],
+    start_task_on_machine: StartTaskOnMachine,
     tracker: AllocationTracker,
     remote_tasks_dir: PurePath,
 ) -> bool:
@@ -387,9 +396,7 @@ async def allocate_task(
     repository: MachineRepository,
     occupancy_checker: OccupancyChecker,
     clouds: CloudProvisioner,
-    start_task_on_machine: Callable[
-        [MachineSession, Engine, RunningTask], Awaitable[bool]
-    ],
+    start_task_on_machine: StartTaskOnMachine,
     tracker: AllocationTracker,
     allocation_lock: asyncio.Lock,
     remote_tasks_dir: PurePath,

@@ -32,8 +32,8 @@ def _current_migration_status(monkeypatch: pytest.MonkeyPatch) -> None:
         MagicMock(
             return_value=MigrationStatus(
                 MigrationState.CURRENT,
-                "013",
-                "013",
+                "014",
+                "014",
             )
         ),
     )
@@ -82,7 +82,7 @@ class TestRunDaemonShape:
         [
             (MigrationState.MISSING, None, "migration metadata is absent"),
             (MigrationState.EMPTY, None, "migrations are unapplied"),
-            (MigrationState.BEHIND, "011", "applied: 011; required: 013"),
+            (MigrationState.BEHIND, "011", "applied: 011; required: 014"),
         ],
     )
     def test_run_daemon_rejects_unmigrated_database_before_construction(
@@ -97,7 +97,7 @@ class TestRunDaemonShape:
         monkeypatch.setattr(
             daemon_common,
             "check_migration_status",
-            MagicMock(return_value=MigrationStatus(state, applied, "013")),
+            MagicMock(return_value=MigrationStatus(state, applied, "014")),
         )
 
         config = MagicMock()
@@ -121,7 +121,7 @@ class TestRunDaemonShape:
         monkeypatch.setattr(
             daemon_common,
             "check_migration_status",
-            MagicMock(return_value=MigrationStatus(MigrationState.AHEAD, "014", "013")),
+            MagicMock(return_value=MigrationStatus(MigrationState.AHEAD, "015", "014")),
         )
 
         with pytest.raises(

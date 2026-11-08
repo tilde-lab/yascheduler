@@ -16,8 +16,6 @@ import pytest
 
 from yascheduler.infra.cloud.providers.vultr import VultrClient, get_ssh_key_id
 
-pytestmark = pytest.mark.integration
-
 log = logging.getLogger("integration.test_vultr_live")
 
 # Listing visibility windows: Vultr listings are usually read-after-write

@@ -122,8 +122,9 @@ def test_migration_013_ncpus_nullable() -> None:
 
         # Apply schema (CREATE TABLE IF NOT EXISTS is a no-op on existing tables)
         apply_schema(config)
-        # Apply migrations — runs 013 since last applied is '012'
-        apply_migrations(config)
+        # Apply migrations — runs exactly 013: tracker is at '012' and upto
+        # caps the chain, so later migrations cannot leak into this era test.
+        apply_migrations(config, upto="013")
 
         conn = _connect(config)
         try:

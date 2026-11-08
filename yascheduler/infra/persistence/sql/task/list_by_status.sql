@@ -8,6 +8,7 @@ SELECT
     error,
     webhook_custom_params,
     extra,
+    output_selections,
     status,
     allocated_node_id,
     created_at,

@@ -3,7 +3,12 @@
 - **Status:** Accepted
 - **Date:** 2026-07-06
 - **Supersedes:**
-- **Superseded by:**
+- **Superseded by:** [ADR-0019](ADR-0019-recursive-task-file-transfers.md),
+  only the placement of task input files in `extra`
+
+Task input storage is partially superseded by ADR-0019. The decisions below
+about typed task fields, unrelated user metadata, and lifecycle mutations
+remain in force.
 
 ## Context
 

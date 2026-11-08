@@ -1,11 +1,11 @@
-"""Implementation-agnostic integration test — Yascheduler query path against real PostgreSQL (5-key shape).
+"""Implementation-agnostic integration test — Yascheduler query path against real PostgreSQL (6-key shape).
 
 Implementation-agnostic: asserts observable behavior only (never isinstance
 on db.TaskStatus). Valid both before the UoW swap (DB-backed) and after.
 """
 # region MODULE_CONTRACT
 # PURPOSE: Implementation-agnostic integration test pinning the Yascheduler query-method output shape against real PostgreSQL.
-# SCOPE: Submit a real task, query via jobs=[id] and status=[0], assert 5-key dict shape with nested node object.
+# SCOPE: Submit a real task, query via jobs=[id] and status=[0], assert 6-key dict shape with top-level input entries and a nested node object.
 # KEYWORDS: Yascheduler query, Postgres, task dict shape
 # endregion MODULE_CONTRACT
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from yascheduler.infra.persistence import PostgresDbConfig
 
-EXPECTED_KEYS = {"task_id", "label", "status", "metadata", "node"}
+EXPECTED_KEYS = {"task_id", "label", "status", "metadata", "input_entries", "node"}
 
 
 @pytest.fixture(scope="session")
@@ -73,9 +73,9 @@ def _submit_task(
 
 
 class TestClientQueryIntegration:
-    """Implementation-agnostic: query methods return 5-key Mapping shape with nested node object."""
+    """Implementation-agnostic: query methods return 6-key Mapping shape with input entries and nested node object."""
 
-    def test_query_by_jobs_returns_five_key_mapping_with_node(
+    def test_query_by_jobs_returns_six_key_mapping_with_node(
         self,
         _query_config: str,
         _submit_task: int,
@@ -95,8 +95,18 @@ class TestClientQueryIntegration:
         assert "cloud" not in mapping
         assert "node" in mapping
         assert isinstance(mapping["metadata"], dict)
+        # The legacy filename/value key is derived from the typed snapshot,
+        # preserving the pre-snapshot query shape for legacy consumers.
+        assert mapping["metadata"]["1.input"] == "hello"
+        assert mapping["input_entries"] == [
+            {
+                "path": "1.input",
+                "kind": "file",
+                "content_base64": "aGVsbG8=",
+            }
+        ]
 
-    def test_query_by_status_returns_five_key_mapping_with_node(
+    def test_query_by_status_returns_six_key_mapping_with_node(
         self,
         _query_config: str,
         _submit_task: int,

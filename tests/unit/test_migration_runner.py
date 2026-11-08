@@ -7,7 +7,7 @@ schema.sql last_migration CONSTANT matching the latest migration's prefix_id.
 """
 # region MODULE_CONTRACT
 # PURPOSE: Unit tests for the migration runner helpers and migration-directory invariants.
-# SCOPE: Migration runner helpers: _prefix_id, _pending, _scan_migrations, _one_migration_subclass; prefix_id uniqueness and CONSTANT drift guard.
+# SCOPE: Migration runner helpers: _prefix_id, _pending, _scan_migrations, _one_migration_subclass, apply_migrations upto capping; prefix_id uniqueness and CONSTANT drift guard.
 # KEYWORDS: migration runner, _prefix_id, _scan_migrations, uniqueness
 # endregion MODULE_CONTRACT
 
@@ -28,6 +28,7 @@ from yascheduler.infra.persistence.postgres_migrations import (
     _pending,
     _prefix_id,
     _scan_migrations,
+    apply_migrations,
     check_migration_status,
 )
 
@@ -57,6 +58,29 @@ def test_pending_returns_all_when_last_is_none() -> None:
 def test_pending_filters_greater_than_last() -> None:
     files = [Path("001_a.sql"), Path("002_b.sql"), Path("010_c.sql")]
     assert _pending("001", files) == [Path("002_b.sql"), Path("010_c.sql")]
+
+
+def test_pending_upto_caps_inclusively() -> None:
+    files = [Path("001_a.sql"), Path("002_b.sql"), Path("010_c.sql")]
+    assert _pending("001", files, upto="002") == [Path("002_b.sql")]
+    assert _pending("001", files, upto="010") == [
+        Path("002_b.sql"),
+        Path("010_c.sql"),
+    ]
+
+
+def test_pending_upto_at_or_below_last_applies_nothing() -> None:
+    files = [Path("001_a.sql"), Path("002_b.sql"), Path("010_c.sql")]
+    assert _pending("002", files, upto="002") == []
+    assert _pending("002", files, upto="001") == []
+
+
+def test_pending_upto_none_keeps_head_of_chain() -> None:
+    files = [Path("001_a.sql"), Path("002_b.sql"), Path("010_c.sql")]
+    assert _pending("001", files, upto=None) == [
+        Path("002_b.sql"),
+        Path("010_c.sql"),
+    ]
 
 
 def test_scan_migrations_sorts_by_filename(
@@ -245,4 +269,75 @@ def test_check_migration_status_propagates_database_errors(
     with pytest.raises(RuntimeError, match="permission denied"):
         check_migration_status(_db_config())  # type: ignore[arg-type]
 
+    assert conn.closed
+
+
+class _ApplyMigrationsConnection:
+    """In-memory pg8000 double recording tracker inserts for apply_migrations."""
+
+    def __init__(self, last: str | None) -> None:
+        self.last = last
+        self.applied: list[str] = []
+        self.closed = False
+
+    def run(self, query: str, **params: object) -> list[list[object]]:
+        if "MAX(migration_id)" in query:
+            return [[self.last]]
+        if "INSERT INTO yascheduler_migrations" in query:
+            self.applied.append(str(params["p"]))
+        return []
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_apply_migrations_upto_applies_only_the_capped_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """upto isolates one chain step: tracker at '001', upto='002' applies 002 only."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "001_a.sql").write_text("-- a")
+    (migrations_dir / "002_b.sql").write_text("-- b")
+    (migrations_dir / "003_c.sql").write_text("-- c")
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations._MIGRATIONS_DIR",
+        migrations_dir,
+    )
+    conn = _ApplyMigrationsConnection("001")
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations.Connection",
+        lambda **_kwargs: conn,
+    )
+
+    apply_migrations(_db_config(), upto="002")  # type: ignore[arg-type]
+
+    assert conn.applied == ["002"]
+    assert conn.closed
+
+
+def test_apply_migrations_upto_none_applies_through_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """upto=None preserves the historical head-of-chain behavior."""
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "001_a.sql").write_text("-- a")
+    (migrations_dir / "002_b.sql").write_text("-- b")
+    (migrations_dir / "003_c.sql").write_text("-- c")
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations._MIGRATIONS_DIR",
+        migrations_dir,
+    )
+    conn = _ApplyMigrationsConnection("001")
+    monkeypatch.setattr(
+        "yascheduler.infra.persistence.postgres_migrations.Connection",
+        lambda **_kwargs: conn,
+    )
+
+    apply_migrations(_db_config())  # type: ignore[arg-type]
+
+    assert conn.applied == ["002", "003"]
     assert conn.closed

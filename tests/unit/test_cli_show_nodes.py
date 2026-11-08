@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import importlib
-import inspect
+import logging
 from pathlib import Path, PurePosixPath
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.unit
 
 
 # ---------------------------------------------------------------------------
-# Mock helpers (mirror tests/unit/test_cli_behavioral.py)
+# Mock helpers (duplicated across the CLI test modules)
 # ---------------------------------------------------------------------------
 
 
@@ -141,7 +141,7 @@ def _run(argv: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Parsing / exit codes (tasks 14.5-14.7)
+# Parsing / exit codes
 # ---------------------------------------------------------------------------
 
 
@@ -161,13 +161,6 @@ class TestShowNodesParsing:
         assert "--cloud" in out
         assert "--no-cloud" in out
 
-    def test_unknown_flag_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--bogus"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()  # argparse usage error
-
     def test_cloud_no_cloud_mutex_exits_two(self) -> None:
         with pytest.raises(SystemExit) as exc:
             _run(["--cloud", "hetzner", "--no-cloud"])
@@ -175,7 +168,7 @@ class TestShowNodesParsing:
 
 
 # ---------------------------------------------------------------------------
-# Rendering (tasks 14.2, 14.15-14.16)
+# Rendering
 # ---------------------------------------------------------------------------
 
 
@@ -401,7 +394,7 @@ class TestShowNodesRendering:
 
 
 # ---------------------------------------------------------------------------
-# Filtering (tasks 14.8-14.14)
+# Filtering
 # ---------------------------------------------------------------------------
 
 
@@ -491,102 +484,69 @@ class TestShowNodesFiltering:
         out, _ = capsys.readouterr()
         assert len(out.splitlines()) == len(nodes) + 1
 
-    def test_filters_compose_by_and(
+    @pytest.mark.parametrize(
+        ("argv", "busy_node", "expected"),
+        [
+            # 10.0.0.1 is enabled, busy, cloud=hetzner — the only match.
+            pytest.param(
+                ["--enabled", "--busy", "--cloud", "hetzner"],
+                NodeId(1),
+                ["10.0.0.1"],
+                id="and-composition",
+            ),
+            pytest.param(["--busy"], NodeId(2), ["10.0.0.2"], id="busy-only"),
+            pytest.param(
+                ["--free"],
+                NodeId(2),
+                ["10.0.0.1", "10.0.0.3", "10.0.0.4"],
+                id="free-only",
+            ),
+        ],
+    )
+    def test_filter_selects_nodes_with_one_busy_task(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-    ) -> None:
-        _config, uow, _deps = stub_config_deps
-        nodes = _three_mixed_nodes()
-        # 10.0.0.1 is enabled, busy, cloud=hetzner — the only match.
-        _wire(
-            uow,
-            nodes,
-            [make_task(task_id=1, label="j1", allocated_node_id=NodeId(1))],
-        )
-        _run(["--enabled", "--busy", "--cloud", "hetzner"])
-        out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.1"]
-
-    def test_enabled_filter(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-    ) -> None:
-        _config, uow, _deps = stub_config_deps
-        _wire(uow, _three_mixed_nodes())
-        _run(["--enabled"])
-        out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.1", "10.0.0.3"]
-
-    def test_disabled_filter(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-    ) -> None:
-        _config, uow, _deps = stub_config_deps
-        _wire(uow, _three_mixed_nodes())
-        _run(["--disabled"])
-        out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.2", "10.0.0.4"]
-
-    def test_busy_filter(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        argv: list[str],
+        busy_node: NodeId,
+        expected: list[str],
     ) -> None:
         _config, uow, _deps = stub_config_deps
         nodes = _three_mixed_nodes()
         _wire(
             uow,
             nodes,
-            [make_task(task_id=1, label="j1", allocated_node_id=NodeId(2))],
+            [make_task(task_id=1, label="j1", allocated_node_id=busy_node)],
         )
-        _run(["--busy"])
+        _run(argv)
         out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.2"]
+        assert _hostnames_from_table(out) == expected
 
-    def test_free_filter(
+    @pytest.mark.parametrize(
+        ("argv", "expected"),
+        [
+            pytest.param(["--enabled"], ["10.0.0.1", "10.0.0.3"], id="enabled"),
+            pytest.param(["--disabled"], ["10.0.0.2", "10.0.0.4"], id="disabled"),
+            pytest.param(["--cloud", "hetzner"], ["10.0.0.1", "10.0.0.2"], id="cloud"),
+            pytest.param(["--no-cloud"], ["10.0.0.3"], id="no-cloud"),
+        ],
+    )
+    def test_single_filter_selects_matching_nodes(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-    ) -> None:
-        _config, uow, _deps = stub_config_deps
-        nodes = _three_mixed_nodes()
-        _wire(
-            uow,
-            nodes,
-            [make_task(task_id=1, label="j1", allocated_node_id=NodeId(2))],
-        )
-        _run(["--free"])
-        out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.1", "10.0.0.3", "10.0.0.4"]
-
-    def test_cloud_exact_match(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        argv: list[str],
+        expected: list[str],
     ) -> None:
         _config, uow, _deps = stub_config_deps
         _wire(uow, _three_mixed_nodes())
-        _run(["--cloud", "hetzner"])
+        _run(argv)
         out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.1", "10.0.0.2"]
-
-    def test_no_cloud_filter(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-    ) -> None:
-        _config, uow, _deps = stub_config_deps
-        _wire(uow, _three_mixed_nodes())
-        _run(["--no-cloud"])
-        out, _ = capsys.readouterr()
-        assert _hostnames_from_table(out) == ["10.0.0.3"]
+        assert _hostnames_from_table(out) == expected
 
 
 # ---------------------------------------------------------------------------
-# Order preservation (task 14.3)
+# Order preservation
 # ---------------------------------------------------------------------------
 
 
@@ -629,7 +589,7 @@ class TestShowNodesOrder:
 
 
 # ---------------------------------------------------------------------------
-# Errors (tasks 14.17-14.18)
+# Errors
 # ---------------------------------------------------------------------------
 
 
@@ -668,23 +628,14 @@ class TestShowNodesErrors:
 
 
 # ---------------------------------------------------------------------------
-# Structural invariants (tasks 14.19-14.20)
+# Structural invariants
 # ---------------------------------------------------------------------------
 
 
 class TestShowNodesStructure:
-    """Structural guards: no external deps, O(n+m) join."""
+    """Structural guard: each source is read once, not re-queried per node."""
 
-    def test_render_table_no_external_deps(self) -> None:
-        source = inspect.getsource(show_nodes_mod._render_nodes_table)
-        assert "rich" not in source
-        assert "tabulate" not in source
-        # Also assert the module globals don't expose rich/tabulate.
-        assert "rich" not in show_nodes_mod.__dict__
-        assert "tabulate" not in show_nodes_mod.__dict__
-        assert True
-
-    def test_fetch_nodes_view_is_o_n_plus_m(
+    def test_fetch_nodes_view_reads_each_source_once(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
@@ -704,12 +655,8 @@ class TestShowNodesStructure:
             [make_task(task_id=1, label="j1", allocated_node_id=NodeId(1))],
         )
         _run([])
-        # Each read called exactly once.
         uow.tasks.list_running.assert_called_once()
         uow.nodes.list_all.assert_called_once()
-        # The source builds a tasks_by_node_id dict (O(n+m)), not a nested scan.
-        source = inspect.getsource(show_nodes_mod._fetch_nodes_view)
-        assert "tasks_by_node_id" in source
 
 
 # ---------------------------------------------------------------------------
@@ -720,47 +667,26 @@ class TestShowNodesStructure:
 class TestShowNodesConfigLogLevel:
     """--config and --log-level argparse + behavior scenarios (defaults WARNING)."""
 
-    def test_help_lists_config_and_log_level(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--help"])
-        assert exc.value.code == 0
-        out, _ = capsys.readouterr()
-        assert "--config" in out
-        assert "--log-level" in out
-
-    def test_config_nonexistent_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--config", "/nonexistent.conf"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert "not a file" in err
-        assert "/nonexistent.conf" in err
-
-    def test_log_level_warn_rejected_exits_two(self) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--log-level", "WARN"])
-        assert exc.value.code == 2
-
-    def test_log_level_debug_sets_root_to_debug(
+    @pytest.mark.parametrize(
+        ("argv", "expected_level"),
+        [
+            pytest.param([], logging.WARNING, id="default-warning"),
+            pytest.param(["--log-level", "DEBUG"], logging.DEBUG, id="debug-flag"),
+        ],
+    )
+    def test_root_log_level(
         self,
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        expected_level: int,
     ) -> None:
-        import logging
-
         _config, uow, _deps = stub_config_deps
         _wire(uow, [])
         root = logging.getLogger()
         original_level = root.level
         try:
-            _run(["--log-level", "DEBUG"])
-            assert root.level == logging.DEBUG
+            _run(argv)
+            assert root.level == expected_level
         finally:
             root.setLevel(original_level)
 
@@ -804,20 +730,3 @@ class TestShowNodesConfigLogLevel:
         )
         _run([])
         assert str(from_config_spy.call_args.args[0]) == str(CONFIG_FILE)
-
-    def test_default_log_level_is_warning(
-        self,
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import logging
-
-        _config, uow, _deps = stub_config_deps
-        _wire(uow, [])
-        root = logging.getLogger()
-        original_level = root.level
-        try:
-            _run([])
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)

@@ -114,8 +114,9 @@ def test_migration_012_node_rename_and_fields() -> None:
 
         # Apply schema (CREATE TABLE IF NOT EXISTS is a no-op on existing tables)
         apply_schema(config)
-        # Apply migrations — runs 012 since last applied is '011'
-        apply_migrations(config)
+        # Apply migrations — runs exactly 012: tracker is at '011' and upto
+        # caps the chain, so later migrations cannot leak into this era test.
+        apply_migrations(config, upto="012")
 
         conn = _connect(config)
         try:

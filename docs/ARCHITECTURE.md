@@ -92,8 +92,9 @@ events flow out through `uow.collect_events()` → `MessageBus` (§4.3, §4.4).
 
 **Task lifecycle use cases** (drive the `TO_DO → RUNNING → DONE` arc of
 §3): `submit_task`, `allocate_task` (free-machine match + cloud fallback),
-`consume_task` (download + finalise; defers on transient-only SFTP
-failures, finalises on success or any permanent error), `abandon_node`
+`consume_task` (download, finalise, then best-effort remote cleanup;
+defers while any transient SFTP failure remains, finalises on a pass with
+none), `abandon_node`
 (never-connected cloud-node cleanup: best-effort VM delete + row remove +
 tracker discard), `deallocate_nodes` (idle cloud-node disable + delete),
 `query_tasks` (read-only, no commit — backs the client and
@@ -162,8 +163,9 @@ facade; the orchestrator receives them as separate dependencies and
 resolves a session per tick via `repository.get_session(ip)`. Deployment,
 download, and `run_bg`/`upload` are single-attempt (non-idempotent spawn /
 `sftp.put` / `sftp.get`); `get_cpu_cores` keeps its backoff (idempotent
-read). Download isolates failures per-file and gates the remote-`rmtree`
-on `not transient_errors AND not permanent_errors`.
+read). Download isolates failures per-file and never removes the remote
+tree; a separate best-effort `cleanup_remote` removes it only after the
+terminal transition is committed.
 
 **Platform detection** (`platform/`): `RemoteMachineAdapter` registry
 of Linux/Windows variants; `detect.py` runs adapter checks concurrently;
@@ -303,12 +305,15 @@ remove + tracker discard for the stuck `TO_DO` task).
 passes where a task's machine is gone, the consumer records
 `TaskAbandoned`, fails the task, and discards the tracker slot.
 
-**Consume error handling**: `consume_task` defers on transient-only SFTP
-failures (task stays `RUNNING`, remote dir preserved, tracker slot
-retained, re-consumed next tick) and finalises on success or any
-permanent error (→ `DONE`, remote dir removed). An in-flight consume
-guard prevents two workers from concurrently finalising the same
-`RUNNING` task across overlapping producer cycles.
+**Consume error handling**: `consume_task` defers while any transient SFTP
+failure remains, including alongside permanent ones (task stays `RUNNING`,
+remote dir preserved, tracker slot retained, re-consumed next tick), and
+finalises on a pass whose transient list is empty, using that pass's own
+errors (→ `DONE`). The terminal transition is committed first; the remote
+dir is then removed by a best-effort cleanup whose failure is logged and
+cannot change the outcome. An in-flight consume guard prevents two
+workers from concurrently finalising the same `RUNNING` task across
+overlapping producer cycles.
 
 ```txt
 submit_task ──▶ TO_DO ──allocate_task──▶ RUNNING ──consume_task──▶ DONE

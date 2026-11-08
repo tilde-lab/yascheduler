@@ -5,7 +5,7 @@
 -- last_migration is the single manual edit point when a migration is added.
 DO $$
 DECLARE
-  last_migration CONSTANT TEXT := '013';
+  last_migration CONSTANT TEXT := '015';
 BEGIN
   IF to_regclass('yascheduler_migrations') IS NULL THEN
     EXECUTE 'CREATE TABLE yascheduler_migrations (
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS yascheduler_tasks (
     webhook_custom_params JSONB NOT NULL DEFAULT '{}'::JSONB,
     error TEXT,
     extra JSONB NOT NULL DEFAULT '{}'::JSONB,
+    output_selections TEXT [],
     CONSTRAINT task_status_field_invariants CHECK (
         (status = 'TO_DO' AND allocated_node_id IS NULL AND error IS NULL)
         OR (
@@ -80,6 +81,26 @@ CREATE TABLE IF NOT EXISTS yascheduler_tasks (
             AND remote_folder IS NOT NULL
         )
         OR (status = 'DONE')
+    )
+);
+
+-- Task-owned input snapshot entries: one row per captured file or
+-- directory of a task's input snapshot. `path` is the canonical task-relative
+-- path; `content` holds exact file bytes (an empty byte string is an empty
+-- file, never a directory) and is NULL for directories. Rows are immutable
+-- after insertion and cascade only with their owning task.
+CREATE TABLE IF NOT EXISTS yascheduler_task_inputs (
+    task_id INTEGER NOT NULL REFERENCES yascheduler_tasks (
+        task_id
+    ) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    content BYTEA,
+    CONSTRAINT task_input_pk PRIMARY KEY (task_id, path),
+    CONSTRAINT task_input_kind_values CHECK (kind IN ('file', 'directory')),
+    CONSTRAINT task_input_kind_content_invariants CHECK (
+        (kind = 'file' AND content IS NOT NULL)
+        OR (kind = 'directory' AND content IS NULL)
     )
 );
 

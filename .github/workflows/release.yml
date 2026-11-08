@@ -58,7 +58,7 @@ jobs:
       - name: Verify package version
         shell: bash
         run: |
-          version=$(uv run --no-sync cz version --project)
+          version=$(uv version --short)
           if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
             echo '::error::Release tag does not match the package version.'
             exit 1

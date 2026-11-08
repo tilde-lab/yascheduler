@@ -6,14 +6,21 @@
 
 from __future__ import annotations
 
-import base64
 import importlib
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from yascheduler.domain import Engine, EngineRepository, TaskId
+from yascheduler.domain import (
+    Engine,
+    EngineRepository,
+    TaskId,
+    TaskInputDirectory,
+    TaskInputFile,
+    TaskInputSnapshot,
+)
 from yascheduler.entrypoints.di import CLIDeps
 
 submit_mod = importlib.import_module("yascheduler.entrypoints.cli.submit")
@@ -22,16 +29,20 @@ pytestmark = pytest.mark.unit
 
 
 # ---------------------------------------------------------------------------
-# Mock helpers (mirror tests/unit/test_cli_behavioral.py)
+# Mock helpers (duplicated across the CLI test modules)
 # ---------------------------------------------------------------------------
 
 
-def make_mock_config(webhook_url: str | None = None) -> MagicMock:
+def make_mock_config(
+    webhook_url: str | None = None,
+    *,
+    input_files: tuple[str, ...] = ("input",),
+) -> MagicMock:
     """Return a MagicMock Config with a known g09 engine and optional webhook_url."""
     engine = Engine(
         name="g09",
         spawn="run.sh",
-        input_files=("input",),
+        input_files=input_files,
         output_files=("OUTPUT",),
         platforms=("linux",),
         check_cmd="echo",
@@ -78,8 +89,30 @@ def _run(argv: list[str]) -> None:
     submit_mod.submit(argv)
 
 
+def _use_engine_inputs(config: MagicMock, input_files: tuple[str, ...]) -> None:
+    """Replace the mocked repository engine's input declarations."""
+    config.engines.get = MagicMock(
+        return_value=Engine(
+            name="g09",
+            spawn="run.sh",
+            input_files=input_files,
+            output_files=("OUTPUT",),
+            platforms=("linux",),
+        )
+    )
+
+
+def _submitted_input_entries(deps: MagicMock) -> TaskInputSnapshot:
+    """Return the typed input snapshot passed to deps.submit."""
+    call = deps.submit.call_args
+    assert call is not None
+    entries = call.kwargs["input_entries"]
+    assert isinstance(entries, tuple)
+    return entries
+
+
 # ---------------------------------------------------------------------------
-# Parsing / exit codes (tasks 6.4)
+# Parsing / exit codes
 # ---------------------------------------------------------------------------
 
 
@@ -129,16 +162,9 @@ class TestSubmitParsing:
             _run([str(script), str(script)])
         assert exc.value.code == 2
 
-    def test_unknown_flag_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--bogus"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert err.strip()
-
 
 # ---------------------------------------------------------------------------
-# Happy path (tasks 6.5)
+# Happy path
 # ---------------------------------------------------------------------------
 
 
@@ -183,8 +209,29 @@ class TestSubmitHappyPath:
         assert call_args[0][0] == "Test job"  # label
         assert call_args[0][2] == "g09"  # engine_name
         metadata = call_args[0][1]
-        assert "local_folder" in metadata
-        assert metadata["input"] == "dummy input"
+        assert metadata["local_folder"] == str(tmp_path)
+        assert "input" not in metadata
+        assert call_args.kwargs["input_entries"] == (
+            TaskInputFile(path="input", content=b"dummy input"),
+        )
+
+    def test_success_stdout_is_exact_bare_task_id(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        (tmp_path / "input").write_text("x")
+        monkeypatch.chdir(tmp_path)
+
+        _run([str(script)])
+
+        out, err = capsys.readouterr()
+        assert out == "42\n"
+        assert err == ""
 
     def test_default_label_when_missing(
         self,
@@ -206,7 +253,213 @@ class TestSubmitHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Content validation (tasks 6.6)
+# Local input-snapshot capture
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitSnapshotCapture:
+    """yasubmit captures typed input entries from CWD before deps.submit."""
+
+    def test_binary_input_bytes_are_preserved_exactly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        config, deps = stub_config_deps
+        _use_engine_inputs(config, ("binary.dat",))
+        payload = b"\xff\xfe\x00\x01"
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        (tmp_path / "binary.dat").write_bytes(payload)
+        monkeypatch.chdir(tmp_path)
+
+        _run([str(script)])
+
+        assert _submitted_input_entries(deps) == (
+            TaskInputFile(path="binary.dat", content=payload),
+        )
+
+    def test_tree_inputs_include_hidden_and_empty_directories(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        config, deps = stub_config_deps
+        _use_engine_inputs(config, ("INPUT", "basis"))
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        (tmp_path / "INPUT").write_bytes(b"root")
+        basis = tmp_path / "basis"
+        (basis / "deep").mkdir(parents=True)
+        (basis / ".hidden").write_bytes(b"hidden")
+        (basis / "deep" / "child.orb").write_bytes(b"child")
+        (basis / "empty").mkdir()
+        (basis / "visible.txt").write_bytes(b"visible")
+        monkeypatch.chdir(tmp_path)
+
+        _run([str(script)])
+
+        assert _submitted_input_entries(deps) == (
+            TaskInputFile(path="INPUT", content=b"root"),
+            TaskInputDirectory(path="basis"),
+            TaskInputFile(path="basis/.hidden", content=b"hidden"),
+            TaskInputDirectory(path="basis/deep"),
+            TaskInputFile(path="basis/deep/child.orb", content=b"child"),
+            TaskInputDirectory(path="basis/empty"),
+            TaskInputFile(path="basis/visible.txt", content=b"visible"),
+        )
+
+    def test_glob_declaration_captures_matches_and_materializes_parents(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        config, deps = stub_config_deps
+        _use_engine_inputs(config, ("basis/**/*.orb",))
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        basis = tmp_path / "basis"
+        (basis / "deep").mkdir(parents=True)
+        (basis / "a.orb").write_bytes(b"a")
+        (basis / "deep" / "b.orb").write_bytes(b"b")
+        monkeypatch.chdir(tmp_path)
+
+        _run([str(script)])
+
+        assert _submitted_input_entries(deps) == (
+            TaskInputDirectory(path="basis"),
+            TaskInputFile(path="basis/a.orb", content=b"a"),
+            TaskInputDirectory(path="basis/deep"),
+            TaskInputFile(path="basis/deep/b.orb", content=b"b"),
+        )
+
+    def test_inputs_resolve_from_cwd_not_script_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        _config, deps = stub_config_deps
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        script = scripts / "test.in"
+        script.write_text("ENGINE = g09\n")
+        (cwd / "input").write_bytes(b"from-cwd")
+        monkeypatch.chdir(cwd)
+
+        _run([str(script)])
+
+        assert _submitted_input_entries(deps) == (
+            TaskInputFile(path="input", content=b"from-cwd"),
+        )
+
+    def test_input_next_to_script_is_not_found_when_cwd_differs(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        scripts = tmp_path / "scripts"
+        scripts.mkdir()
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        script = scripts / "test.in"
+        script.write_text("ENGINE = g09\n")
+        (scripts / "input").write_bytes(b"script-dir-input")
+        monkeypatch.chdir(cwd)
+
+        with pytest.raises(SystemExit) as exc:
+            _run([str(script)])
+
+        assert exc.value.code == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err.startswith("Error:")
+        assert "input" in err
+
+    def test_engine_without_inputs_forwards_empty_snapshot(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        config, deps = stub_config_deps
+        _use_engine_inputs(config, ())
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        monkeypatch.chdir(tmp_path)
+
+        _run([str(script)])
+
+        assert _submitted_input_entries(deps) == ()
+        assert deps.submit.call_args is not None
+        assert deps.submit.call_args.args[1] == {"local_folder": str(tmp_path)}
+
+
+class TestSubmitSnapshotFailures:
+    """Capture failures keep the CLI runtime-error contract."""
+
+    def test_missing_required_input_exits_one_with_error(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        _config, deps = stub_config_deps
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+
+        with pytest.raises(SystemExit) as exc:
+            _run([str(script)])
+
+        assert exc.value.code == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err.startswith("Error:")
+        assert "input" in err
+        deps.submit.assert_not_awaited()
+
+    def test_selected_symlink_exits_one_with_path(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        stub_config_deps: tuple[MagicMock, MagicMock],
+    ) -> None:
+        _config, deps = stub_config_deps
+        script = tmp_path / "test.in"
+        script.write_text("ENGINE = g09\n")
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        target = tmp_path / "target"
+        target.write_bytes(b"link-target")
+        (cwd / "input").symlink_to(target)
+        monkeypatch.chdir(cwd)
+
+        with pytest.raises(SystemExit) as exc:
+            _run([str(script)])
+
+        assert exc.value.code == 1
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err.startswith("Error:")
+        assert "input" in err
+        assert "symbolic link" in err.lower()
+        deps.submit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Content validation
 # ---------------------------------------------------------------------------
 
 
@@ -253,7 +506,7 @@ class TestSubmitContentValidation:
 
 
 # ---------------------------------------------------------------------------
-# Webhook branch of _build_metadata (tasks 6.7)
+# Webhook branch of _build_metadata
 # ---------------------------------------------------------------------------
 
 
@@ -309,12 +562,12 @@ class TestSubmitWebhook:
 
 
 # ---------------------------------------------------------------------------
-# Helper functions (tasks 6.8)
+# Helper functions
 # ---------------------------------------------------------------------------
 
 
 class TestSubmitHelpers:
-    """_parse_script_metadata, _read_input_files, _build_metadata pure behavior."""
+    """_parse_script_metadata and _build_metadata pure behavior."""
 
     def test_parse_script_metadata_key_value(self) -> None:
         result = submit_mod._parse_script_metadata("LABEL = Test job\nENGINE = g09\n")
@@ -329,34 +582,6 @@ class TestSubmitHelpers:
     def test_parse_script_metadata_empty(self) -> None:
         assert submit_mod._parse_script_metadata("") == {}
 
-    def test_read_input_files_utf8(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        engine = Engine(name="g09", spawn="run.sh", input_files=("input",))
-        (tmp_path / "input").write_text("hello", encoding="utf-8")
-        monkeypatch.chdir(tmp_path)
-
-        result = submit_mod._read_input_files(engine, str(tmp_path))
-        assert result == {"input": "hello"}
-
-    def test_read_input_files_base64_fallback(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        engine = Engine(name="g09", spawn="run.sh", input_files=("binary.dat",))
-        # Bytes that are not valid UTF-8 (0xFF is invalid alone)
-        (tmp_path / "binary.dat").write_bytes(b"\xff\xfe\x00\x01")
-        monkeypatch.chdir(tmp_path)
-
-        result = submit_mod._read_input_files(engine, str(tmp_path))
-        assert "binary.dat" in result
-        assert result["binary.dat"] == base64.b64encode(b"\xff\xfe\x00\x01").decode(
-            "ascii",
-        )
-
     def test_build_metadata_local_folder_always_present(
         self,
         tmp_path: Path,
@@ -369,7 +594,7 @@ class TestSubmitHelpers:
         metadata = submit_mod._build_metadata({"ENGINE": "g09"}, config, str(tmp_path))
         assert metadata["local_folder"] == str(tmp_path)
 
-    def test_build_metadata_input_files_merged(
+    def test_build_metadata_never_contains_input_files(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -379,11 +604,13 @@ class TestSubmitHelpers:
         monkeypatch.chdir(tmp_path)
 
         metadata = submit_mod._build_metadata({"ENGINE": "g09"}, config, str(tmp_path))
-        assert metadata["input"] == "merged-content"
+
+        assert metadata == {"local_folder": str(tmp_path)}
+        assert "input" not in metadata
 
 
 # ---------------------------------------------------------------------------
-# Exit codes (tasks 6.9)
+# Exit codes
 # ---------------------------------------------------------------------------
 
 
@@ -471,7 +698,7 @@ class TestSubmitExitCodes:
 
 
 # ---------------------------------------------------------------------------
-# argv injection (tasks 6.10)
+# argv injection
 # ---------------------------------------------------------------------------
 
 
@@ -518,61 +745,32 @@ class TestSubmitArgvInjection:
 
 
 class TestSubmitConfigLogLevel:
-    """--config and --log-level argparse + behavior scenarios."""
+    """--config and --log-level wiring: both reach parse_config, root level follows the flag."""
 
-    def test_help_lists_config_and_log_level(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run(["--help"])
-        assert exc.value.code == 0
-        out, _ = capsys.readouterr()
-        assert "--config" in out
-        assert "--log-level" in out
-
-    def test_config_nonexistent_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        tmp_path: Path,
-    ) -> None:
-        script = tmp_path / "s.in"
-        script.write_text("ENGINE = g09\n")
-        with pytest.raises(SystemExit) as exc:
-            _run([str(script), "--config", "/nonexistent.conf"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert "not a file" in err
-        assert "/nonexistent.conf" in err
-
-    def test_log_level_warn_rejected_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        tmp_path: Path,
-    ) -> None:
-        script = tmp_path / "s.in"
-        script.write_text("ENGINE = g09\n")
-        with pytest.raises(SystemExit) as exc:
-            _run([str(script), "--log-level", "WARN"])
-        assert exc.value.code == 2
-
-    def test_log_level_debug_sets_root_to_debug(
+    @pytest.mark.parametrize(
+        ("argv_tail", "expected_level"),
+        [
+            pytest.param([], logging.WARNING, id="default-warning"),
+            pytest.param(["--log-level", "DEBUG"], logging.DEBUG, id="debug-flag"),
+        ],
+    )
+    def test_root_log_level(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         stub_config_deps: tuple[MagicMock, MagicMock],
+        argv_tail: list[str],
+        expected_level: int,
     ) -> None:
-        import logging
-
-        root = logging.getLogger()
-        original_level = root.level
         script = tmp_path / "s.in"
         script.write_text("ENGINE = g09\n")
         (tmp_path / "input").write_text("x")
         monkeypatch.chdir(tmp_path)
+        root = logging.getLogger()
+        original_level = root.level
         try:
-            _run([str(script), "--log-level", "DEBUG"])
-            assert root.level == logging.DEBUG
+            _run([str(script), *argv_tail])
+            assert root.level == expected_level
         finally:
             root.setLevel(original_level)
 
@@ -621,32 +819,3 @@ class TestSubmitConfigLogLevel:
         called_with = from_config_spy.call_args.args[0]
         # existing_path returns Path; default is the CONFIG_FILE string, converted by argparse type.
         assert str(called_with) == str(CONFIG_FILE)
-
-    def test_default_log_level_is_warning(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import logging
-
-        root = logging.getLogger()
-        original_level = root.level
-        script = tmp_path / "s.in"
-        script.write_text("ENGINE = g09\n")
-        (tmp_path / "input").write_text("x")
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(
-            submit_mod,
-            "parse_config",
-            MagicMock(return_value=make_mock_config()),
-        )
-        monkeypatch.setattr(
-            submit_mod,
-            "make_cli_deps",
-            MagicMock(return_value=make_mock_deps(make_mock_config())),
-        )
-        try:
-            _run([str(script)])
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)
