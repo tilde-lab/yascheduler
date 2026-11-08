@@ -437,12 +437,17 @@ class Orchestrator:
     # endregion METHOD__connect_grace_for
 
     # region METHOD__allocator_producer
-    # PURPOSE: Bound the next allocation wave to the larger of remaining cloud capacity or current free-machine count so the allocate queue never starves when capacity exists and never floods when it does not.
+    # PURPOSE: Bound the next allocation wave to the larger of remaining cloud capacity, current free-machine count, or the configurable allocate_wave_min floor (LocalSettings, default 10) so the allocate queue never starves when capacity exists and never floods when it does not.
+    # INVARIANTS: The wave is a fixed id-ordered window over TO_DO tasks. Operators must keep allocate_wave_min above the longest run of *unallocatable* tasks that can accumulate at the TO_DO head (unsupported engine, engine platform with no matching machine, per-engine exclude_nodes): such tasks never leave TO_DO, so an all-unallocatable window permanently blocks every allocatable task behind it — the queue starves while compute idles.
     async def _allocator_producer(
         self,
     ) -> AsyncGenerator[UMessage[TaskId, TodoTask], None]:
         ccap = await self._clouds_get_capacity()
-        tlim = max(ccap, len(self._repository.list_free(None)), 10)
+        tlim = max(
+            ccap,
+            len(self._repository.list_free(None)),
+            self._local_settings.allocate_wave_min,
+        )
         async with self._uow_factory() as uow:
             tasks = await uow.tasks.list_todo(limit=tlim)
         if tasks:
