@@ -111,6 +111,8 @@ class YaScheduler(aiida.schedulers.Scheduler):
             )
 
         joblist = self._parse_joblist_output(retval, stdout, stderr)
+        if jobs is not None:
+            self._check_requested_jobs_present(jobs, joblist, retval, stdout)
         if as_dict:
             jobdict = {job.job_id: job for job in joblist}
             if None in jobdict:
@@ -120,6 +122,37 @@ class YaScheduler(aiida.schedulers.Scheduler):
         return joblist
 
     # endregion METHOD_get_jobs
+
+    # region METHOD__check_requested_jobs_present
+    # PURPOSE: Guard the poll against transient yastatus failures silently killing queued AiiDA calculations.
+    @staticmethod
+    def _check_requested_jobs_present(
+        requested: str | list[str],
+        joblist: list[JobInfo],
+        retval: int,
+        stdout: str,
+    ) -> None:
+        """Raise if any explicitly requested job is missing from the parsed list.
+
+        A transient yastatus failure (scheduler or database restarting, CLI
+        configuration error) yields an empty or partial job list. AiiDA's
+        polling contract treats a job absent from the list as DONE, so a
+        queued calculation would be 'retrieved' with no output and fail
+        spuriously. Raising instead makes AiiDA retry the poll and keeps the
+        calculation waiting.
+        """
+        wanted = [requested] if isinstance(requested, str) else list(requested)
+        reported = {job.job_id for job in joblist}
+        missing = [job for job in wanted if job not in reported]
+        if missing:
+            raise SchedulerError(
+                f"yastatus did not report requested job(s) {missing} "
+                f"(retval={retval}, stdout={stdout.strip()[:200]!r}): refusing to "
+                "interpret unreported jobs as finished - scheduler or database "
+                "may be transiently unavailable"
+            )
+
+    # endregion METHOD__check_requested_jobs_present
 
     # region METHOD_kill_job
     # PURPOSE: Report that job cancellation is not supported by yascheduler (always returns False).
