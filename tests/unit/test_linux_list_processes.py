@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from typing import Any
 
-# ps -o pid:255,comm:255,args:255 separates columns with wide padding;
-# linux_list_processes splits on a 10-space run. Use the same here.
+# linux_list_processes splits ps lines on whitespace (split(None, 2));
+# SEP here only keeps the fixture lines readable with wide column gaps.
 SEP = " " * 10
 
 
@@ -67,7 +67,8 @@ async def test_skips_self_wrapper_for_sh_login_shell() -> None:
     pgrep self-matched, and occupancy reported BUSY forever.
     """
     ps_cmd = (
-        "pgrep -f dummyengine | xargs --no-run-if-empty ps -o pid:255,comm:255,args:255"
+        'pids=$(pgrep -f dummyengine); [ -n "$pids" ] '
+        '&& ps -o pid,comm,args -ww $pids'
     )
     header = "PID COMMAND COMMAND"
     self_line = _line("10761", "sh", f"sh -c {ps_cmd}")
@@ -86,7 +87,8 @@ async def test_skips_self_wrapper_for_sh_login_shell() -> None:
 async def test_skips_self_wrapper_for_bash_login_shell() -> None:
     """Legacy `bash -c` wrapper must still be skipped."""
     ps_cmd = (
-        "pgrep -f dummyengine | xargs --no-run-if-empty ps -o pid:255,comm:255,args:255"
+        'pids=$(pgrep -f dummyengine); [ -n "$pids" ] '
+        '&& ps -o pid,comm,args -ww $pids'
     )
     header = "PID COMMAND COMMAND"
     self_line = _line("10761", "bash", f"bash -c {ps_cmd}")
@@ -101,8 +103,28 @@ async def test_skips_self_wrapper_for_bash_login_shell() -> None:
     assert results[0].pid == 12345
 
 
+async def test_query_command_is_posix_portable() -> None:
+    """The query branch must not depend on GNU-only xargs flags.
+
+    Stock BSD/macOS xargs rejects `--no-run-if-empty` before ps runs,
+    which reproduces the exact incident this module guards against, so
+    the constructed command is pinned to the POSIX `[ -n ... ] &&` guard.
+    """
+    conn = _conn(["PID COMMAND COMMAND"])
+
+    results = [
+        p async for p in linux_list_processes(conn, query="pgrep -f dummyengine")
+    ]
+
+    assert results == []
+    cmd = conn.create_process.call_args[0][0]
+    assert "xargs" not in cmd
+    assert cmd.startswith("pids=$(pgrep -f dummyengine)")
+    assert '[ -n "$pids" ]' in cmd
+
+
 async def test_no_query_yields_all_without_self_filtering() -> None:
-    """`ps -eo` (no pgrep) has no wrapper process — nothing to skip."""
+    """`ps -axo` (no pgrep) has no wrapper process — nothing to skip."""
     header = "PID COMMAND COMMAND"
     conn = _conn([header, _line("1", "init", "/sbin/init"), _line("2", "bash", "bash")])
 
