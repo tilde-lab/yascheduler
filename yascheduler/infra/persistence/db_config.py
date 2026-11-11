@@ -21,12 +21,16 @@ class PostgresDbConfig:
     database: str = "database"
     host: str = "localhost"
     port: int = 5432
+    ssl: str = "prefer"
 
     # region BLOCK_validate
     def __post_init__(self) -> None:
-        """Validate port >= 1."""
+        """Validate port >= 1 and the ssl mode."""
         if not self.port >= 1:
             msg = f"port must be >= 1, got {self.port}"
+            raise ValueError(msg)
+        if self.ssl not in ("prefer", "on", "off"):
+            msg = f"ssl must be one of prefer/on/off, got {self.ssl!r}"
             raise ValueError(msg)
 
     # endregion BLOCK_validate

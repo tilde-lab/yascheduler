@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import ssl
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, TypeVar
 
@@ -34,6 +35,25 @@ __all__ = ["PostgresUnitOfWork"]
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+_cached_ssl_context: "ssl.SSLContext | None" = None
+
+
+def _get_ssl_context() -> "ssl.SSLContext":
+    """Return the process-wide cached SSL context for pg8000 connections.
+
+    pg8000's ``Connection`` builds a fresh default SSL context per connect when
+    no context is supplied, loading the full CA bundle each time. In a
+    connection-retry loop this starves the GIL until ``Thread.start`` blocks
+    and the orchestrator's event loop deadlocks (observed in production: every
+    ``PostgresUnitOfWork`` reconnect piled up in
+    ``SSLContext.load_default_certs``, ~2.7M one-thread executors). Creating one
+    context per process removes the storm's fuel while keeping TLS semantics.
+    """
+    global _cached_ssl_context
+    if _cached_ssl_context is None:
+        _cached_ssl_context = ssl.create_default_context()
+    return _cached_ssl_context
 
 
 # region CLASS_PostgresUnitOfWork
@@ -176,12 +196,26 @@ class PostgresUnitOfWork:
     # PURPOSE: Bootstrap a pg8000 connection from the frozen config so the UoW can start a transaction against the configured database.
     def _create_connection(self) -> Connection:
         """Create a new pg8000 connection from config."""
+        kwargs: dict[str, object] = {}
+        if self._config.ssl == "off":
+            # Plaintext: no SSLContext is built at all. With ssl_context=None
+            # pg8000 eagerly creates a default context (full CA-bundle load) on
+            # every attempt — even when the server refuses SSL — so a
+            # connection-retry loop starves the GIL until Thread.start blocks
+            # and the orchestrator deadlocks (production incident: ~2.7M
+            # one-thread executors piled in load_default_certs).
+            kwargs["ssl_context"] = False
+        elif self._config.ssl == "on":
+            # One cached context per process instead of a fresh CA load per connect.
+            kwargs["ssl_context"] = _get_ssl_context()
+        # "prefer" keeps pg8000's default behaviour (try TLS, fall back to plaintext).
         return Connection(
             user=self._config.user,
             host=self._config.host,
             database=self._config.database,
             port=self._config.port,
             password=self._config.password,
+            **kwargs,
         )
 
     # endregion METHOD__create_connection
