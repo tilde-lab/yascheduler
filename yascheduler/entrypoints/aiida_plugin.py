@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn, overload
 
 import aiida.schedulers
 from aiida.common.escaping import escape_for_bash
@@ -98,9 +98,11 @@ class YaScheduler(aiida.schedulers.Scheduler):
         AiiDA 2.7 makes this public method abstract on the base Scheduler.
         Older AiiDA versions provided the same behavior through submit_from_script.
         """
-        self.transport.chdir(working_directory)
+        # NB Transport.chdir was removed in newer aiida-core; workdir= has
+        # been part of exec_command_wait's contract since aiida 1.x.
         result = self.transport.exec_command_wait(
             self._get_submit_command(escape_for_bash(filename)),
+            workdir=working_directory,
         )
         return self._parse_submit_output(*result)
 
@@ -108,6 +110,22 @@ class YaScheduler(aiida.schedulers.Scheduler):
 
     # region METHOD_get_jobs
     # PURPOSE: Return list of currently active jobs from yascheduler, filtering by job IDs or user.
+    @overload
+    def get_jobs(
+        self,
+        jobs: list[str] | None = ...,
+        user: str | None = ...,
+        as_dict: Literal[False] = False,
+    ) -> list[JobInfo]: ...
+
+    @overload
+    def get_jobs(
+        self,
+        jobs: list[str] | None = ...,
+        user: str | None = ...,
+        as_dict: Literal[True] = ...,
+    ) -> dict[str, JobInfo]: ...
+
     def get_jobs(
         self,
         jobs: str | list[str] | None = None,
