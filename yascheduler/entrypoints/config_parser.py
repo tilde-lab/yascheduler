@@ -533,6 +533,7 @@ def _parse_local_section(sec: SectionProxy) -> LocalSettings:
                 "conn_machine_pending": sec.getint("conn_machine_pending"),
                 "allocate_limit": sec.getint("allocate_limit"),
                 "allocate_pending": sec.getint("allocate_pending"),
+                "allocate_wave_min": sec.getint("allocate_wave_min"),
                 "consume_limit": sec.getint("consume_limit"),
                 "consume_pending": sec.getint("consume_pending"),
                 "deallocate_limit": sec.getint("deallocate_limit"),
