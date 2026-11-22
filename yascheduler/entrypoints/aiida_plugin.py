@@ -48,6 +48,19 @@ class _JobCancellationNotSupportedError(FeatureNotAvailable):
         super().__init__("Job cancellation is not supported by Yascheduler")
 
 
+class _MissingRequestedJobsError(SchedulerError):
+    def __init__(
+        self, missing: list[str], retval: int, stdout: str, stderr: str
+    ) -> None:
+        super().__init__(
+            f"yastatus did not report requested job(s) {missing} "
+            f"(retval={retval}, stdout={stdout.strip()[:200]!r}, "
+            f"stderr={stderr.strip()[:200]!r}): refusing to interpret "
+            "unreported jobs as finished - scheduler or database may be "
+            "transiently unavailable"
+        )
+
+
 _MAP_STATUS_YASCHEDULER = {
     "TO_DO": JobState.QUEUED,
     "RUNNING": JobState.RUNNING,
@@ -112,7 +125,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
 
         joblist = self._parse_joblist_output(retval, stdout, stderr)
         if jobs is not None:
-            self._check_requested_jobs_present(jobs, joblist, retval, stdout)
+            self._check_requested_jobs_present(jobs, joblist, retval, stdout, stderr)
         if as_dict:
             jobdict = {job.job_id: job for job in joblist}
             if None in jobdict:
@@ -131,6 +144,7 @@ class YaScheduler(aiida.schedulers.Scheduler):
         joblist: list[JobInfo],
         retval: int,
         stdout: str,
+        stderr: str,
     ) -> None:
         """Raise if any explicitly requested job is missing from the parsed list.
 
@@ -140,17 +154,18 @@ class YaScheduler(aiida.schedulers.Scheduler):
         queued calculation would be 'retrieved' with no output and fail
         spuriously. Raising instead makes AiiDA retry the poll and keeps the
         calculation waiting.
+
+        Only well-formed yascheduler task ids are enforced: a malformed id
+        (e.g. left behind by a transient submit failure) would never appear
+        in yastatus output, and enforcing it would fail the poll for every
+        job in the same batch.
         """
         wanted = [requested] if isinstance(requested, str) else list(requested)
+        wanted = [jid for jid in wanted if isinstance(jid, str) and jid.isdigit()]
         reported = {job.job_id for job in joblist}
         missing = [job for job in wanted if job not in reported]
         if missing:
-            raise SchedulerError(
-                f"yastatus did not report requested job(s) {missing} "
-                f"(retval={retval}, stdout={stdout.strip()[:200]!r}): refusing to "
-                "interpret unreported jobs as finished - scheduler or database "
-                "may be transiently unavailable"
-            )
+            raise _MissingRequestedJobsError(missing, retval, stdout, stderr)
 
     # endregion METHOD__check_requested_jobs_present
 

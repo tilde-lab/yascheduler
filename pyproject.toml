@@ -65,6 +65,7 @@ azure = [
   "azure-mgmt-network~=22.0.0",
 ]
 upcloud = ["upcloud_api~=2.0"]
+aiida = ["aiida-core"]
 
 [dependency-groups]
 dev = [
