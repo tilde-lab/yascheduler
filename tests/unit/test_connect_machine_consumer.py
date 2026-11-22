@@ -128,6 +128,26 @@ def make_orchestrator(
     )
 
 
+_STATIC_NODE = Node(
+    node_id=NodeId(1),
+    hostname="10.0.0.9",
+    ncpus=2,
+    cloud=None,
+    username="root",
+    port=22,
+    enabled=True,
+)
+_CLOUD_NODE = Node(
+    node_id=NodeId(2),
+    hostname="10.0.0.10",
+    ncpus=2,
+    cloud="hetzner",
+    username="root",
+    port=22,
+    enabled=True,
+)
+
+
 class TestConnectMachineConsumerGraceTimer:
     """Grace-timer behavior in _connect_machine_consumer."""
 
@@ -306,13 +326,12 @@ class TestConnectMachineProducerYieldsStaticNodes:
     """The connect-machine producer yields static (cloud=None) nodes; static
     node failures are retried without abandon.
 
-    Coverage for fix-static-node-connect-exclusion: the v6.2.1 producer filter
-    (`n.cloud is not None`) was over-broad — it excluded static nodes from the
-    connect path entirely, breaking the yasetnode → daemon handoff (tasks
-    stuck in TO_DO). The filter is removed; a consumer-side guard before the
-    grace-check now retries static nodes indefinitely without ever calling
-    abandon_node, preserving the task 4.7 intent (static nodes never
-    auto-removed) with a narrower mechanism.
+    The v6.2.1 producer filter (`n.cloud is not None`) was over-broad — it
+    excluded static nodes from the connect path entirely, breaking the
+    yasetnode → daemon handoff (tasks stuck in TO_DO). The filter is removed;
+    a consumer-side guard before the grace-check now retries static nodes
+    indefinitely without ever calling abandon_node, preserving the intent
+    (static nodes are never auto-removed) with a narrower mechanism.
     """
 
     @pytest.mark.asyncio
@@ -323,26 +342,8 @@ class TestConnectMachineProducerYieldsStaticNodes:
         IP. A static node MUST appear (the daemon connects it), alongside the
         cloud node.
         """
-        from yascheduler.domain.model import Node
-
-        static_node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.9",
-            ncpus=2,
-            cloud=None,
-            username="root",
-            port=22,
-            enabled=True,
-        )
-        cloud_node = Node(
-            node_id=NodeId(2),
-            hostname="10.0.0.10",
-            ncpus=2,
-            cloud="hetzner",
-            username="root",
-            port=22,
-            enabled=True,
-        )
+        static_node = _STATIC_NODE
+        cloud_node = _CLOUD_NODE
 
         orch = make_orchestrator(config_clouds=[])
         # Gateway contains neither IP → both are yielded.
@@ -362,17 +363,7 @@ class TestConnectMachineProducerYieldsStaticNodes:
     @pytest.mark.asyncio
     async def test_gateway_registered_static_node_not_yielded(self) -> None:
         """A static node already in the gateway is not re-yielded (pre-existing behavior)."""
-        from yascheduler.domain.model import Node
-
-        static_node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.9",
-            ncpus=2,
-            cloud=None,
-            username="root",
-            port=22,
-            enabled=True,
-        )
+        static_node = _STATIC_NODE
 
         orch = make_orchestrator(config_clouds=[])
         orch._repository.contains = MagicMock(return_value=True)  # type: ignore[method-assign]
@@ -425,8 +416,6 @@ class TestConnectMachineProducerYieldsStaticNodes:
     @pytest.mark.asyncio
     async def test_disabled_node_without_running_task_not_yielded(self) -> None:
         """A disabled node with no RUNNING task is NOT yielded (no work to drain)."""
-        from yascheduler.domain.model import Node
-
         disabled_node = Node(
             node_id=NodeId(4),
             hostname="10.0.0.4",
@@ -502,17 +491,8 @@ class TestConnectMachineProducerYieldsStaticNodes:
         import logging
 
         from yascheduler.domain.exceptions import MachineConnectionError
-        from yascheduler.domain.model import Node
 
-        static_node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.9",
-            ncpus=2,
-            cloud=None,
-            username="root",
-            port=22,
-            enabled=True,
-        )
+        static_node = _STATIC_NODE
 
         orch = make_orchestrator(config_clouds=[])
         orch._repository.connect = AsyncMock(  # type: ignore[method-assign]
@@ -551,17 +531,8 @@ class TestConnectMachineProducerYieldsStaticNodes:
         and patched monotonic timestamps >120s apart.
         """
         from yascheduler.domain.exceptions import MachineConnectionError
-        from yascheduler.domain.model import Node
 
-        static_node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.9",
-            ncpus=2,
-            cloud=None,
-            username="root",
-            port=22,
-            enabled=True,
-        )
+        static_node = _STATIC_NODE
 
         orch = make_orchestrator(config_clouds=[])
         orch._repository.connect = AsyncMock(  # type: ignore[method-assign]
@@ -662,17 +633,7 @@ class TestMissingKeysDirTranslation:
         routed through BLOCK_static_node_retry (never abandon, contextual WARNING)."""
         import logging
 
-        from yascheduler.domain.model import Node
-
-        static_node = Node(
-            node_id=NodeId(1),
-            hostname="10.0.0.9",
-            ncpus=2,
-            cloud=None,
-            username="root",
-            port=22,
-            enabled=True,
-        )
+        static_node = _STATIC_NODE
 
         orch = make_orchestrator(config_clouds=[])
         orch._list_private_keys_fn = MagicMock(  # type: ignore[method-assign]
@@ -720,17 +681,7 @@ class TestMissingKeysDirTranslation:
         routed through BLOCK_connect_grace_check (no abandon within grace)."""
         import logging
 
-        from yascheduler.domain.model import Node
-
-        cloud_node = Node(
-            node_id=NodeId(2),
-            hostname="10.0.0.10",
-            ncpus=2,
-            cloud="hetzner",
-            username="root",
-            port=22,
-            enabled=True,
-        )
+        cloud_node = _CLOUD_NODE
 
         cfg_cloud = MagicMock(prefix="hetzner", connect_grace=60)
         orch = make_orchestrator(config_clouds=[cfg_cloud])

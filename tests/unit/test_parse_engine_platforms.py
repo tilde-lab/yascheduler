@@ -99,5 +99,27 @@ def test_parse_engine_section_normalizes_windows_versioned() -> None:
     assert engine.platforms == ("windows",)
 
 
+def test_parse_engine_section_reads_exclude_nodes() -> None:
+    """The exclude_nodes INI key lands in the engine's frozenset."""
+    cfg = ConfigParser()
+    cfg.read_string(
+        "[engine.t]\n"
+        "spawn=echo hi\n"
+        "check_pname=hi\n"
+        "input_files=in.txt\n"
+        "output_files=out.txt\n"
+        "platforms=debian\n"
+        "exclude_nodes=10.0.0.7 192.168.1.9\n",
+    )
+    engine = parse_engine_section(cfg["engine.t"], PurePath())
+    assert engine.exclude_nodes == frozenset({"10.0.0.7", "192.168.1.9"})
+
+
+def test_parse_engine_section_exclude_nodes_defaults_empty() -> None:
+    """Without the key the engine carries an empty exclude_nodes frozenset."""
+    engine = parse_engine_section(_engine_cfg("debian")["engine.t"], PurePath())
+    assert engine.exclude_nodes == frozenset()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

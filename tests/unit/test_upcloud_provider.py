@@ -24,41 +24,8 @@ from yascheduler.infra.cloud.providers.upcloud import (
     _destroy_created_server_best_effort,
     upcloud_create_node_sync,
 )
-from yascheduler.shared.log import _NATIVE_KEYS
 
 pytestmark = pytest.mark.unit
-
-
-class LogCaptureHandler(logging.Handler):
-    """Capture log records for assertion."""
-
-    def __init__(self, records: list[logging.LogRecord]) -> None:
-        super().__init__(level=logging.DEBUG)
-        self._records = records
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._records.append(record)
-
-
-@pytest.fixture
-def log_records() -> Generator[list[logging.LogRecord], None, None]:
-    """Capture log records from the upcloud provider logger."""
-    logger = logging.getLogger("yascheduler.infra.cloud.providers.upcloud")
-    records: list[logging.LogRecord] = []
-    handler = LogCaptureHandler(records)
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    try:
-        yield records
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)
-
-
-def extra_fields(record: logging.LogRecord) -> dict[str, object]:
-    """Reconstruct structured fields from a log record."""
-    return {k: getattr(record, k) for k in record.__dict__ if k not in _NATIVE_KEYS}
 
 
 def _mock_cfg() -> MagicMock:

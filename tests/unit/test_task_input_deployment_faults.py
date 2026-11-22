@@ -1,0 +1,730 @@
+# region MODULE_CONTRACT
+# PURPOSE: Unit-test the destination-confinement, fault-injection, and content-free upload-observability contract of TaskDeployer.start_task_on_machine — each streamed entry's path is validated at the trust boundary before its own remote write, destinations are joined in the remote platform's path flavor, symlinks and file/directory conflicts are rejected without traversal, lstat errors propagate, every upload failure or cancellation prevents spawn while releasing the session, and UPLOAD_INPUTS/UPLOAD_INPUTS_DONE/UPLOAD_INPUTS_FAILED/DEPLOY_ROLLBACK records carry stable context without payloads or exception text.
+# SCOPE: Fake MachineSession + fake SFTP client with async lstat/makedirs/open, call recording, and per-path failure injection. Cases: upload lifecycle records, root mkdir failure, mid-tree write failure, CancelledError, unsafe stored entry paths (absolute, '..', non-str), symlink at file/directory target, file/directory type conflicts, existing ordinary file replacement, permission-denied lstat, PureWindowsPath/PurePosixPath joining, DESTINATION_REJECTED, and secret/base64/credential sentinel redaction.
+# NOT: real SSH transport and exact remote bytes (integration test), spawn-command formatting, and the individual helper functions in isolation.
+# KEYWORDS: TaskDeployer, destination confinement, symlink rejection, fault injection, SFTP, BUSY rollback
+# endregion MODULE_CONTRACT
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+from contextlib import asynccontextmanager
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
+
+import asyncssh
+import pytest
+from asyncssh.sftp import (
+    FILEXFER_TYPE_DIRECTORY,
+    FILEXFER_TYPE_REGULAR,
+    FILEXFER_TYPE_SYMLINK,
+    FX_FAILURE,
+    FX_NO_SUCH_FILE,
+    FX_PERMISSION_DENIED,
+)
+
+from tests.log_assertions import extra_fields
+from yascheduler.domain import (
+    Engine,
+    TaskInputDirectory,
+    TaskInputEntry,
+    TaskInputFile,
+    UnsafeTaskPathError,
+)
+from yascheduler.domain.model import (
+    ConnectedMachine,
+    MachineState,
+    NodeId,
+    Running,
+    Task,
+    TaskId,
+)
+from yascheduler.infra.ssh.operations import TaskDeployer
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+    from contextlib import AbstractAsyncContextManager
+
+    from yascheduler.domain import MachineSession
+
+pytestmark = pytest.mark.unit
+
+DEPLOYMENT_LOGGER = "yascheduler.infra.ssh.operations.deployment"
+TASK_ID = TaskId(7)
+TASK_DIR = "/remote/tasks/7"
+
+
+# =============================================================================
+# Fakes — in-memory SFTP destination + MachineSession
+# =============================================================================
+
+
+class FakeSFTPFile:
+    """Async context manager over one remote file; write() records or raises."""
+
+    def __init__(self, client: FakeSFTPClient, path: str) -> None:
+        self._client = client
+        self._path = path
+
+    async def __aenter__(self) -> FakeSFTPFile:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def write(self, data: bytes) -> None:
+        err = self._client.write_errors.get(self._path)
+        if err is not None:
+            raise err
+        self._client.write_calls.append((self._path, data))
+        self._client.files[self._path] = data
+
+
+class FakeSFTPClient:
+    """SFTP destination recording every call as a POSIX-separated path string.
+
+    ``types`` describes the pre-existing remote tree (path -> FILEXFER_TYPE_*).
+    A path absent from it raises ``asyncssh.misc.Error(FX_NO_SUCH_FILE)`` from
+    lstat, exactly like a real server. ``mkdir_errors``/``lstat_errors``/
+    ``write_errors`` inject one failure per destination path.
+    """
+
+    def __init__(self, root: str) -> None:
+        self.root = root
+        self.types: dict[str, int] = {}
+        self.files: dict[str, bytes] = {}
+        self.makedirs_calls: list[str] = []
+        self.lstat_calls: list[str] = []
+        self.open_calls: list[tuple[str, str]] = []
+        self.write_calls: list[tuple[str, bytes]] = []
+        self.mkdir_errors: dict[str, BaseException] = {}
+        self.lstat_errors: dict[str, BaseException] = {}
+        self.write_errors: dict[str, BaseException] = {}
+
+    @property
+    def mutation_paths(self) -> list[str]:
+        """Every destination path an upload mutated via mkdir or open."""
+        return [*self.makedirs_calls, *(path for path, _mode in self.open_calls)]
+
+    async def realpath(self, path: str) -> str:
+        """Return the configured remote home directory."""
+        return self.root
+
+    async def lstat(self, path: str) -> SimpleNamespace:
+        """Return the non-following type of ``path`` or raise "no such file"."""
+        self.lstat_calls.append(path)
+        err = self.lstat_errors.get(path)
+        if err is not None:
+            raise err
+        kind = self.types.get(path)
+        if kind is None:
+            raise asyncssh.misc.Error(FX_NO_SUCH_FILE, "No such file")
+        return SimpleNamespace(type=kind)
+
+    async def makedirs(self, path: str, exist_ok: bool = False) -> None:
+        """Create ``path`` (recorded even when the injected failure raises)."""
+        self.makedirs_calls.append(path)
+        err = self.mkdir_errors.get(path)
+        if err is not None:
+            raise err
+        self.types.setdefault(path, FILEXFER_TYPE_DIRECTORY)
+
+    def open(self, path: str, mode: str) -> FakeSFTPFile:
+        """Start a binary write to ``path`` (recorded even when write fails)."""
+        self.open_calls.append((path, mode))
+        return FakeSFTPFile(self, path)
+
+
+def _identity_quote(value: str) -> str:
+    """Quote a spawn-command argument (no shell quoting needed in these tests)."""
+    return value
+
+
+class FakeMachineSession:
+    """Structural MachineSession fake recording state transitions and spawn calls."""
+
+    def __init__(
+        self,
+        *,
+        hostname: str = "10.0.0.1",
+        path_type: type[PurePath] = PurePosixPath,
+        root: str = "/home/user",
+    ) -> None:
+        self._hostname = hostname
+        self._path_type = path_type
+        self._machine = ConnectedMachine(
+            node_id=NodeId(1),
+            platforms=("linux",),
+            state=MachineState.FREE,
+        )
+        self.sftp = FakeSFTPClient(root)
+        self.is_closed = False
+        self.occupy_calls = 0
+        self.release_calls = 0
+        self.update_calls: list[ConnectedMachine] = []
+        self.open_sftp_calls = 0
+        self.spawn_calls: list[tuple[str, str | None]] = []
+
+    @property
+    def hostname(self) -> str:
+        return self._hostname
+
+    @property
+    def machine(self) -> ConnectedMachine:
+        return self._machine
+
+    @property
+    def path(self) -> type[PurePath]:
+        return self._path_type
+
+    @property
+    def quote(self) -> Callable[[str], str]:
+        return _identity_quote
+
+    def occupy(self) -> None:
+        self.occupy_calls += 1
+        self._machine = self._machine.occupy()
+
+    def release(self) -> None:
+        self.release_calls += 1
+        self._machine = self._machine.release()
+
+    def update(self, machine: ConnectedMachine) -> None:
+        self.update_calls.append(machine)
+        self._machine = machine
+
+    async def run_bg(self, cmd: str, *, cwd: str | None = None) -> None:
+        self.spawn_calls.append((cmd, cwd))
+
+    def open_sftp(self) -> AbstractAsyncContextManager[FakeSFTPClient]:
+        self.open_sftp_calls += 1
+        return self._sftp_scope()
+
+    @asynccontextmanager
+    async def _sftp_scope(self) -> AsyncGenerator[FakeSFTPClient, None]:
+        yield self.sftp
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _make_engine() -> Engine:
+    """Minimal Engine whose spawn command needs no shell quoting."""
+    return Engine(name="test_engine", spawn="{engine_path} {task_path} {ncpus}")
+
+
+def _make_task(*, remote_folder: str = TASK_DIR) -> Task[Running]:
+    """Build a RUNNING task; the input snapshot is streamed separately."""
+    return Task(
+        task_id=TASK_ID,
+        label="task-7",
+        engine="test_engine",
+        state=Running(allocated_node_id=NodeId(1), remote_folder=remote_folder),
+    )
+
+
+async def _aiter(entries: Sequence[TaskInputEntry]) -> AsyncIterator[TaskInputEntry]:
+    """Yield snapshot entries the way the repository streams them to the deployer."""
+    for entry in entries:
+        yield entry
+
+
+async def _deploy(
+    session: FakeMachineSession,
+    entries: Sequence[TaskInputEntry] = (),
+    *,
+    remote_folder: str = TASK_DIR,
+) -> None:
+    """Run the real deployer against the fake session with a streamed snapshot."""
+    await TaskDeployer().start_task_on_machine(
+        cast("MachineSession", session),
+        _make_engine(),
+        _make_task(remote_folder=remote_folder),
+        _aiter(entries),
+        4,
+        PurePosixPath("/engines"),
+    )
+
+
+def _assert_upload_failed_without_spawn(session: FakeMachineSession) -> None:
+    """Upload failure SHALL prevent spawn and leave the session released to FREE."""
+    assert session.spawn_calls == [], "spawn ran despite an upload failure"
+    assert session.update_calls, "rollback did not reach session.update()"
+    assert session.update_calls[-1].state is MachineState.FREE
+    assert session.machine.state is MachineState.FREE
+
+
+def _log_records(
+    caplog: pytest.LogCaptureFixture, message: str
+) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.name == DEPLOYMENT_LOGGER and record.getMessage() == message
+    ]
+
+
+def _find_log_record(
+    caplog: pytest.LogCaptureFixture, message: str
+) -> logging.LogRecord:
+    records = _log_records(caplog, message)
+    assert len(records) == 1
+    return records[0]
+
+
+def _assert_rollback_log(caplog: pytest.LogCaptureFixture, failure: str) -> None:
+    record = _find_log_record(caplog, "DEPLOY_ROLLBACK")
+    fields = extra_fields(record)
+    assert fields["task_id"] == TASK_ID.value
+    assert type(fields["task_id"]) is int
+    assert fields["failure"] == failure
+    assert fields["released"] is True
+    assert record.exc_info is None
+
+
+# =============================================================================
+# Upload logs
+# =============================================================================
+
+
+class TestUploadLogs:
+    """Upload lifecycle records SHALL carry task identity and entry count."""
+
+    async def test_success_emits_start_and_done(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session = FakeMachineSession()
+        entries = (TaskInputFile("a.txt", b"a"), TaskInputFile("b.txt", b"b"))
+
+        with caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER):
+            await _deploy(session, entries)
+
+        start = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS"))
+        done = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_DONE"))
+        assert start["task_id"] == TASK_ID.value
+        assert type(start["task_id"]) is int
+        # The total is unknown until the iterator is drained.
+        assert "entry_count" not in start
+        assert done["task_id"] == TASK_ID.value
+        assert type(done["task_id"]) is int
+        assert done["entry_count"] == 2
+        assert _log_records(caplog, "UPLOAD_INPUTS_FAILED") == []
+        assert len(session.spawn_calls) == 1
+
+
+# =============================================================================
+# Upload failures: no spawn, BUSY rollback
+# =============================================================================
+
+
+class TestUploadFailureRollback:
+    """Every upload failure or cancellation SHALL prevent spawn and release."""
+
+    async def test_root_mkdir_failure_aborts_and_releases(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failing task-root mkdir aborts before any write and rolls BUSY back."""
+        session = FakeMachineSession()
+        err = asyncssh.misc.Error(FX_FAILURE, "Failure")
+        session.sftp.mkdir_errors[TASK_DIR] = err
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(asyncssh.misc.Error) as exc_info,
+        ):
+            await _deploy(session, (TaskInputFile("a.txt", b"a"),))
+
+        assert exc_info.value is err
+        assert session.sftp.makedirs_calls == [TASK_DIR]
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["task_id"] == TASK_ID.value
+        assert type(failed["task_id"]) is int
+        assert failed["path"] == "."
+        # The count tracks streamed entries; the root failed before any were read.
+        assert failed["entry_count"] == 0
+        assert failed["failure"] == "Error"
+        _assert_rollback_log(caplog, "Error")
+
+    async def test_file_write_failure_mid_tree_propagates_original_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failure on the second file writes the first, skips the rest, releases."""
+        session = FakeMachineSession()
+        err = asyncssh.misc.Error(FX_FAILURE, "Disk full")
+        session.sftp.write_errors[f"{TASK_DIR}/b.txt"] = err
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(asyncssh.misc.Error) as exc_info,
+        ):
+            await _deploy(
+                session,
+                (
+                    TaskInputFile("a.txt", b"alpha"),
+                    TaskInputFile("b.txt", b"beta"),
+                    TaskInputFile("c.txt", b"gamma"),
+                ),
+            )
+
+        assert exc_info.value is err
+        assert session.sftp.write_calls == [(f"{TASK_DIR}/a.txt", b"alpha")]
+        assert [path for path, _mode in session.sftp.open_calls] == [
+            f"{TASK_DIR}/a.txt",
+            f"{TASK_DIR}/b.txt",
+        ]
+        _assert_upload_failed_without_spawn(session)
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["path"] == "b.txt"
+        # The count tracks streamed entries: two were read before c.txt was skipped.
+        assert failed["entry_count"] == 2
+        assert failed["failure"] == "Error"
+        assert "Disk full" not in caplog.text
+        _assert_rollback_log(caplog, "Error")
+
+    async def test_cancellation_during_upload_prevents_spawn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """CancelledError during a file write propagates and still rolls BUSY back."""
+        session = FakeMachineSession()
+        session.sftp.write_errors[f"{TASK_DIR}/a.txt"] = asyncio.CancelledError()
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await _deploy(session, (TaskInputFile("a.txt", b"a"),))
+
+        assert session.sftp.write_calls == []
+        _assert_upload_failed_without_spawn(session)
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["path"] == "a.txt"
+        assert failed["entry_count"] == 1
+        assert failed["failure"] == "CancelledError"
+        _assert_rollback_log(caplog, "CancelledError")
+
+    async def test_failure_logs_do_not_leak_content_base64_or_exception_text(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        content_marker = b"UNIQUE_UPLOAD_CONTENT_SECRET_9a61"
+        content_text = content_marker.decode()
+        base64_marker = base64.b64encode(content_marker).decode()
+        credential_marker = "UNIQUE_UPLOAD_CREDENTIAL_SECRET_5c2b"
+        session = FakeMachineSession()
+        session.sftp.write_errors[f"{TASK_DIR}/secret.bin"] = ValueError(
+            f"payload={content_text} token={credential_marker}"
+        )
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(ValueError),
+        ):
+            await _deploy(session, (TaskInputFile("secret.bin", content_marker),))
+
+        records = [
+            record for record in caplog.records if record.name == DEPLOYMENT_LOGGER
+        ]
+        rendered = "\n".join(record.getMessage() for record in records)
+        fields_repr = repr([extra_fields(record) for record in records])
+        for marker in (content_text, base64_marker, credential_marker):
+            assert marker not in rendered
+            assert marker not in fields_repr
+        assert "payload=" not in rendered
+        assert all(record.exc_info is None for record in records)
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["path"] == "secret.bin"
+        assert failed["failure"] == "ValueError"
+        _assert_rollback_log(caplog, "ValueError")
+
+
+# =============================================================================
+# Trust boundary: unsafe stored entries never reach SFTP
+# =============================================================================
+
+
+class TestUnsafeStoredEntries:
+    """Unsafe stored entry paths SHALL raise before that entry's own SFTP write."""
+
+    @pytest.mark.parametrize(
+        ("entries", "expected_path"),
+        [
+            ((TaskInputFile("/etc/passwd", b"x"),), "/etc/passwd"),
+            ((TaskInputFile("../escape.txt", b"x"),), "../escape.txt"),
+        ],
+        ids=["absolute-path", "parent-component"],
+    )
+    async def test_unsafe_stored_entry_rejected_before_its_sftp_write(
+        self,
+        entries: tuple[TaskInputFile | TaskInputDirectory, ...],
+        expected_path: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A domain error naming the offending path precedes that entry's remote write."""
+        session = FakeMachineSession()
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(UnsafeTaskPathError) as exc_info,
+        ):
+            await _deploy(session, entries)
+
+        assert exc_info.value.path == expected_path
+        # The scheduler-owned task root is prepared before entries stream in; the
+        # offending entry never reaches a destination join or write.
+        assert session.sftp.mutation_paths == [TASK_DIR]
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["task_id"] == TASK_ID.value
+        assert type(failed["task_id"]) is int
+        assert failed["path"] == expected_path
+        assert failed["entry_count"] == 0
+        assert failed["failure"] == "UnsafeTaskPathError"
+        _assert_rollback_log(caplog, "UnsafeTaskPathError")
+
+    async def test_malformed_entry_is_domain_error_and_does_not_leak(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A stored entry with a non-str path fails through the domain error and boundary log."""
+        payload = b"UNIQUE_UPLOAD_MALFORMED_SECRET_af41"
+        payload_text = payload.decode()
+        base64_text = base64.b64encode(payload).decode()
+        credential = "UNIQUE_UPLOAD_MALFORMED_CREDENTIAL_2b7c"
+
+        class _SensitivePath:
+            """Non-str stored path whose repr must never enter diagnostics."""
+
+            def __repr__(self) -> str:
+                return f"SENSITIVE_PATH<{credential}>"
+
+        malformed = SimpleNamespace(
+            path=_SensitivePath(),
+            content=payload,
+            encoded=base64_text,
+            token=credential,
+        )
+        entries = cast("Sequence[TaskInputEntry]", (malformed,))
+        session = FakeMachineSession()
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(UnsafeTaskPathError) as exc_info,
+        ):
+            await _deploy(session, entries)
+
+        assert exc_info.value.path == "<task path>"
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["task_id"] == TASK_ID.value
+        assert type(failed["task_id"]) is int
+        assert failed["path"] == "<task path>"
+        assert failed["entry_count"] == 0
+        assert failed["failure"] == "UnsafeTaskPathError"
+        _assert_rollback_log(caplog, "UnsafeTaskPathError")
+        rendered = caplog.text
+        fields_repr = repr([extra_fields(record) for record in caplog.records])
+        for marker in (payload_text, base64_text, credential):
+            assert marker not in rendered
+            assert marker not in fields_repr
+
+
+# =============================================================================
+# Destination confinement: symlinks and file/directory conflicts
+# =============================================================================
+
+
+class TestDestinationConfinement:
+    """Destination traversal SHALL reject symlinks and type conflicts."""
+
+    async def test_symlink_at_file_target_rejected(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A symlink at a file target fails without opening the link."""
+        link = f"{TASK_DIR}/sub/link.txt"
+        session = FakeMachineSession()
+        session.sftp.types[link] = FILEXFER_TYPE_SYMLINK
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=DEPLOYMENT_LOGGER),
+            pytest.raises(UnsafeTaskPathError) as exc_info,
+        ):
+            await _deploy(session, (TaskInputFile("sub/link.txt", b"x"),))
+
+        assert link in str(exc_info.value)
+        assert exc_info.value.path == link
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+
+        records = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "DESTINATION_REJECTED"
+        ]
+        assert len(records) == 1
+        assert records[0].name == DEPLOYMENT_LOGGER
+        assert records[0].levelno == logging.DEBUG
+        fields = extra_fields(records[0])
+        assert fields["path"] == link
+        assert fields["reason"] == "symbolic link"
+        assert fields["task_id"] == TASK_ID
+
+        failed = extra_fields(_find_log_record(caplog, "UPLOAD_INPUTS_FAILED"))
+        assert failed["path"] == link
+        assert failed["entry_count"] == 1
+        assert failed["failure"] == "UnsafeTaskPathError"
+        _assert_rollback_log(caplog, "UnsafeTaskPathError")
+
+    async def test_symlink_at_directory_target_rejected(self) -> None:
+        """A symlink at a directory target fails without mkdir through the link."""
+        link = f"{TASK_DIR}/sub/linkdir"
+        session = FakeMachineSession()
+        session.sftp.types[link] = FILEXFER_TYPE_SYMLINK
+
+        with pytest.raises(UnsafeTaskPathError) as exc_info:
+            await _deploy(session, (TaskInputDirectory("sub/linkdir"),))
+
+        assert link in str(exc_info.value)
+        assert exc_info.value.path == link
+        assert link not in session.sftp.makedirs_calls
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+
+    async def test_file_target_existing_as_directory_rejected(self) -> None:
+        """A directory at a file target fails, naming the path, without writing."""
+        path = f"{TASK_DIR}/data.txt"
+        session = FakeMachineSession()
+        session.sftp.types[path] = FILEXFER_TYPE_DIRECTORY
+
+        with pytest.raises(UnsafeTaskPathError) as exc_info:
+            await _deploy(session, (TaskInputFile("data.txt", b"x"),))
+
+        assert path in str(exc_info.value)
+        assert exc_info.value.path == path
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+
+    async def test_directory_target_existing_as_regular_file_rejected(self) -> None:
+        """A regular file at a directory target fails, naming the path, no mkdir."""
+        path = f"{TASK_DIR}/out"
+        session = FakeMachineSession()
+        session.sftp.types[path] = FILEXFER_TYPE_REGULAR
+
+        with pytest.raises(UnsafeTaskPathError) as exc_info:
+            await _deploy(session, (TaskInputDirectory("out"),))
+
+        assert path in str(exc_info.value)
+        assert exc_info.value.path == path
+        assert path not in session.sftp.makedirs_calls
+        _assert_upload_failed_without_spawn(session)
+
+
+# =============================================================================
+# Successful replacement of an existing ordinary file
+# =============================================================================
+
+
+class TestExistingFileReplacement:
+    """An existing ordinary regular file at a file target SHALL be replaced."""
+
+    async def test_existing_regular_file_is_rewritten_in_binary_mode(self) -> None:
+        """The stored bytes replace the old content and spawn follows the upload."""
+        path = f"{TASK_DIR}/a.txt"
+        session = FakeMachineSession()
+        session.sftp.types[path] = FILEXFER_TYPE_REGULAR
+        session.sftp.files[path] = b"stale"
+
+        await _deploy(session, (TaskInputFile("a.txt", b"fresh"),))
+
+        assert session.sftp.open_calls == [(path, "wb")]
+        assert session.sftp.files[path] == b"fresh"
+        assert len(session.spawn_calls) == 1
+        assert session.spawn_calls[0][1] == TASK_DIR
+        assert session.update_calls == []
+        assert session.machine.state is MachineState.BUSY
+
+
+# =============================================================================
+# lstat failure propagation
+# =============================================================================
+
+
+class TestLstatFailurePropagation:
+    """Only "no such file" means absent; other lstat errors abort the upload."""
+
+    async def test_permission_denied_on_lstat_propagates_without_write(self) -> None:
+        """Permission denied on lstat is not treated as an absent destination."""
+        target = f"{TASK_DIR}/sub/data.bin"
+        session = FakeMachineSession()
+        err = asyncssh.misc.Error(FX_PERMISSION_DENIED, "Permission denied")
+        session.sftp.lstat_errors[target] = err
+
+        with pytest.raises(asyncssh.misc.Error) as exc_info:
+            await _deploy(session, (TaskInputFile("sub/data.bin", b"x"),))
+
+        assert exc_info.value is err
+        assert session.sftp.open_calls == []
+        _assert_upload_failed_without_spawn(session)
+
+
+# =============================================================================
+# Remote platform path joining
+# =============================================================================
+
+
+class TestRemotePlatformPathJoining:
+    """Destinations SHALL be joined in the remote flavor and sent POSIX-separated."""
+
+    @pytest.mark.parametrize(
+        ("path_type", "remote_folder", "root", "prefix"),
+        [
+            (PureWindowsPath, "C:/tasks", "C:/Users/user", "C:/tasks"),
+            (PurePosixPath, "/tasks", "/home/user", "/tasks"),
+        ],
+        ids=["windows", "posix"],
+    )
+    async def test_sftp_calls_use_posix_separated_remote_paths(
+        self,
+        path_type: type[PurePath],
+        remote_folder: str,
+        root: str,
+        prefix: str,
+    ) -> None:
+        """Every mkdir/lstat/open receives '<prefix>/...' with forward slashes only."""
+        session = FakeMachineSession(path_type=path_type, root=root)
+        # Path-ordered materialized snapshot: parents precede their children.
+        entries = (
+            TaskInputDirectory("empty"),
+            TaskInputDirectory("sub"),
+            TaskInputFile("sub/data.bin", b"\x00\x01"),
+        )
+
+        await _deploy(session, entries, remote_folder=remote_folder)
+
+        nested_file = f"{prefix}/sub/data.bin"
+        assert session.sftp.makedirs_calls == [
+            prefix,
+            f"{prefix}/empty",
+            f"{prefix}/sub",
+        ]
+        assert session.sftp.open_calls == [(nested_file, "wb")]
+        assert session.sftp.lstat_calls == [
+            prefix,
+            f"{prefix}/empty",
+            f"{prefix}/sub",
+            nested_file,
+        ]
+        every_path = [
+            *session.sftp.makedirs_calls,
+            *session.sftp.lstat_calls,
+            *(path for path, _mode in session.sftp.open_calls),
+        ]
+        assert all("\\" not in path for path in every_path)
+        assert len(session.spawn_calls) == 1

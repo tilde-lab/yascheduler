@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator
+
+import pytest
 
 
 class _RecordCollector(logging.Handler):
@@ -20,31 +23,49 @@ class _RecordCollector(logging.Handler):
         self.records.append(record)
 
 
-def _make_logger(
-    name: str = "yascheduler.test.module",
-    level: int = logging.DEBUG,
-) -> tuple[logging.Logger, _RecordCollector]:
-    """Create a plain logging.Logger with a RecordCollector handler at the given level."""
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.handlers.clear()
-    collector = _RecordCollector()
-    logger.addHandler(collector)
-    logger.propagate = False
-    return logger, collector
+_LoggerFactory = Callable[..., tuple[logging.Logger, _RecordCollector]]
+
+
+@pytest.fixture
+def make_logger() -> Iterator[_LoggerFactory]:
+    """Yield a factory whose logger level, handlers, and propagation are restored after the test."""
+    saved: list[tuple[logging.Logger, int, list[logging.Handler], bool]] = []
+
+    def _make(
+        name: str = "yascheduler.test.module",
+        level: int = logging.DEBUG,
+    ) -> tuple[logging.Logger, _RecordCollector]:
+        """Return a plain logging.Logger with a RecordCollector handler at the given level."""
+        logger = logging.getLogger(name)
+        saved.append((logger, logger.level, logger.handlers[:], logger.propagate))
+        logger.setLevel(level)
+        logger.handlers.clear()
+        collector = _RecordCollector()
+        logger.addHandler(collector)
+        logger.propagate = False
+        return logger, collector
+
+    yield _make
+
+    # Restore every touched logger so its production configuration is intact for
+    # later tests that log through the same names.
+    for logger, level, handlers, propagate in reversed(saved):
+        logger.setLevel(level)
+        logger.handlers[:] = handlers
+        logger.propagate = propagate
 
 
 # ── Test 1: Gherkin scenario — trace record renders with module, function, lineno, message, and sorted fields ──
 
 
-def test_trace_record_renders_with_module_funcname_lineno_message_and_sorted_fields() -> (
-    None
-):
+def test_trace_record_renders_with_module_funcname_lineno_message_and_sorted_fields(
+    make_logger: _LoggerFactory,
+) -> None:
     """Trace record renders [module][funcName]:lineno msg sorted k=v."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("yascheduler.application.allocate_task")
+    logger, collector = make_logger("yascheduler.application.allocate_task")
 
     logger.debug("ALLOCATED", extra={"ip": "10.0.0.1", "task_id": 7})
 
@@ -62,12 +83,12 @@ def test_trace_record_renders_with_module_funcname_lineno_message_and_sorted_fie
 # ── Test 2: Gherkin scenario — trace fields are sorted alphabetically ──
 
 
-def test_trace_fields_sorted_alphabetically() -> None:
+def test_trace_fields_sorted_alphabetically(make_logger: _LoggerFactory) -> None:
     """Trace fields appear in alphabetical key order for deterministic output."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("yascheduler.test.module")
+    logger, collector = make_logger("yascheduler.test.module")
 
     logger.debug("B", extra={"zebra": 1, "alpha": 2})
 
@@ -83,12 +104,12 @@ def test_trace_fields_sorted_alphabetically() -> None:
 # ── Test 3: Gherkin scenario — DEBUG without extra renders as regular narrative ──
 
 
-def test_debug_without_extra_renders_regular() -> None:
+def test_debug_without_extra_renders_regular(make_logger: _LoggerFactory) -> None:
     """DEBUG record with no extra renders as LEVEL name: message, no trace markers."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("yascheduler.test.module")
+    logger, collector = make_logger("yascheduler.test.module")
 
     logger.debug("progress: ok")
 
@@ -107,12 +128,14 @@ def test_debug_without_extra_renders_regular() -> None:
 # ── Test 4: Gherkin scenario — out-of-package DEBUG with extra renders as regular narrative ──
 
 
-def test_out_of_package_debug_with_extra_renders_regular() -> None:
+def test_out_of_package_debug_with_extra_renders_regular(
+    make_logger: _LoggerFactory,
+) -> None:
     """Third-party logger (e.g. asyncssh) with DEBUG+extra renders as LEVEL name: message."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("asyncssh")
+    logger, collector = make_logger("asyncssh")
 
     logger.debug("key exchange done", extra={"host": "10.0.0.1"})
 
@@ -131,12 +154,12 @@ def test_out_of_package_debug_with_extra_renders_regular() -> None:
 # ── Test 5: Gherkin scenario — INFO/WARN/ERROR renders as regular narrative ──
 
 
-def test_info_warn_error_renders_regular() -> None:
+def test_info_warn_error_renders_regular(make_logger: _LoggerFactory) -> None:
     """INFO/WARN/ERROR records render as LEVEL name: message with no trace markers."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("yascheduler.test.module")
+    logger, collector = make_logger("yascheduler.test.module")
 
     logger.info("info msg")
     logger.warning("warn msg")
@@ -158,12 +181,14 @@ def test_info_warn_error_renders_regular() -> None:
 # ── Test 6: Gherkin scenario — native LogRecord set is derived by introspection ──
 
 
-def test_regular_exception_renders_type_message_and_traceback() -> None:
+def test_regular_exception_renders_type_message_and_traceback(
+    make_logger: _LoggerFactory,
+) -> None:
     """A regular exception-bearing record retains its diagnostic traceback."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("yascheduler.infra.persistence")
+    logger, collector = make_logger("yascheduler.infra.persistence")
 
     try:
         raise RuntimeError("column hostname does not exist")
@@ -179,12 +204,14 @@ def test_regular_exception_renders_type_message_and_traceback() -> None:
     assert "RuntimeError: column hostname does not exist" in output
 
 
-def test_structured_exception_renders_type_message_and_traceback() -> None:
+def test_structured_exception_renders_type_message_and_traceback(
+    make_logger: _LoggerFactory,
+) -> None:
     """A structured DEBUG record keeps sorted fields before its traceback."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter()
-    logger, collector = _make_logger("yascheduler.infra.persistence")
+    logger, collector = make_logger("yascheduler.infra.persistence")
 
     try:
         raise RuntimeError("tracker query failed")
@@ -249,6 +276,9 @@ def test_single_formatter_serves_both_handlers() -> None:
 
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
+    saved_root_level = root.level
+    asyncssh_logger = logging.getLogger("asyncssh")
+    saved_asyncssh_level = asyncssh_logger.level
     root.handlers.clear()
 
     try:
@@ -275,19 +305,23 @@ def test_single_formatter_serves_both_handlers() -> None:
         root.handlers.clear()
         for h in saved_handlers:
             root.addHandler(h)
+        root.setLevel(saved_root_level)
+        asyncssh_logger.setLevel(saved_asyncssh_level)
 
 
 # ── Test 9: Gherkin scenario — timestamp-enabled trace record prepends ISO 8601 prefix ──
 
 
-def test_timestamp_enabled_trace_record_prepends_iso8601_prefix() -> None:
+def test_timestamp_enabled_trace_record_prepends_iso8601_prefix(
+    make_logger: _LoggerFactory,
+) -> None:
     """A timestamp-enabled LogFormatter prepends an ISO 8601 prefix to a trace record."""
     import re
 
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter(timestamp=True)
-    logger, collector = _make_logger("yascheduler.application.allocate_task")
+    logger, collector = make_logger("yascheduler.application.allocate_task")
 
     logger.debug("ALLOCATED", extra={"task_id": 7})
 
@@ -309,14 +343,16 @@ def test_timestamp_enabled_trace_record_prepends_iso8601_prefix() -> None:
 # ── Test 10: Gherkin scenario — timestamp-enabled regular record prepends ISO 8601 prefix ──
 
 
-def test_timestamp_enabled_regular_record_prepends_iso8601_prefix() -> None:
+def test_timestamp_enabled_regular_record_prepends_iso8601_prefix(
+    make_logger: _LoggerFactory,
+) -> None:
     """A timestamp-enabled LogFormatter prepends an ISO 8601 prefix to a regular record."""
     import re
 
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter(timestamp=True)
-    logger, collector = _make_logger("yascheduler.test.module")
+    logger, collector = make_logger("yascheduler.test.module")
 
     logger.warning("webhook retry to %s", "https://example.com/hook")
 
@@ -333,13 +369,13 @@ def test_timestamp_enabled_regular_record_prepends_iso8601_prefix() -> None:
 # ── Test 11: Gherkin scenario — timestamp-disabled formatter renders without a prefix ──
 
 
-def test_timestamp_disabled_renders_without_prefix() -> None:
+def test_timestamp_disabled_renders_without_prefix(make_logger: _LoggerFactory) -> None:
     """A timestamp-disabled LogFormatter renders trace and regular layouts with NO leading timestamp."""
     from yascheduler.shared.log import LogFormatter
 
     formatter = LogFormatter(timestamp=False)
-    trace_logger, trace_collector = _make_logger("yascheduler.test.trace_module")
-    regular_logger, regular_collector = _make_logger("yascheduler.test.regular_module")
+    trace_logger, trace_collector = make_logger("yascheduler.test.trace_module")
+    regular_logger, regular_collector = make_logger("yascheduler.test.regular_module")
 
     trace_logger.debug("B", extra={"k": 1})
     regular_logger.warning("plain")

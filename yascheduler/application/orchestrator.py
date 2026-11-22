@@ -42,7 +42,7 @@ from .queue import UMessage, UniqueQueue
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Sequence
+    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
     from pathlib import Path, PurePath
 
     import aiohttp
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         EngineRepository,
         LocalSettings,
         RemoteDefaults,
+        TaskInputEntry,
     )
     from yascheduler.infra import (
         OccupancyChecker,
@@ -163,12 +164,13 @@ class Orchestrator:
     # ---- Task deployment wrapper ----
 
     # region METHOD_start_task_on_machine
-    # PURPOSE: Bridge the UoW boundary — resolve ncpus from the DB for the task's allocated node before delegating to the infra deployer so the deployer sees the accurate CPU count.
+    # PURPOSE: Bridge the UoW boundary — resolve ncpus from the DB for the task's allocated node before delegating to the infra deployer so the deployer sees the accurate CPU count; the snapshot entry iterator opened by the allocation use case's unit of work passes through untouched.
     async def _start_task_on_machine(
         self,
         session: MachineSession,
         engine: Engine,
         task: RunningTask,
+        entries: AsyncIterator[TaskInputEntry],
     ) -> bool:
         # region BLOCK_resolve_ncpus
         async with self._uow_factory() as uow:
@@ -183,6 +185,7 @@ class Orchestrator:
             session,
             engine,
             task,
+            entries,
             ncpus,
             self._remote_defaults.engines_dir,
         )
@@ -437,12 +440,17 @@ class Orchestrator:
     # endregion METHOD__connect_grace_for
 
     # region METHOD__allocator_producer
-    # PURPOSE: Bound the next allocation wave to the larger of remaining cloud capacity or current free-machine count so the allocate queue never starves when capacity exists and never floods when it does not.
+    # PURPOSE: Bound the next allocation wave to the larger of remaining cloud capacity, current free-machine count, or the configurable allocate_wave_min floor (LocalSettings, default 10) so the allocate queue never starves when capacity exists and never floods when it does not.
+    # INVARIANTS: The wave is a fixed id-ordered window over TO_DO tasks. Operators must keep allocate_wave_min above the longest run of *unallocatable* tasks that can accumulate at the TO_DO head (unsupported engine, engine platform with no matching machine, per-engine exclude_nodes): such tasks never leave TO_DO, so an all-unallocatable window permanently blocks every allocatable task behind it — the queue starves while compute idles.
     async def _allocator_producer(
         self,
     ) -> AsyncGenerator[UMessage[TaskId, TodoTask], None]:
         ccap = await self._clouds_get_capacity()
-        tlim = max(ccap, len(self._repository.list_free(None)), 10)
+        tlim = max(
+            ccap,
+            len(self._repository.list_free(None)),
+            self._local_settings.allocate_wave_min,
+        )
         async with self._uow_factory() as uow:
             tasks = await uow.tasks.list_todo(limit=tlim)
         if tasks:

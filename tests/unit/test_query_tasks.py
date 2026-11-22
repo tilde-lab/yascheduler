@@ -1,6 +1,6 @@
 # region MODULE_CONTRACT
 # PURPOSE: Unit tests for the query_tasks use case (7 QueryTasks scenarios + node batch-load).
-# SCOPE: status dispatch, jobs dispatch, both-supplied ValueError, neither empty, read-only no commit, all-unallocated nodes empty, distinct node ids batch-loaded once, status with node loading.
+# SCOPE: status dispatch, jobs dispatch, both-supplied ValueError, neither empty, read-only no commit, all-unallocated nodes empty, distinct node ids batch-loaded once, status with node loading, batched input-snapshot read.
 # KEYWORDS: query_tasks, status dispatch, jobs dispatch, node batch-load
 # endregion MODULE_CONTRACT
 
@@ -22,6 +22,7 @@ from yascheduler.domain.model import (
     TaskStatus,
     Todo,
 )
+from yascheduler.domain.task_inputs import TaskInputFile, TaskInputSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,10 +33,16 @@ if TYPE_CHECKING:
 class FakeTaskRepository:
     """In-memory task repository capturing dispatched query calls."""
 
-    def __init__(self, tasks: list[Task] | None = None) -> None:
+    def __init__(
+        self,
+        tasks: list[Task] | None = None,
+        snapshots: dict[TaskId, TaskInputSnapshot] | None = None,
+    ) -> None:
         self._tasks = tasks or []
+        self._snapshots = snapshots or {}
         self.list_by_status_calls: list[set[TaskStatus]] = []
         self.list_by_jobs_calls: list[list[TaskId]] = []
+        self.list_input_snapshots_calls: list[list[TaskId]] = []
 
     async def list_by_status(
         self,
@@ -49,6 +56,12 @@ class FakeTaskRepository:
     async def list_by_jobs(self, job_ids: list[TaskId]) -> list[Task]:
         self.list_by_jobs_calls.append(job_ids)
         return self._tasks
+
+    async def list_input_snapshots(
+        self, task_ids: list[TaskId]
+    ) -> dict[TaskId, TaskInputSnapshot]:
+        self.list_input_snapshots_calls.append(list(task_ids))
+        return {tid: self._snapshots[tid] for tid in task_ids if tid in self._snapshots}
 
 
 class FakeNodeRepository:
@@ -129,7 +142,7 @@ class TestQueryTasks:
         repo = FakeTaskRepository(tasks=[_make_task(status=TaskStatus.TO_DO)])
         uow = FakeUnitOfWork(repo)
 
-        tasks, nodes_by_id = await query_tasks(
+        tasks, nodes_by_id, snapshots = await query_tasks(
             jobs=None,
             statuses=[TaskStatus.TO_DO],
             uow_factory=_factory(uow),
@@ -138,6 +151,7 @@ class TestQueryTasks:
         assert len(tasks) == 1
         assert tasks[0].task_id == TaskId(1)
         assert nodes_by_id == {}
+        assert snapshots == {}
         assert repo.list_by_status_calls == [{TaskStatus.TO_DO}]
         assert repo.list_by_jobs_calls == []
 
@@ -145,7 +159,7 @@ class TestQueryTasks:
         repo = FakeTaskRepository(tasks=[_make_task()])
         uow = FakeUnitOfWork(repo)
 
-        tasks, nodes_by_id = await query_tasks(
+        tasks, nodes_by_id, snapshots = await query_tasks(
             jobs=[TaskId(1), TaskId(2), TaskId(3)],
             statuses=None,
             uow_factory=_factory(uow),
@@ -154,8 +168,29 @@ class TestQueryTasks:
         assert len(tasks) == 1
         assert tasks[0].task_id == TaskId(1)
         assert nodes_by_id == {}
+        assert snapshots == {}
         assert repo.list_by_jobs_calls == [[TaskId(1), TaskId(2), TaskId(3)]]
         assert repo.list_by_status_calls == []
+
+    async def test_input_snapshots_batch_loaded_once_for_returned_tasks(self) -> None:
+        """Complete snapshots are read in one batched call keyed by task id."""
+        snapshot = (TaskInputFile(path="INPUT", content=b"in"),)
+        repo = FakeTaskRepository(
+            tasks=[_make_task(), _make_task(task_id=2)],
+            snapshots={TaskId(2): snapshot},
+        )
+        uow = FakeUnitOfWork(repo)
+
+        tasks, _nodes_by_id, snapshots = await query_tasks(
+            jobs=[TaskId(1), TaskId(2)],
+            statuses=None,
+            uow_factory=_factory(uow),
+        )
+
+        assert len(tasks) == 2
+        # Tasks with no entries are absent from the mapping, not present empty.
+        assert snapshots == {TaskId(2): snapshot}
+        assert repo.list_input_snapshots_calls == [[TaskId(1), TaskId(2)]]
 
     async def test_both_jobs_and_statuses_raises_value_error(self) -> None:
         factory = MagicMock(side_effect=AssertionError("UoW should not be opened"))
@@ -175,7 +210,7 @@ class TestQueryTasks:
 
         result = await query_tasks(jobs=None, statuses=None, uow_factory=factory)
 
-        assert result == ([], {})
+        assert result == ([], {}, {})
         factory.assert_not_called()
         assert repo.list_by_status_calls == []
         assert repo.list_by_jobs_calls == []
@@ -195,7 +230,7 @@ class TestQueryTasks:
         nodes_repo = FakeNodeRepository()
         uow = FakeUnitOfWork(repo, nodes=nodes_repo)
 
-        tasks, nodes_by_id = await query_tasks(
+        tasks, nodes_by_id, snapshots = await query_tasks(
             jobs=None,
             statuses=[TaskStatus.TO_DO],
             uow_factory=_factory(uow),
@@ -203,6 +238,7 @@ class TestQueryTasks:
 
         assert len(tasks) == 1
         assert nodes_by_id == {}
+        assert snapshots == {}
         assert nodes_repo.get_by_ids_calls == []
 
     async def test_distinct_allocated_node_ids_batch_loaded_once(self) -> None:
@@ -227,7 +263,7 @@ class TestQueryTasks:
         nodes_repo = FakeNodeRepository(nodes=nodes_list)
         uow = FakeUnitOfWork(repo, nodes=nodes_repo)
 
-        tasks, nodes_by_id = await query_tasks(
+        tasks, nodes_by_id, snapshots = await query_tasks(
             jobs=[TaskId(1), TaskId(2), TaskId(3), TaskId(4)],
             statuses=None,
             uow_factory=_factory(uow),
@@ -235,6 +271,7 @@ class TestQueryTasks:
 
         assert len(tasks) == 4
         assert nodes_by_id == {NodeId(7): nodes_list[0], NodeId(8): nodes_list[1]}
+        assert snapshots == {}
         assert nodes_repo.get_by_ids_calls == [[NodeId(7), NodeId(8)]]
 
     async def test_query_by_statuses_loads_nodes(self) -> None:
@@ -249,7 +286,7 @@ class TestQueryTasks:
         nodes_repo = FakeNodeRepository(nodes=[node])
         uow = FakeUnitOfWork(repo, nodes=nodes_repo)
 
-        tasks, nodes_by_id = await query_tasks(
+        tasks, nodes_by_id, snapshots = await query_tasks(
             jobs=None,
             statuses=[TaskStatus.TO_DO],
             uow_factory=_factory(uow),
@@ -257,3 +294,4 @@ class TestQueryTasks:
 
         assert len(tasks) == 1
         assert nodes_by_id == {NodeId(7): node}
+        assert snapshots == {}

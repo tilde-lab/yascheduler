@@ -23,6 +23,7 @@ from yascheduler.application import (
     AllocationTracker,
     MessageBus,
     Orchestrator,
+    normalize_task_inputs,
     submit_task,
 )
 from yascheduler.domain import (
@@ -32,6 +33,7 @@ from yascheduler.domain import (
     TaskCreated,
     TaskFailed,
     TaskId,
+    TaskInputEntry,
 )
 from yascheduler.infra import (
     CloudAdapter,
@@ -47,7 +49,7 @@ from yascheduler.infra import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from yascheduler.domain import EngineRepository
     from yascheduler.infra.cloud import ConfigCloud
@@ -71,20 +73,36 @@ class CLIDeps:
     uow_factory: Callable[[], AbstractUnitOfWork]
 
     # region METHOD_submit
-    # PURPOSE: Forward with two bundled collaborators into submit_task so the CLI call site stays one line and the boundary between CLI and use case stays explicit.
+    # PURPOSE: Normalize the submission's input source (legacy metadata or explicit entries) exactly once, forward the typed snapshot and optional output selections to submit_task, so the use case never sees legacy encodings and unknown engines still fail inside the use case before any write.
+    # RATIONALE:
+    #   Q: Why does the DI container own normalization instead of each entry point?
+    #   A: Every public submission path (CLI command, sync/async client) funnels through CLIDeps.submit — placing the seam here normalizes once per submission regardless of caller, which the design requires ("normalize legacy values once before the application use case").
     async def submit(
         self,
         label: str,
         metadata: dict[str, object],
         engine_name: str,
+        *,
+        input_entries: Sequence[TaskInputEntry] | None = None,
+        output_selections: list[str] | None = None,
     ) -> TaskId:
         """Submit a new task via the submit_task use case."""
+        engine = self.engines.get(engine_name)
+        # An unknown engine needs no declarations, so it skips normalization;
+        # the use case raises UnsupportedEngineError before any write.
+        input_snapshot, remaining_metadata = (
+            ((), metadata)
+            if engine is None
+            else normalize_task_inputs(metadata, engine, input_entries)
+        )
         return await submit_task(
             label,
-            metadata,
+            remaining_metadata,
             engine_name,
             self.engines,
             self.uow_factory,
+            input_snapshot=input_snapshot,
+            output_selections=output_selections,
         )
 
     # endregion METHOD_submit

@@ -19,9 +19,12 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum, unique
-from typing import ClassVar, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar, Union, cast
 
 from yascheduler.shared import StrEnum, TypeAlias, TypeIs
+
+if TYPE_CHECKING:
+    from .task_inputs import TaskInputSnapshot
 
 from .engine import (
     Deploy,
@@ -148,15 +151,37 @@ class TaskId:
 # endregion CLASS_TaskId
 
 
+# region CONST_TYPED_METADATA_KEYS
+# PURPOSE: Name the metadata keys that map onto typed task fields rather than arbitrary user payload, so every layer separating "unrelated extra" from task fields applies one classification (input files stay out of extra entirely).
+# INVARIANTS: Exact key strings shared by the submission boundary normalization and the submit use case; engine input declarations never consume these keys as legacy input values.
+TYPED_METADATA_KEYS: frozenset[str] = frozenset(
+    {
+        "engine",
+        "remote_folder",
+        "local_folder",
+        "webhook_url",
+        "webhook_custom_params",
+        "error",
+    }
+)
+
+# endregion CONST_TYPED_METADATA_KEYS
+
+
 # region CLASS_NewTask
 # PURPOSE: Carry the fields needed to insert a task before it has a database id, with no lifecycle methods — a pure data carrier.
-# INVARIANTS: No identity (task_id absent); no events, status, allocated_node_id, remote_folder, error, created_at/updated_at — these are all supplied post-insert by the DB or by Task transition methods.
+# INVARIANTS: No identity (task_id absent); no events, status, allocated_node_id, remote_folder, error, created_at/updated_at — these are all supplied post-insert by the DB or by Task transition methods; input_entries is the submission-time input snapshot — the one place bytes must be resident, written once at insert and never read back through the record; output_selections is the task-owned acceptance-time output contract, with the empty tuple meaning no record.
 @dataclass(frozen=True)
 class NewTask:
     """Pre-persistence task record — no identity yet.
 
     A caller builds a ``NewTask`` to prepare a task for insertion.
     It is a pure data carrier with no lifecycle methods.
+    ``input_entries`` carries the submission-time input snapshot; submission
+    is the only boundary that holds input bytes in memory, and ``insert``
+    writes them once — the persisted ``Task`` carries no input contents.
+    ``output_selections`` carries the task-owned output contract recorded at
+    acceptance; the empty tuple means no record and persists as SQL NULL.
     """
 
     engine: str
@@ -165,6 +190,8 @@ class NewTask:
     webhook_url: str | None = None
     webhook_custom_params: dict[str, object] = field(default_factory=dict)
     extra: dict[str, object] = field(default_factory=dict)
+    input_entries: TaskInputSnapshot = ()
+    output_selections: tuple[str, ...] = ()
 
 
 # endregion CLASS_NewTask
@@ -227,7 +254,7 @@ S2 = TypeVar("S2", bound=TaskState)
 
 # region CLASS_Task
 # PURPOSE: Represent a persisted task as an immutable aggregate whose status only changes through atomic transition methods, so invariants and event emission stay centralized.
-# INVARIANTS: Every transition validates the source state via isinstance(self.state, ...), returns a new Task via the _advance retag-cast helper, and appends the matching DomainEvent to events; the state value object carries the CHECK-correlated fields.
+# INVARIANTS: Every transition validates the source state via isinstance(self.state, ...), returns a new Task via the _advance retag-cast helper, and appends the matching DomainEvent to events; the state value object carries the CHECK-correlated fields; output_selections is the acceptance-time output contract, surviving every transition untouched via replace; the record carries no input contents — the snapshot is read from the store explicitly where its bytes are needed.
 @dataclass(frozen=True)
 class Task(Generic[S_co]):
     """Post-persistence task entity, parameterized by its lifecycle state.
@@ -258,6 +285,7 @@ class Task(Generic[S_co]):
     webhook_custom_params: dict[str, object] = field(default_factory=dict)
     extra: dict[str, object] = field(default_factory=dict)
     events: tuple[DomainEvent, ...] = field(default=(), repr=True)
+    output_selections: tuple[str, ...] = ()
 
     @property
     def status(self) -> TaskStatus:

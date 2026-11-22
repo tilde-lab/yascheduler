@@ -24,7 +24,7 @@ from yascheduler.domain.exceptions import NodeRowNotFoundError
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
     from pathlib import PurePath
 
     from yascheduler.domain import (
@@ -32,11 +32,20 @@ if TYPE_CHECKING:
         Engine,
         EngineRepository,
         MachineRepository,
+        RunningTask,
+        TaskInputEntry,
     )
     from yascheduler.infra import OccupancyChecker
+    from yascheduler.shared import TypeAlias
 
     from .allocation_tracker import AllocationTracker
     from .uow import AbstractUnitOfWork
+
+    # Engine spawn hook: one signature, three use sites in this module.
+    StartTaskOnMachine: TypeAlias = Callable[
+        [MachineSession, Engine, RunningTask, AsyncIterator[TaskInputEntry]],
+        Awaitable[bool],
+    ]
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +96,7 @@ async def _try_start_on_machine(
     task: TodoTask,
     occupancy_checker: OccupancyChecker,
     uow_factory: Callable[[], AbstractUnitOfWork],
-    start_task_on_machine: Callable[
-        [MachineSession, Engine, RunningTask], Awaitable[bool]
-    ],
+    start_task_on_machine: StartTaskOnMachine,
     tracker: AllocationTracker,
     remote_tasks_dir: PurePath,
 ) -> bool:
@@ -110,7 +117,11 @@ async def _try_start_on_machine(
     # created on the losing host.
     async with uow_factory() as uow:
         await uow.tasks.save(running, expected_status=TaskStatus.TO_DO)
-        if not await start_task_on_machine(session, engine, running):
+        # Stream the snapshot entries from the same connection and transaction
+        # that holds the claimed row: deployment reads one entry at a time and
+        # never materialises the tree.
+        entries = uow.tasks.iter_input_entries(running.task_id)
+        if not await start_task_on_machine(session, engine, running, entries):
             await uow.rollback()
             return False
         await uow.commit()
@@ -133,7 +144,7 @@ async def _try_start_on_machine(
 # region FUNC__find_free_machines
 # PURPOSE: Enumerate all viable machine-task pairs so the allocator can iterate them without redundant lookups.
 # REQUIRES: The UoW opened at block entry reads uow.nodes.list_enabled() in the same transaction as uow.tasks.list_by_status({RUNNING}); MachineRepository.list_free(platforms) is intersected with the enabled-node set MINUS the busy-node set (allocated_node_id of RUNNING tasks).
-# ENSURES: Returns list of (session, node) pairs for machines that are free, compatible, not already running a task, and present in the enabled-nodes DB view.
+# ENSURES: Returns list of (session, node) pairs for machines that are free, compatible, not already running a task, not listed in the engine's exclude_nodes, and present in the enabled-nodes DB view.
 # RATIONALE:
 # - Q: Why does the enabled=True gate live in the use case instead of MachineRepository?
 #   A: MachineRepository is an infrastructure-layer SSH-collection port that SHALL NOT be coupled to NodeRepository (a persistence port); joining these two data sources is the use case's responsibility. The gate restores the invariant that a machine is allocatable only after its DB row is enabled=TRUE — flipped from enabled=FALSE only after cloud-init, engine setup, and CPU detection complete.
@@ -151,7 +162,9 @@ async def _find_free_machines(
     return [
         (s, nodes_by_id[s.machine.node_id])
         for s in repository.list_free(platforms=list(engine.platforms))
-        if s.machine.node_id in nodes_by_id and s.machine.node_id not in busy_node_ids
+        if s.machine.node_id in nodes_by_id
+        and s.machine.node_id not in busy_node_ids
+        and s.hostname not in engine.exclude_nodes
     ]
     # endregion BLOCK_find_free_machines
 
@@ -168,9 +181,7 @@ async def _allocate_free_machine(
     uow_factory: Callable[[], AbstractUnitOfWork],
     repository: MachineRepository,
     occupancy_checker: OccupancyChecker,
-    start_task_on_machine: Callable[
-        [MachineSession, Engine, RunningTask], Awaitable[bool]
-    ],
+    start_task_on_machine: StartTaskOnMachine,
     tracker: AllocationTracker,
     remote_tasks_dir: PurePath,
 ) -> bool:
@@ -387,9 +398,7 @@ async def allocate_task(
     repository: MachineRepository,
     occupancy_checker: OccupancyChecker,
     clouds: CloudProvisioner,
-    start_task_on_machine: Callable[
-        [MachineSession, Engine, RunningTask], Awaitable[bool]
-    ],
+    start_task_on_machine: StartTaskOnMachine,
     tracker: AllocationTracker,
     allocation_lock: asyncio.Lock,
     remote_tasks_dir: PurePath,

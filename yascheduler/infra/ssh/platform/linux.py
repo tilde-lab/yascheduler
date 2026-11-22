@@ -79,11 +79,25 @@ async def linux_list_processes(
     :raises asyncssh.Error: An SSH error has occurred.
     """
     columns = ["pid", "comm", "args"]
-    columns_part = ",".join([f"{x}:255" for x in columns])
+    # NOTE: the GNU ":255" column-width suffix is rejected by BSD ps on
+    # macOS ("keyword not found", exit 1, EMPTY stdout), so the occupancy
+    # pgrep silently reported every Darwin node as idle while an engine
+    # task was running -> premature consume + remote dir rmtree -> the
+    # engine died with ENOENT on its next file open (silent exit 2 at
+    # ~15 s). Plain keywords plus -ww are portable across procps and BSD
+    # ps, and the parser no longer relies on padded column gaps.
     if query:
-        ps_cmd = f"{query} | xargs --no-run-if-empty ps -o {columns_part}"
+        # POSIX guard instead of GNU-only `xargs --no-run-if-empty`: stock
+        # BSD/macOS xargs rejects that flag BEFORE ps runs -> empty stdout ->
+        # node reported idle -> premature consume (the same failure mode the
+        # NOTE above fixed for the :255 suffix). Even with Homebrew findutils
+        # installed, a non-interactive SSH exec resolves /usr/bin/xargs (BSD),
+        # not Homebrew's gxargs. The `[ -n "$pids" ]` test skips ps when pgrep
+        # matched nothing; the command exits 1 then, which is harmless — the
+        # consumer reads stdout only, never the exit status.
+        ps_cmd = f'pids=$({query}); [ -n "$pids" ] && ps -o {",".join(columns)} -ww $pids'
     else:
-        ps_cmd = f"ps -eo {columns_part}"
+        ps_cmd = " ".join(["ps -axo", ",".join(columns), "-ww"])
     logger.debug("LIST_PROCESSES", extra={"cmd": ps_cmd})
     async with conn.create_process(ps_cmd) as proc:
         await proc.stdout.readline()  # skip headers
@@ -95,7 +109,7 @@ async def linux_list_processes(
             if not raw:
                 continue
             line_count += 1
-            parts = [x.strip() for x in filter(None, raw.split(" " * 10))]
+            parts = [x.strip() for x in raw.split(None, 2)]
             min_parts = 3
             if len(parts) < min_parts:
                 skipped_broken += 1

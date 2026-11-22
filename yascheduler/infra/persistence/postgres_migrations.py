@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from pg8000 import DatabaseError
 from pg8000.native import Connection
 
-from .migration_base import Migration
+from .migration_base import EngineInputsContext, Migration
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -175,11 +175,19 @@ def _last_applied(conn: Connection) -> str | None:
 
 # region FUNC__pending
 # PURPOSE: Compute the set of not-yet-applied migrations so the runner applies only what is needed, preserving chronological order.
-# INVARIANTS: Returns the full input list when last is None — fresh database, every migration is pending; otherwise filters by _prefix_id(f) > last — lexicographic comparison on the before-first-_ token, matching the filename sort key; preserves the sorted order of the input list — no re-sort.
-def _pending(last: str | None, files: list[Path]) -> list[Path]:
+# INVARIANTS: Returns the full input list when last is None — fresh database, every migration is pending; otherwise filters by _prefix_id(f) > last — lexicographic comparison on the before-first-_ token, matching the filename sort key; a non-None upto caps the result inclusively at _prefix_id(f) <= upto (same lexicographic key), so a caller can apply exactly one step of the chain; preserves the sorted order of the input list — no re-sort.
+def _pending(
+    last: str | None,
+    files: list[Path],
+    upto: str | None = None,
+) -> list[Path]:
     if last is None:
-        return list(files)
-    return [f for f in files if _prefix_id(f) > last]
+        candidates = list(files)
+    else:
+        candidates = [f for f in files if _prefix_id(f) > last]
+    if upto is None:
+        return candidates
+    return [f for f in candidates if _prefix_id(f) <= upto]
 
 
 # endregion FUNC__pending
@@ -295,15 +303,17 @@ def _record_py_tracker(conn: Connection, prefix_id: str) -> None:
 
 # region FUNC__apply_py_migration
 # PURPOSE: Execute a Python migration step inside a transaction — load the module, call migrate(), and record the tracker — so complex DDL/DML logic runs safely and is never re-applied.
-# INVARIANTS: Loads the migration module from path via importlib.util.spec_from_file_location(prefix_id, path) — the prefix_id is the module name, so a .py migration file is importable only by the runner, not by regular import statements; raises RuntimeError if the spec or loader is None; the runner opens BEGIN BEFORE loading the module, so a module-level statement that touches the DB (rare but legal) runs inside the migration's transaction.
+# INVARIANTS: Loads the migration module from path under its qualified persistence module name, so module-local loggers retain source identity and structured trace rendering; tracker identity remains prefix_id. Raises RuntimeError if the spec or loader is None; the runner opens BEGIN BEFORE loading the module, so a module-level statement that touches the DB (rare but legal) runs inside the migration's transaction.
 # ENSURES: On success, the migration's migrate() body has run AND the tracker row for <prefix_id> is recorded (the tracker recording is delegated to _record_py_tracker); on any error from module load, migrate(), or tracker recording, issues best-effort ROLLBACK via _rollback(conn) and re-raises — no tracker row is inserted for the failed migration.
 def _apply_py_migration(
     conn: Connection,
     path: Path,
     prefix_id: str,
     config: PostgresDbConfig,
+    engine_inputs: EngineInputsContext | None = None,
 ) -> None:
-    spec = importlib.util.spec_from_file_location(prefix_id, path)
+    module_name = f"{__package__}.sql.migrations.{path.stem}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         msg = f"{path}: cannot load migration module"
         raise RuntimeError(msg)
@@ -313,7 +323,7 @@ def _apply_py_migration(
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         klass = _one_migration_subclass(module)
-        migration = klass(config, conn, logger)
+        migration = klass(config, conn, logger, engine_inputs=engine_inputs)
         migration.migrate()
         # endregion BLOCK_apply_py
 
@@ -331,8 +341,20 @@ def _apply_py_migration(
 # REQUIRES: config is a validated PostgresDbConfig with a reachable database; the database already has the yascheduler_migrations tracker table — apply_schema runs first in yainit and in test fixtures.
 # INVARIANTS: Synchronous — opens ONE pg8000 Connection for the whole run and closes it in finally; pending list is computed once from _last_applied + _scan_migrations + _pending — the directory is NOT re-scanned per migration; dispatches on path.suffix — .sql files route to _apply_sql_migration, everything else routes to _apply_py_migration; the runner does NOT validate prefix_id uniqueness at runtime — that is a unit-test responsibility; the runner does NOT delete tracker rows nor reverse applied migrations — the system is forward-only.
 # ENSURES: On success, every file in the pending list has a tracker row; on failure, the failing migration's tracker row is NOT inserted and the error propagates out of apply_migrations — the connection is closed in finally regardless.
-def apply_migrations(config: PostgresDbConfig) -> None:
-    """Apply pending migrations from sql/migrations/ to the DB described by config, each in its own transaction."""
+# INVARIANTS: engine_inputs is an optional engine-name-to-input-declarations mapping; None (default) preserves the pre-context behavior for callers without engine configuration; only .py migrations receive it — SQL migrations never depend on engine context; upto optionally caps the pending set inclusively at its prefix_id (``upto="012"`` with a tracker at '011' applies exactly migration 012) — None (default) applies through the head of the chain; upto does not override the tracker — steps at or below the last applied migration are never re-applied.
+def apply_migrations(
+    config: PostgresDbConfig,
+    engine_inputs: EngineInputsContext | None = None,
+    upto: str | None = None,
+) -> None:
+    """Apply pending migrations from sql/migrations/ to the DB described by config, each in its own transaction.
+
+    ``engine_inputs`` optionally supplies each engine's declared input file
+    selections to Python migrations (the input conversion needs them);
+    ``None`` keeps the historical behavior. ``upto`` optionally stops the
+    chain after the named revision (``upto="012"`` applies through 012 when
+    the tracker sits at '011'); ``None`` applies everything pending.
+    """
     conn: Connection | None = None
     try:
         # region BLOCK_open_connection
@@ -348,8 +370,11 @@ def apply_migrations(config: PostgresDbConfig) -> None:
         # region BLOCK_read_last
         last = _last_applied(conn)
         files = _scan_migrations()
-        pending = _pending(last, files)
-        logger.debug("READ_LAST", extra={"last": last, "pending": len(pending)})
+        pending = _pending(last, files, upto)
+        logger.debug(
+            "READ_LAST",
+            extra={"last": last, "upto": upto, "pending": len(pending)},
+        )
         # endregion BLOCK_read_last
 
         # region BLOCK_apply_pending
@@ -358,7 +383,7 @@ def apply_migrations(config: PostgresDbConfig) -> None:
             if path.suffix == ".sql":
                 _apply_sql_migration(conn, path, pid)
             else:
-                _apply_py_migration(conn, path, pid, config)
+                _apply_py_migration(conn, path, pid, config, engine_inputs)
             logger.debug("APPLY_PENDING", extra={"prefix": pid})
         # endregion BLOCK_apply_pending
     finally:
