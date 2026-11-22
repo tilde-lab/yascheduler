@@ -95,7 +95,9 @@ async def linux_list_processes(
         # not Homebrew's gxargs. The `[ -n "$pids" ]` test skips ps when pgrep
         # matched nothing; the command exits 1 then, which is harmless — the
         # consumer reads stdout only, never the exit status.
-        ps_cmd = f'pids=$({query}); [ -n "$pids" ] && ps -o {",".join(columns)} -ww $pids'
+        ps_cmd = (
+            f'pids=$({query}); [ -n "$pids" ] && ps -o {",".join(columns)} -ww $pids'
+        )
     else:
         ps_cmd = " ".join(["ps -axo", ",".join(columns), "-ww"])
     logger.debug("LIST_PROCESSES", extra={"cmd": ps_cmd})
