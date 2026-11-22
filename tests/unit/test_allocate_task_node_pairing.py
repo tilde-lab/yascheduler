@@ -121,6 +121,55 @@ class TestFindFreeMachinesNodePairing:
         assert paired_node.node_id in (NodeId(1), NodeId(2))
 
 
+class TestFindFreeMachinesExcludeNodes:
+    """_find_free_machines drops sessions whose hostname is in engine.exclude_nodes."""
+
+    async def test_excluded_hostname_filtered_out(self, engine: Engine) -> None:
+        """A session whose hostname is excluded is filtered out; a non-matching hostname stays eligible."""
+        from dataclasses import replace
+
+        from yascheduler.domain.model import ConnectedMachine, MachineState
+
+        engine = replace(engine, exclude_nodes=frozenset({"10.0.0.2"}))
+
+        node_a = Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4, enabled=True)
+        node_b = Node(node_id=NodeId(2), hostname="10.0.0.2", ncpus=4, enabled=True)
+
+        m_a = MagicMock(spec=ConnectedMachine)
+        m_a.node_id = NodeId(1)
+        m_a.hostname = "10.0.0.1"
+        m_a.state = MachineState.FREE
+        m_a.free_since = time.monotonic()
+        m_b = MagicMock(spec=ConnectedMachine)
+        m_b.node_id = NodeId(2)
+        m_b.hostname = "10.0.0.2"
+        m_b.state = MachineState.FREE
+        m_b.free_since = time.monotonic()
+        session_a = SimpleNamespace(machine=m_a, hostname="10.0.0.1")
+        session_b = SimpleNamespace(machine=m_b, hostname="10.0.0.2")
+
+        repository = MagicMock()
+        repository.list_free = MagicMock(return_value=[session_a, session_b])
+
+        uow = AsyncMock()
+        uow.tasks = AsyncMock()
+        uow.tasks.list_by_status = AsyncMock(return_value=[])  # nothing busy
+        uow.nodes = AsyncMock()
+        uow.nodes.list_enabled = AsyncMock(return_value=[node_a, node_b])
+        uow.__aenter__ = AsyncMock(return_value=uow)
+        uow.__aexit__ = AsyncMock(return_value=False)
+
+        def uow_factory() -> AbstractUnitOfWork:
+            return uow
+
+        pairs = await _find_free_machines(engine, uow_factory, repository)
+
+        # The excluded hostname is filtered out; the non-matching one stays.
+        assert len(pairs) == 1
+        assert pairs[0][0] is session_a
+        assert pairs[0][1] is node_a
+
+
 class TestTryStartOnMachineNodeIdLogging:
     """_try_start_on_machine log lines include node_id=%s alongside ip=%s."""
 

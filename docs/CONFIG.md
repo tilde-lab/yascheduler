@@ -347,6 +347,13 @@ Once set, it cannot be changed later.
   *Default*: []
   *Example*: `openmpi-bin wget`
 
+- `exclude_nodes`
+  A list of node hostnames to exclude from task allocation of this
+  engine, separated by space or newline. Entries must match the host
+  address exactly as registered (`yasetnode`, e.g. an IP).
+  *Default*: [] (no nodes excluded)
+  *Example*: `10.0.0.7 192.168.1.9`
+
 - `deploy_local_files`
   A list of filenames, separated by space or newline, which will be copied
   from local `%(engines_dir)s/%(engine_name)s` to remote
