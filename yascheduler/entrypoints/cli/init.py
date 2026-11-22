@@ -73,6 +73,7 @@ def _init_sysv(
 
 # region FUNC__init_schema
 # PURPOSE: Ensure the database has the required schema and up-to-date migrations so the daemon and CLI can operate against a valid database.
+# INVARIANTS: Engine input declarations are derived from the parsed engines config as plain values and passed to migrations — infra never imports the entrypoints config parser.
 def _init_schema(config_path: str | Path = CONFIG_FILE) -> None:
     config = parse_config(config_path)
     try:
@@ -80,7 +81,10 @@ def _init_schema(config_path: str | Path = CONFIG_FILE) -> None:
         apply_schema(config.db)
         # endregion BLOCK_apply_schema
         # region BLOCK_apply_migrations
-        apply_migrations(config.db)
+        engine_inputs = {
+            name: engine.input_files for name, engine in config.engines.items()
+        }
+        apply_migrations(config.db, engine_inputs=engine_inputs)
         # endregion BLOCK_apply_migrations
     except DatabaseError as e:
         sys.stderr.write(f"Error: {e}\n")

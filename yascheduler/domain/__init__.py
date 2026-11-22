@@ -9,6 +9,7 @@
 # endregion MODULE_CONTRACT
 
 __all__ = [
+    "TYPED_METADATA_KEYS",
     "AnyTask",
     "CloudAllocateError",
     "CloudCapacityExhaustedError",
@@ -27,6 +28,7 @@ __all__ = [
     "Engine",
     "EngineRepository",
     "Event",
+    "InvalidTaskSnapshotError",
     "LocalArchiveDeploy",
     "LocalFilesDeploy",
     # Settings
@@ -59,6 +61,12 @@ __all__ = [
     "TaskError",
     "TaskFailed",
     "TaskId",
+    "TaskInputCaptureError",
+    "TaskInputDirectory",
+    "TaskInputEntry",
+    "TaskInputFile",
+    "TaskInputKind",
+    "TaskInputSnapshot",
     "TaskNotRunningError",
     "TaskNotTodoError",
     # Ports
@@ -68,15 +76,24 @@ __all__ = [
     "TaskStatus",
     "Todo",
     "TodoTask",
+    "UnsafeTaskPathError",
     "UnsupportedEngineError",
     "ValidationError",
     "allocated_node_id_of",
     "error_of",
     "is_done",
+    "is_glob_pattern",
     "is_running",
     "is_todo",
     "materialize_task",
+    "normalize_input_snapshot",
     "remote_folder_of",
+    "selection_matches",
+    "selection_names_entry",
+    "selection_reaches",
+    "validate_selection",
+    "validate_snapshot_selections",
+    "validate_task_path",
 ]
 
 from .engine import (
@@ -102,6 +119,7 @@ from .exceptions import (
     CloudError,
     CloudSetupError,
     DomainError,
+    InvalidTaskSnapshotError,
     MachineBusyError,
     MachineConnectionError,
     MissingInputFileError,
@@ -109,12 +127,15 @@ from .exceptions import (
     NodeRowNotFoundError,
     SchedulingError,
     TaskError,
+    TaskInputCaptureError,
     TaskNotRunningError,
     TaskNotTodoError,
+    UnsafeTaskPathError,
     UnsupportedEngineError,
     ValidationError,
 )
 from .model import (
+    TYPED_METADATA_KEYS,
     AnyTask,
     ConnectedMachine,
     Done,
@@ -151,3 +172,18 @@ from .ports import (
     TaskRepository,
 )
 from .settings import LocalSettings, RemoteDefaults
+from .task_inputs import (
+    TaskInputDirectory,
+    TaskInputEntry,
+    TaskInputFile,
+    TaskInputKind,
+    TaskInputSnapshot,
+    is_glob_pattern,
+    normalize_input_snapshot,
+    selection_matches,
+    selection_names_entry,
+    selection_reaches,
+    validate_selection,
+    validate_snapshot_selections,
+    validate_task_path,
+)

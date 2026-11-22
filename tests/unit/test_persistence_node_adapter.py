@@ -509,58 +509,47 @@ class TestPostgresNodeRepository:
 
     # -- enable / disable / remove ---------------------------------------------
 
-    async def test_enable_executes_update(self, mocker: MockerFixture) -> None:
-        """Enable calls _run with the enable query and node_id.value."""
+    @pytest.mark.parametrize(
+        ("method", "query"),
+        [
+            pytest.param("enable", "node/enable", id="enable"),
+            pytest.param("disable", "node/disable", id="disable"),
+            pytest.param("remove", "node/remove", id="remove"),
+        ],
+    )
+    async def test_state_change_executes_query(
+        self,
+        mocker: MockerFixture,
+        method: str,
+        query: str,
+    ) -> None:
+        """Enable/disable/remove call _run with their query and node_id.value."""
         repo = self._make_repo(mocker)
         repo._run.return_value = [{"node_id": 7}]  # type: ignore[attr-defined]
 
-        await repo.enable(NodeId(7))
+        await getattr(repo, method)(NodeId(7))
 
-        repo._run.assert_awaited_once_with(load_query("node/enable"), node_id=7)  # type: ignore[attr-defined]
+        repo._run.assert_awaited_once_with(load_query(query), node_id=7)  # type: ignore[attr-defined]
 
-    async def test_enable_raises_on_zero_rows(self, mocker: MockerFixture) -> None:
-        """Enable raises NodeRowNotFoundError when RETURNING yields no row."""
+    @pytest.mark.parametrize(
+        ("method", "query"),
+        [
+            pytest.param("enable", "node/enable", id="enable"),
+            pytest.param("disable", "node/disable", id="disable"),
+            pytest.param("remove", "node/remove", id="remove"),
+        ],
+    )
+    async def test_state_change_raises_on_zero_rows(
+        self,
+        mocker: MockerFixture,
+        method: str,
+        query: str,
+    ) -> None:
+        """Enable/disable/remove raise NodeRowNotFoundError when RETURNING yields no row."""
         repo = self._make_repo(mocker)
         repo._run.return_value = []  # type: ignore[attr-defined]
 
         with pytest.raises(NodeRowNotFoundError) as exc:
-            await repo.enable(NodeId(7))
+            await getattr(repo, method)(NodeId(7))
         assert exc.value.node_id == NodeId(7)
-
-    async def test_disable_executes_update(self, mocker: MockerFixture) -> None:
-        """Disable calls _run with the disable query and node_id.value."""
-        repo = self._make_repo(mocker)
-        repo._run.return_value = [{"node_id": 7}]  # type: ignore[attr-defined]
-
-        await repo.disable(NodeId(7))
-
-        repo._run.assert_awaited_once_with(load_query("node/disable"), node_id=7)  # type: ignore[attr-defined]
-
-    async def test_disable_raises_on_zero_rows(self, mocker: MockerFixture) -> None:
-        """Disable raises NodeRowNotFoundError when RETURNING yields no row."""
-        repo = self._make_repo(mocker)
-        repo._run.return_value = []  # type: ignore[attr-defined]
-
-        with pytest.raises(NodeRowNotFoundError) as exc:
-            await repo.disable(NodeId(7))
-        assert exc.value.node_id == NodeId(7)
-
-    async def test_remove_executes_delete(self, mocker: MockerFixture) -> None:
-        """Remove calls _run with the remove (delete) query and node_id.value."""
-        repo = self._make_repo(mocker)
-        repo._run.return_value = [{"node_id": 7}]  # type: ignore[attr-defined]
-
-        await repo.remove(NodeId(7))
-
-        repo._run.assert_awaited_once_with(load_query("node/remove"), node_id=7)  # type: ignore[attr-defined]
-
-    async def test_remove_raises_on_zero_rows(self, mocker: MockerFixture) -> None:
-        """Remove raises NodeRowNotFoundError when RETURNING yields no row — surfaces a double-remove or stale reference."""
-        repo = self._make_repo(mocker)
-        repo._run.return_value = []  # type: ignore[attr-defined]
-
-        with pytest.raises(NodeRowNotFoundError) as exc:
-            await repo.remove(NodeId(7))
-        assert exc.value.node_id == NodeId(7)
-
-        repo._run.assert_awaited_once_with(load_query("node/remove"), node_id=7)  # type: ignore[attr-defined]
+        repo._run.assert_awaited_once_with(load_query(query), node_id=7)  # type: ignore[attr-defined]

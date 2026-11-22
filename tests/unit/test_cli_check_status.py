@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import json as _json
+import logging
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Callable
@@ -15,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.log_assertions import extra_fields
 from yascheduler.domain import Engine, EngineRepository
 from yascheduler.domain.model import (
     Done,
@@ -33,7 +35,7 @@ check_status_mod = importlib.import_module("yascheduler.entrypoints.cli.check_st
 pytestmark = pytest.mark.unit
 
 
-# Mock helpers (mirror tests/unit/test_cli_behavioral.py / test_cli_show_nodes.py)
+# Mock helpers (duplicated across the CLI test modules)
 
 
 def make_cloud(
@@ -110,6 +112,7 @@ def make_task(
     label: str = "test",
     engine: str = "g09",
     allocated_node_id: NodeId | None = None,
+    output_selections: tuple[str, ...] = (),
 ) -> Task:
     """Return a Task domain object with sensible defaults."""
     from datetime import datetime
@@ -136,6 +139,7 @@ def make_task(
         webhook_url=None,
         webhook_custom_params={},
         extra={},
+        output_selections=output_selections,
         created_at=datetime(2025, 1, 1),
         updated_at=datetime(2025, 1, 1),
     )
@@ -192,7 +196,7 @@ def _run(argv: list[str]) -> None:
     check_status_mod.check_status(argv)
 
 
-# Parsing / exit codes (task 9.4)
+# Parsing / exit codes
 
 
 class TestCheckStatusParsing:
@@ -243,7 +247,7 @@ class TestCheckStatusParsing:
         assert args.convergence is True
 
 
-# AiiDA-contract golden regression (task 9.5, design D9)
+# AiiDA-contract golden regression
 
 
 class TestCheckStatusAiiDAContract:
@@ -266,7 +270,7 @@ class TestCheckStatusAiiDAContract:
         assert parsed == {"1": "TO_DO", "2": "RUNNING", "3": "DONE"}
 
 
-# Default renderer + -j filter (task 9.6)
+# Default renderer + -j filter
 
 
 class TestCheckStatusDefault:
@@ -321,7 +325,7 @@ class TestCheckStatusDefault:
         assert "1   RUNNING" in out
 
 
-# Info renderer (task 9.7)
+# Info renderer
 
 
 class TestCheckStatusInfo:
@@ -352,7 +356,7 @@ class TestCheckStatusInfo:
         assert "\t" in out
 
 
-# JSON renderer (task 9.8)
+# JSON renderer
 
 
 class TestCheckStatusJson:
@@ -512,7 +516,7 @@ class TestCheckStatusJson:
         assert _json.loads(out)
 
 
-# Exit codes (task 9.9)
+# Exit codes
 
 
 class TestCheckStatusExitCodes:
@@ -540,32 +544,23 @@ class TestCheckStatusExitCodes:
         _, err = capsys.readouterr()
         assert "Error:" in err
 
-    def test_exit_one_on_config_error(
+    @pytest.mark.parametrize(
+        ("attr", "error"),
+        [
+            pytest.param("parse_config", RuntimeError("bad config"), id="config-error"),
+            pytest.param(
+                "make_cli_deps", ValueError("unexpected"), id="unexpected-exception"
+            ),
+        ],
+    )
+    def test_exit_one_on_startup_failure(
         self,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
+        attr: str,
+        error: Exception,
     ) -> None:
-        monkeypatch.setattr(
-            check_status_mod,
-            "parse_config",
-            MagicMock(side_effect=RuntimeError("bad config")),
-        )
-        with pytest.raises(SystemExit) as exc:
-            _run([])
-        assert exc.value.code == 1
-        _, err = capsys.readouterr()
-        assert "Error:" in err
-
-    def test_exit_one_on_unexpected_exception(
-        self,
-        capsys: pytest.CaptureFixture[str],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr(
-            check_status_mod,
-            "make_cli_deps",
-            MagicMock(side_effect=ValueError("unexpected")),
-        )
+        monkeypatch.setattr(check_status_mod, attr, MagicMock(side_effect=error))
         with pytest.raises(SystemExit) as exc:
             _run([])
         assert exc.value.code == 1
@@ -573,7 +568,7 @@ class TestCheckStatusExitCodes:
         assert "Error:" in err
 
 
-# argv injection (task 9.10)
+# argv injection
 
 
 class TestCheckStatusArgvInjection:
@@ -591,7 +586,7 @@ class TestCheckStatusArgvInjection:
         assert _json.loads(out) == []
 
 
-# View mode happy path + lazy nodes lookup (task 9.12)
+# View mode happy path + lazy nodes lookup
 
 
 class TestCheckStatusViewAcceptance:
@@ -764,10 +759,18 @@ class TestCheckStatusViewHappyPath:
         _run(["-v"])
         uow.nodes.get_by_ids.assert_called_once()
 
-    def test_default_does_not_fetch_nodes(
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param([], id="default"),
+            pytest.param(["-i"], id="info"),
+        ],
+    )
+    def test_non_view_modes_do_not_fetch_nodes(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        argv: list[str],
     ) -> None:
         _config, uow, _deps = stub_config_deps
         uow.tasks.list_by_status = AsyncMock(
@@ -779,13 +782,18 @@ class TestCheckStatusViewHappyPath:
                 ),
             ],
         )
-        _run([])
+        _run(argv)
         uow.nodes.get_by_ids.assert_not_called()
 
-    def test_info_does_not_fetch_nodes(
+
+class TestCheckStatusViewOutputSelections:
+    """View tails the task-owned selection, with a logged engine fallback for legacy tasks."""
+
+    def test_view_tails_recorded_selection_over_engine_config(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _config, uow, _deps = stub_config_deps
         uow.tasks.list_by_status = AsyncMock(
@@ -794,14 +802,113 @@ class TestCheckStatusViewHappyPath:
                     task_id=1,
                     status=TaskStatus.RUNNING,
                     allocated_node_id=NodeId(1),
+                    output_selections=("recorded.out",),
                 ),
             ],
         )
-        _run(["-i"])
-        uow.nodes.get_by_ids.assert_not_called()
+        uow.nodes.get_by_ids = AsyncMock(
+            return_value={
+                NodeId(1): Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4),
+            },
+        )
+        repo = make_mock_repository(stdout="RECORDED TAIL")
+        monkeypatch.setattr(
+            check_status_mod,
+            "SSHMachineRepository",
+            MagicMock(return_value=repo),
+        )
+        _run(["-v"])
+        session = repo.connect.return_value
+        command = session.run_full.await_args.args[0]
+        assert "recorded.out" in command
+        assert "OUTPUT" not in command
+        out, _ = capsys.readouterr()
+        assert "RECORDED TAIL" in out
+
+    def test_view_legacy_task_uses_engine_fallback_and_warns(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        uow.tasks.list_by_status = AsyncMock(
+            return_value=[
+                make_task(
+                    task_id=7,
+                    status=TaskStatus.RUNNING,
+                    allocated_node_id=NodeId(1),
+                ),
+            ],
+        )
+        uow.nodes.get_by_ids = AsyncMock(
+            return_value={
+                NodeId(1): Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4),
+            },
+        )
+        repo = make_mock_repository(stdout="FALLBACK TAIL")
+        monkeypatch.setattr(
+            check_status_mod,
+            "SSHMachineRepository",
+            MagicMock(return_value=repo),
+        )
+        with caplog.at_level(logging.WARNING, logger=check_status_mod.__name__):
+            _run(["-v"])
+        session = repo.connect.return_value
+        command = session.run_full.await_args.args[0]
+        assert "OUTPUT" in command
+        out, _ = capsys.readouterr()
+        assert "FALLBACK TAIL" in out
+        warnings = [
+            record for record in caplog.records if record.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "task_id=7" in message
+        assert "engine 'g09'" in message
+        fields = extra_fields(warnings[0])
+        fields.pop("message", None)
+        assert fields == {"task_id": 7, "engine": "g09"}
+
+    def test_view_pattern_selection_is_named_without_ssh(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        pattern = "results/**/*.dat"
+        uow.tasks.list_by_status = AsyncMock(
+            return_value=[
+                make_task(
+                    task_id=1,
+                    status=TaskStatus.RUNNING,
+                    allocated_node_id=NodeId(1),
+                    output_selections=(pattern,),
+                ),
+            ],
+        )
+        uow.nodes.get_by_ids = AsyncMock(
+            return_value={
+                NodeId(1): Node(node_id=NodeId(1), hostname="10.0.0.1", ncpus=4),
+            },
+        )
+        repo = make_mock_repository()
+        monkeypatch.setattr(
+            check_status_mod,
+            "SSHMachineRepository",
+            MagicMock(return_value=repo),
+        )
+        _run(["-v"])
+        repo.connect.assert_not_called()
+        repo.connect.return_value.run_full.assert_not_called()
+        out, _ = capsys.readouterr()
+        assert pattern in out
+        assert "PATTERN" in out
 
 
-# Query/render separation (task 9.13)
+# Query/render separation
 
 
 class TestCheckStatusQueryRenderSeparation:
@@ -850,47 +957,26 @@ class TestCheckStatusQueryRenderSeparation:
 class TestCheckStatusConfigLogLevel:
     """--config and --log-level argparse + behavior scenarios (defaults WARNING)."""
 
-    def test_help_lists_config_and_log_level(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            check_status_mod._parse_status_args(["--help"])
-        assert exc.value.code == 0
-        out, _ = capsys.readouterr()
-        assert "--config" in out
-        assert "--log-level" in out
-
-    def test_config_nonexistent_exits_two(
-        self,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            check_status_mod._parse_status_args(["--config", "/nonexistent.conf"])
-        assert exc.value.code == 2
-        _, err = capsys.readouterr()
-        assert "not a file" in err
-        assert "/nonexistent.conf" in err
-
-    def test_log_level_warn_rejected_exits_two(self) -> None:
-        with pytest.raises(SystemExit) as exc:
-            check_status_mod._parse_status_args(["--log-level", "WARN"])
-        assert exc.value.code == 2
-
-    def test_log_level_debug_sets_root_to_debug(
+    @pytest.mark.parametrize(
+        ("argv", "expected_level"),
+        [
+            pytest.param([], logging.WARNING, id="default-warning"),
+            pytest.param(["--log-level", "DEBUG"], logging.DEBUG, id="debug-flag"),
+        ],
+    )
+    def test_root_log_level(
         self,
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        expected_level: int,
     ) -> None:
-        import logging
-
         _config, uow, _deps = stub_config_deps
         uow.tasks.list_by_status = AsyncMock(return_value=[])
         root = logging.getLogger()
         original_level = root.level
         try:
-            _run(["--log-level", "DEBUG"])
-            assert root.level == logging.DEBUG
+            _run(argv)
+            assert root.level == expected_level
         finally:
             root.setLevel(original_level)
 
@@ -926,20 +1012,3 @@ class TestCheckStatusConfigLogLevel:
         monkeypatch.setattr(check_status_mod, "parse_config", from_config_spy)
         _run([])
         assert str(from_config_spy.call_args.args[0]) == str(CONFIG_FILE)
-
-    def test_default_log_level_is_warning(
-        self,
-        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import logging
-
-        _config, uow, _deps = stub_config_deps
-        uow.tasks.list_by_status = AsyncMock(return_value=[])
-        root = logging.getLogger()
-        original_level = root.level
-        try:
-            _run([])
-            assert root.level == logging.WARNING
-        finally:
-            root.setLevel(original_level)

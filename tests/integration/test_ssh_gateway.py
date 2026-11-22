@@ -391,6 +391,14 @@ def _make_pengine(
     return engine
 
 
+# Engine probe configurations that detect a remote `sleep` process.
+_SLEEP_ENGINE_CASES = [
+    pytest.param("sleep", None, id="pname-sleep"),
+    pytest.param(None, "pgrep -x sleep", id="cmd-pgrep-sleep"),
+    pytest.param(None, "ps -eocomm= | grep -q sleep", id="cmd-grep-q-sleep"),
+]
+
+
 class TestOccupancyIntegration:
     """Integration tests for occupancy_check against real Docker SSH server."""
 
@@ -416,13 +424,16 @@ class TestOccupancyIntegration:
         """Kill all processes with given name on remote."""
         await session.run(f"killall {name} 2>/dev/null || true")
 
-    async def test_occupancy_check_pname_detects_sleep(
+    @pytest.mark.parametrize(("check_pname", "check_cmd"), _SLEEP_ENGINE_CASES)
+    async def test_occupancy_check_detects_running_sleep(
         self,
         repository: SSHMachineRepository,
         occupancy_checker: OccupancyChecker,
+        check_pname: str | None,
+        check_cmd: str | None,
     ) -> None:
-        """check_pname='sleep' finds running sleep via pgrep."""
-        engine = _make_pengine(check_pname="sleep")
+        """Every occupancy probe detects a sleep started via nohup."""
+        engine = _make_pengine(check_pname=check_pname, check_cmd=check_cmd)
         session = await self._get_session(repository)
 
         try:
@@ -433,13 +444,16 @@ class TestOccupancyIntegration:
         finally:
             await self._kill_bg(session, "sleep")
 
-    async def test_occupancy_check_pname_no_match_after_kill(
+    @pytest.mark.parametrize(("check_pname", "check_cmd"), _SLEEP_ENGINE_CASES)
+    async def test_occupancy_check_no_match_after_kill(
         self,
         repository: SSHMachineRepository,
         occupancy_checker: OccupancyChecker,
+        check_pname: str | None,
+        check_cmd: str | None,
     ) -> None:
-        """check_pname='sleep' returns False after sleep is killed."""
-        engine = _make_pengine(check_pname="sleep")
+        """Every occupancy probe reports free again once the sleep is killed."""
+        engine = _make_pengine(check_pname=check_pname, check_cmd=check_cmd)
         session = await self._get_session(repository)
 
         await self._start_bg_process(session, "sleep 60")
@@ -465,88 +479,6 @@ class TestOccupancyIntegration:
 
         result = await occupancy_checker.occupancy_check(session, engine)
         assert result is False
-
-    async def test_occupancy_check_cmd_pgrep_detects_sleep(
-        self,
-        repository: SSHMachineRepository,
-        occupancy_checker: OccupancyChecker,
-    ) -> None:
-        """check_cmd='pgrep -x sleep' with code 0 detects running sleep."""
-        engine = _make_pengine(check_cmd="pgrep -x sleep", check_cmd_code=0)
-        session = await self._get_session(repository)
-
-        try:
-            await self._start_bg_process(session, "sleep 60")
-            await asyncio.sleep(0.5)
-            result = await occupancy_checker.occupancy_check(session, engine)
-            assert result is True
-        finally:
-            await self._kill_bg(session, "sleep")
-
-    async def test_occupancy_check_cmd_pgrep_no_match_after_kill(
-        self,
-        repository: SSHMachineRepository,
-        occupancy_checker: OccupancyChecker,
-    ) -> None:
-        """check_cmd='pgrep -x sleep' returns False after sleep is killed."""
-        engine = _make_pengine(check_cmd="pgrep -x sleep", check_cmd_code=0)
-        session = await self._get_session(repository)
-
-        await self._start_bg_process(session, "sleep 60")
-        await asyncio.sleep(0.5)
-
-        busy = await occupancy_checker.occupancy_check(session, engine)
-        assert busy is True
-
-        await self._kill_bg(session, "sleep")
-        await asyncio.sleep(0.5)
-
-        busy = await occupancy_checker.occupancy_check(session, engine)
-        assert busy is False
-
-    async def test_occupancy_check_cmd_grep_q_detects_sleep(
-        self,
-        repository: SSHMachineRepository,
-        occupancy_checker: OccupancyChecker,
-    ) -> None:
-        """check_cmd='ps -eocomm= | grep -q sleep' detects running sleep."""
-        engine = _make_pengine(
-            check_cmd="ps -eocomm= | grep -q sleep",
-            check_cmd_code=0,
-        )
-        session = await self._get_session(repository)
-
-        try:
-            await self._start_bg_process(session, "sleep 60")
-            await asyncio.sleep(0.5)
-            result = await occupancy_checker.occupancy_check(session, engine)
-            assert result is True
-        finally:
-            await self._kill_bg(session, "sleep")
-
-    async def test_occupancy_check_cmd_grep_q_no_match_after_kill(
-        self,
-        repository: SSHMachineRepository,
-        occupancy_checker: OccupancyChecker,
-    ) -> None:
-        """check_cmd='ps -eocomm= | grep -q sleep' returns False after kill."""
-        engine = _make_pengine(
-            check_cmd="ps -eocomm= | grep -q sleep",
-            check_cmd_code=0,
-        )
-        session = await self._get_session(repository)
-
-        await self._start_bg_process(session, "sleep 60")
-        await asyncio.sleep(0.5)
-
-        busy = await occupancy_checker.occupancy_check(session, engine)
-        assert busy is True
-
-        await self._kill_bg(session, "sleep")
-        await asyncio.sleep(0.5)
-
-        busy = await occupancy_checker.occupancy_check(session, engine)
-        assert busy is False
 
     async def test_occupancy_check_pname_priority_over_cmd(
         self,
@@ -792,41 +724,30 @@ class TestOccupancySpawnScenario:
         assert len(sessions) > 0
         return sessions[0]
 
-    async def test_pgrep_detects_run_bg_process(
+    @pytest.mark.parametrize(
+        ("check_pname", "check_cmd"),
+        [
+            pytest.param("sleep", None, id="pname-sleep"),
+            pytest.param("sleep", None, id="pname-spawn-like-command"),
+            pytest.param(None, "ps -eocomm= | grep -q sleep", id="cmd-grep-sleep"),
+        ],
+    )
+    async def test_occupancy_check_detects_run_bg_process(
         self,
         repository: SSHMachineRepository,
         occupancy_checker: OccupancyChecker,
+        check_pname: str | None,
+        check_cmd: str | None,
     ) -> None:
-        """Pgrep finds a process started via run_bg (like spawn does)."""
-        engine = _make_pengine(check_pname="sleep")
+        """Every occupancy probe finds a process started via run_bg, as spawn does."""
+        engine = _make_pengine(check_pname=check_pname, check_cmd=check_cmd)
         session = await self._get_session(repository)
 
         await session.run_bg("sleep 60", cwd="/tmp")
         try:
             await asyncio.sleep(1)
             busy = await occupancy_checker.occupancy_check(session, engine)
-            assert busy is True, "pgrep should find sleep process started via run_bg"
-        finally:
-            await session.run("killall sleep 2>/dev/null || true")
-
-    async def test_pname_detects_spawn_like_command_via_run_bg(
-        self,
-        repository: SSHMachineRepository,
-        occupancy_checker: OccupancyChecker,
-    ) -> None:
-        """check_pname finds process from spawn-like command via run_bg.
-
-        Simulates: spawn = sleep 60 && cat 1.input > 1.input.out
-        """
-        engine = _make_pengine(check_pname="sleep")
-        session = await self._get_session(repository)
-
-        # Simulate spawn command: cd to dir, then run sleep
-        await session.run_bg("sleep 60", cwd="/tmp")
-        try:
-            await asyncio.sleep(1)
-            busy = await occupancy_checker.occupancy_check(session, engine)
-            assert busy is True, "sleep process should be found by pgrep after run_bg"
+            assert busy is True
         finally:
             await session.run("killall sleep 2>/dev/null || true")
 
@@ -854,26 +775,6 @@ class TestOccupancySpawnScenario:
             await asyncio.sleep(1)
             busy = await occupancy_checker.occupancy_check(session, engine)
             assert busy is True, "sleep must survive SSHClientProcess handle GC"
-        finally:
-            await session.run("killall sleep 2>/dev/null || true")
-
-    async def test_cmd_grep_detects_run_bg_process(
-        self,
-        repository: SSHMachineRepository,
-        occupancy_checker: OccupancyChecker,
-    ) -> None:
-        """check_cmd with grep detects process started via run_bg."""
-        engine = _make_pengine(
-            check_cmd="ps -eocomm= | grep -q sleep",
-            check_cmd_code=0,
-        )
-        session = await self._get_session(repository)
-
-        await session.run_bg("sleep 60", cwd="/tmp")
-        try:
-            await asyncio.sleep(1)
-            busy = await occupancy_checker.occupancy_check(session, engine)
-            assert busy is True, "check_cmd should detect sleep via ps|grep"
         finally:
             await session.run("killall sleep 2>/dev/null || true")
 

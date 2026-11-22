@@ -139,7 +139,8 @@ require migrations:
 - Target Python `>=3.9`.
 - Maintain compatibility with both `pip` and `uv` — use only PEP 621 standard
   fields in `pyproject.toml`.
-- **Never modify `pyproject.toml` `version`** — release automation owns it.
+- **Change `pyproject.toml` `version` only in a release commit** — see
+  [Release automation](#release-automation).
 - To add a new dependency, first declare it in an OpenSpec change proposal
   with rationale.
 
@@ -153,30 +154,48 @@ Bind loggers via `logging.getLogger(__name__)` (yields
 
 ### Commits
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/). The
-project uses `commitizen` for automated versioning and changelog generation.
+Follow [Conventional Commits](https://www.conventionalcommits.org/). Commit
+messages do not drive the release number or the changelog; a maintainer writes
+both.
 
 ### Release automation
 
-A push to `master` in `tilde-lab/yascheduler` runs the draft workflow with full
-Git history and the Commitizen version from `uv.lock`. The `uv` version provider
-updates `pyproject.toml` and the project's entry in `uv.lock`; the pre-bump hook
-stages the lockfile in the same commit as the version and changelog.
-Dependencies are not upgraded by the bump. No new commits or no eligible changes
-means no bump and no draft.
+A maintainer owns the version and `CHANGELOG.md`; CI owns the tag, the draft
+release and the publication. A release is cut in three moves:
 
-The workflow validates the lockfile and builds/checks distributions before
-atomically pushing the bump commit and tag, then creates a draft release.
-Publishing that draft triggers `.github/workflows/release.yml`. A manual retry
-must select an already-published release tag matching the package version;
-branches and drafts are rejected. PyPI Trusted Publishing must authorize owner
-`tilde-lab`, repository `yascheduler`, workflow `release.yml`, environment
-`pypi`.
+1. Collect the changes under `## Unreleased` at the top of `CHANGELOG.md`, then
+   rename that heading to `## vX.Y.Z (YYYY-MM-DD)`. The section body becomes
+   the draft release body, so write what users need, not a commit log.
+2. Bump the version with `uv version X.Y.Z --no-sync`: it rewrites
+   `pyproject.toml` and the project's entry in `uv.lock` together, without
+   touching dependency pins. Bumping either file by hand leaves the other stale.
+3. Commit as `chore(release): vX.Y.Z` and get it onto `master`.
 
-Commitizen detects breaking changes from `!` in a Conventional Commit header or
-from a `BREAKING CHANGE:` footer, including in an empty commit. Preserve that
-marker in the final commit message when squash-merging. Preview the next bump
-without changing files using `uv run --locked cz bump --dry-run`.
+A push to `master` in `tilde-lab/yascheduler` then runs the draft workflow. It
+reads the version from `pyproject.toml`, fails if `uv.lock` disagrees with it,
+creates and pushes the annotated tag `vX.Y.Z` when the tag does not exist, and
+creates a draft release for that tag with `gh`. The body is the matching
+`CHANGELOG.md` section; when that section is missing, GitHub-generated notes are
+used instead.
+
+A push that leaves the version alone is an ordinary merge and releases nothing.
+A push that moves the version onto a number that already has a release fails the
+run: the number is taken, and tagging it would leave a tag with no package
+behind it. Nothing enforces an order between versions, so a backfill release can
+be cut from its own branch — add it to `on.push.branches` (for example
+`release-2.0.x`) and the workflow releases from that branch's tip.
+
+Publishing the draft triggers `.github/workflows/release.yml`, which builds the
+distribution, runs `twine check`, verifies that the published tag matches the
+package version, and uploads to PyPI. A manual retry of the publish workflow
+must select a published release tag matching the package version; branches and
+drafts are rejected. PyPI Trusted Publishing must authorize owner `tilde-lab`,
+repository `yascheduler`, workflow `release.yml`, environment `pypi`.
+
+Choose the next number deliberately; major bumps are a maintainer decision, not
+a consequence of a commit marker. Breaking changes belong in the release
+section as prose, usually under an `Upgrade notes` heading that spells out the
+migration and rollback steps.
 
 ## OpenSpec
 
