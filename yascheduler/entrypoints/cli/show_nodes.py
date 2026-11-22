@@ -91,7 +91,7 @@ def _parse_nodes_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Only nodes without a running task",
     )
-    # --cloud and --no-cloud are the ONLY mutex group (design D3):
+    # --cloud and --no-cloud are the ONLY mutex group:
     # --enabled/--disabled and --busy/--free are subset selectors, not mutex.
     mutex = parser.add_mutually_exclusive_group()
     mutex.add_argument(

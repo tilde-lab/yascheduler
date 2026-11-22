@@ -1,6 +1,6 @@
 """Unit tests for orchestrator producer and stats error resilience."""
 # region MODULE_CONTRACT
-# PURPOSE: Unit tests for orchestrator producer/stats error resilience (fix-orchestrator-producer-silent-death).
+# PURPOSE: Unit tests for orchestrator producer/stats error resilience.
 # SCOPE: producer Exception → loop continues; producer CancelledError → graceful-drain path preserved; worker registration in self._bg_jobs; stop() cancels workers; double-cancel idempotent; _print_stats Exception → loop continues; _print_stats CancelledError → propagates.
 # KEYWORDS: producer resilience, CancelledError, _bg_jobs, _print_stats
 # endregion MODULE_CONTRACT

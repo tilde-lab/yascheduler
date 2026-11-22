@@ -32,7 +32,7 @@ from yascheduler.infra.persistence.postgres import (
 from yascheduler.infra.persistence.postgres_uow import PostgresUnitOfWork
 
 # ====================================================================
-# Task 8.2: PostgresTaskRepository CRUD
+# PostgresTaskRepository CRUD
 # ====================================================================
 
 
@@ -288,7 +288,7 @@ async def test_repo_task_list_ids_by_node_id_and_status(
 
 
 # ====================================================================
-# Task 8.3: PostgresNodeRepository
+# PostgresNodeRepository
 # ====================================================================
 
 
@@ -523,7 +523,7 @@ async def test_repo_node_list_all_ordered_by_node_id(
 
 
 # ====================================================================
-# Task 8.4: PostgresUnitOfWork
+# PostgresUnitOfWork
 # ====================================================================
 
 
@@ -573,7 +573,7 @@ async def test_uow_rollback_integration(
 
 
 # ====================================================================
-# Task 8.5: DB wrapper coverage
+# DB wrapper coverage
 # ====================================================================
 # Coverage for the DB wrapper (PostgresTaskRepository/PostgresNodeRepository
 # through DB._task_repo / DB._node_repo) is provided by test_db_integration.py.

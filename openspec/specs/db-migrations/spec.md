@@ -129,3 +129,94 @@ needs no snapshot DDL edit.
 - **THEN** a migration file is created, the snapshot's last-migration
   constant is set to the new prefix token, and the snapshot's table and
   type definitions are updated only when the migration changes the schema
+
+### Requirement: Legacy task inputs migrate without metadata loss
+
+The forward migration SHALL identify legacy file payloads with the input
+declarations of each stored task's engine, convert those payloads into
+task-owned input entries where the declarations allow it, and remove only
+converted file keys from unrelated metadata. Conversion SHALL use stored
+payloads rather than the original filesystem. Task identities, lifecycle state,
+node bindings, result locations, and unrelated metadata SHALL be preserved for
+every task.
+
+#### Scenario: existing task data is converted
+
+- **WHEN** the upgrade runs on stored tasks with available engine declarations and valid legacy file payloads
+- **THEN** each task has equivalent input entries, only the converted file keys leave metadata, and task state and unrelated data remain unchanged
+
+#### Scenario: a key that also has children stays one file
+
+- **WHEN** a stored payload holds `basis` and `basis/Si.orb` while the engine declares the literal `basis`
+- **THEN** the migration converts `basis` as one file entry with its stored value and leaves `basis/Si.orb` in unrelated metadata
+- **AND** the run does not fail for a file/child conflict
+
+#### Scenario: conversion agrees with submission
+
+- **WHEN** the same payload and the same declarations are converted by the upgrade and accepted at submission
+- **THEN** both produce the same input entries and the same leftover metadata
+
+### Requirement: A stored legacy payload is flat
+
+The forward migration SHALL read a stored legacy input payload as a flat map of
+names to text values: each declaration identifies keys on its own, and no key
+expands into a directory or into the keys sharing its prefix.
+
+#### Scenario: a key that also has children stays one file
+
+- **WHEN** a stored payload holds `basis` and `basis/Si.orb` while the engine declares the literal `basis`
+- **THEN** the migration converts `basis` as one file entry with its stored value and leaves `basis/Si.orb` in unrelated metadata
+- **AND** the run does not fail for a file/child conflict
+
+#### Scenario: conversion agrees with submission
+
+- **WHEN** the same payload and declarations are converted by the upgrade and accepted at submission
+- **THEN** both produce the same input entries and the same leftover metadata
+### Requirement: Legacy encodings convert only by recorded convention
+
+Legacy text SHALL retain its UTF-8 deployment meaning. The existing `fort.9`
+base64 convention SHALL retain its decoded byte meaning. Other untagged
+strings SHALL remain text even when they resemble base64. The migration SHALL
+not claim to recover encodings that were never recorded.
+
+#### Scenario: untagged base64-like text remains text
+
+- **WHEN** a non-`fort.9` legacy file payload is a string that resembles base64
+- **THEN** it converts as UTF-8 text and is not decoded as base64
+
+### Requirement: A task that has not started stops the upgrade
+
+The upgrade SHALL stop and leave its conversion and its tracker entry
+uncommitted when a task that has not started cannot be converted: its engine
+declaration is unavailable, a declared input is absent from its payload, or its
+payload cannot be converted safely. The stop SHALL name the task, its engine,
+the failing input when known, and the input keys that task carries. Fresh
+bootstrap and upgraded databases SHALL expose the same input storage contract.
+
+#### Scenario: unsafe conversion stops the upgrade
+
+- **WHEN** the upgrade meets a task that has not started whose engine declaration is missing or whose declared payload cannot be converted
+- **THEN** the upgrade stops naming the task, its engine, the failing input when known, and the input keys that task carries, and no conversion or tracker entry is committed
+
+### Requirement: The upgrade requires engine declarations
+
+The upgrade SHALL stop before converting any stored task when it receives no
+engine declaration context, and SHALL leave its tracker entry uncommitted. An
+empty engine declaration mapping is a valid context.
+
+#### Scenario: the upgrade refuses to run without declarations
+
+- **WHEN** the upgrade runs without an engine declaration context against a database that holds stored tasks
+- **THEN** it stops before converting any task and no tracker entry is committed
+
+### Requirement: A task that has started is left unconverted
+
+The upgrade SHALL continue past a task that has started and cannot be
+converted. That task SHALL keep its stored payload and metadata, and SHALL gain
+no input entries. The upgrade SHALL report each engine left with unconverted
+tasks and the number of tasks that engine left.
+
+#### Scenario: a task that has started is left unconverted
+
+- **WHEN** the upgrade meets a task that has started and cannot be converted
+- **THEN** the upgrade continues, that task keeps its stored payload and metadata and gains no input entries, and each engine left with unconverted tasks is reported with its count

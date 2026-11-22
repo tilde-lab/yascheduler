@@ -8,6 +8,7 @@ SET
     error = :error,
     webhook_custom_params = :webhook_custom_params,
     extra = :extra,
+    output_selections = :output_selections,
     status = :status,
     allocated_node_id = :node_id
 WHERE

@@ -400,12 +400,94 @@ Once set, it cannot be changed later.
   *Default*: `10`
 
 - `input_files`
-  A list of task input file names, separated by a space or new line,
-  that will be copied to the remote directory of the task before it is started.
-  The first input is considered as the **main** input.
-  *Example*: `INPUT sibling.file`
+  A list of required input selections, separated by a space or new line.
+  Each selection may be an explicit file (`INPUT`), an explicit directory
+  (`pseudopotentials`), or a glob (`basis/*.orb`). Selecting a directory
+  captures its complete subtree, including hidden entries and empty
+  directories. Overlapping selections are merged and each path is captured
+  once. The first selection is considered as the **main** input.
+
+  Glob matching is case-sensitive and component-wise: `*` matches any number
+  of characters (including none) and `?` matches exactly one character within
+  a path component; `[abc]` and `[a-z]` are character classes. A component that
+  is exactly `**` matches zero or more directory levels, while `*` never
+  crosses `/`. Globs include hidden names. Shell variable, home-directory, and
+  brace expansion do not apply.
+
+  Every selection must match at least one input; a missing path or a glob with
+  no matches fails submission. Paths must be relative to the submission root
+  and POSIX-style. Absolute paths, Windows drive/UNC roots, `..` components,
+  and backslashes are rejected. Symbolic links are never followed: a selected
+  link, or a link inside a selected directory, fails capture.
+
+  `yasubmit` captures exact file bytes from its current working directory (not
+  the script's directory) at submission time. Sources must remain stable
+  until submission returns; changes to them afterward do not affect the
+  stored input snapshot. Queries expose the stored snapshot as the canonical
+  typed `input_entries` projection; legacy filename/value keys in `metadata`
+  are a derived compatibility view of that same snapshot, not a stored copy.
+
+  ```ini
+  [engine.abacus]
+  spawn = {engine_path}/abacus < INPUT > OUTPUT
+  check_cmd = pgrep -x abacus
+  input_files =
+      INPUT
+      STRU
+      pseudopotentials
+      basis/*.orb
+      pseudo/?.upf
+      runs/**/result.out
+  output_files = OUTPUT
+  ```
 
 - `output_files`
-  A list of task output file names, separated by a space or new line,
-  that will be copied from the remote directory of the task after it is finished.
-  *Example*: `INPUT OUTPUT`
+  A list of required output selections, separated by a space or new line,
+  retrieved from the remote directory of the task after it is finished.
+  Each selection may be an explicit file (`OUTPUT`), an explicit directory
+  (`OUT.aiida`), or a glob (`basis/*.orb`). Selecting a directory retrieves
+  its complete subtree, including hidden entries and empty directories.
+  Overlapping selections are merged and each path is transferred once,
+  regardless of declaration order.
+
+  Glob matching uses the same language as `input_files`: it is case-sensitive
+  and component-wise, where `*` matches any number of characters (including
+  none) and `?` matches exactly one character within a path component;
+  `[abc]` and `[a-z]` are character classes. A component that is exactly `**`
+  matches zero or more directory levels, while `*` never crosses `/`. Globs
+  include hidden names. Shell variable, home-directory, and brace expansion do
+  not apply.
+
+  Every selection is required: an explicit path that does not exist, or a glob
+  that matches nothing, is a permanent retrieval error naming that selection,
+  while the remaining selections are still attempted. Paths must be relative
+  to the remote task directory and POSIX-style; absolute paths, Windows
+  drive/UNC roots, `..` components, and backslashes are rejected. Symbolic
+  links are never followed: a selected link, or a link inside a selected
+  directory, is a permanent error.
+
+  Retrieved paths keep their task-relative layout under the local task result
+  directory: `OUT.aiida/nested/result.dat` lands at that same relative path,
+  without flattening and without an added enclosing directory. The local
+  result directory is merged, not cleared: selected ordinary files replace
+  existing files at the same path, unrelated local entries are retained, and
+  a destination symbolic link or a file/directory type conflict is a permanent
+  error for that path. A pass with any transient retrieval failure leaves the
+  task RUNNING and preserves the remote directory for a later pass; a pass with
+  only permanent errors finalises the task as done with a `Download error`
+  naming the failing selections.
+
+  `yastatus` still tails the first `output_files` entry literally, so that
+  entry must name a readable file. Declaring a directory or a glob first means
+  verbose status tailing cannot display output for the task.
+
+  ```ini
+  [engine.abacus]
+  spawn = {engine_path}/abacus < INPUT > OUTPUT
+  check_cmd = pgrep -x abacus
+  input_files = INPUT STRU pseudopotentials
+  output_files =
+      OUT.aiida
+      OUT.aiida/**/*.dat
+      OUTPUT
+  ```

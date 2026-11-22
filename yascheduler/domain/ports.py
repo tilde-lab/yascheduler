@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import (
         AsyncGenerator,
+        AsyncIterator,
         Awaitable,
         Callable,
         Coroutine,
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
         TaskStatus,
         TodoTask,
     )
+    from .task_inputs import TaskInputEntry, TaskInputSnapshot
 
 __all__ = [
     "CloudConfig",
@@ -101,6 +103,26 @@ class TaskRepository(Protocol):
     async def list_by_jobs(self, job_ids: list[TaskId]) -> list[AnyTask]:
         """Return tasks matching the given job IDs."""
         ...
+
+    # region METHOD_iter_input_entries
+    # PURPOSE: Yield one task's input snapshot entries one at a time in path order so deployment streams the tree without holding its bytes in memory.
+    # ENSURES: Entries arrive ordered so a directory precedes everything beneath it; iteration ends after the last entry; the record itself never carries these bytes.
+    def iter_input_entries(self, task_id: TaskId) -> AsyncIterator[TaskInputEntry]:
+        """Return an async iterator over one task's snapshot entries in path order."""
+        ...
+
+    # endregion METHOD_iter_input_entries
+
+    # region METHOD_list_input_snapshots
+    # PURPOSE: Return complete input snapshots for a batch of tasks in one read so the client query projects exact bytes without loading them on every task read.
+    # ENSURES: Every returned snapshot is complete — every entry, its kind, its exact file bytes, its empty directories; tasks with no entries are absent from the mapping.
+    async def list_input_snapshots(
+        self, task_ids: Sequence[TaskId]
+    ) -> Mapping[TaskId, TaskInputSnapshot]:
+        """Return complete input snapshots keyed by task id for the given ids."""
+        ...
+
+    # endregion METHOD_list_input_snapshots
 
     async def list_ids_by_node_id_and_status(
         self,

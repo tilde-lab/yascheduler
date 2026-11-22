@@ -1,48 +1,36 @@
 # region MODULE_CONTRACT
-# PURPOSE: Regression test guarding against silent reintroduction of typing.cast in the composition root.
-# SCOPE: AST-walks yascheduler/entrypoints/di.py for typing.cast imports/calls.
+# PURPOSE: Regression guard against reintroducing typing.cast in the composition root.
+# SCOPE: Parses yascheduler/entrypoints/di.py and rejects a cast import plus both call spellings.
 # KEYWORDS: typing.cast, composition root, AST walk
 # endregion MODULE_CONTRACT
 
-import ast
-import pathlib
+from __future__ import annotations
 
-DI_PATH = (
-    pathlib.Path(__file__).resolve().parents[2]
-    / "yascheduler"
-    / "entrypoints"
-    / "di.py"
+import ast
+from pathlib import Path
+
+DI_MODULE = (
+    Path(__file__).resolve().parents[2] / "yascheduler" / "entrypoints" / "di.py"
 )
 
 
-def test_di_has_no_cast_usage() -> None:
-    """The composition root must not use typing.cast.
-
-    Config.clouds is typed Sequence[ConfigCloud], so iterating config.clouds
-    yields ConfigCloud directly and feeds the infra sinks without a cast. See
-    openspec/changes/narrow-config-clouds-type for rationale.
-
-    The AST walk inspects only code — comments and string literals are not
-    visited, so historical ``cast(...)`` tokens preserved verbatim in
-    ``CHANGE_SUMMARY`` ``PREVIOUS_CHANGE`` lines do not trip the invariant.
-    """
-    tree = ast.parse(DI_PATH.read_text(), filename=str(DI_PATH))
+def _cast_mentions(tree: ast.AST) -> list[int]:
+    lines: list[int] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "typing":
-            for alias in node.names:
-                if alias.name == "cast":
-                    raise AssertionError(f"typing.cast imported at line {node.lineno}")
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "cast"
-        ):
-            raise AssertionError(f"cast(...) called at line {node.lineno}")
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "cast"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "typing"
-        ):
-            raise AssertionError(f"typing.cast(...) called at line {node.lineno}")
+            if any(alias.name == "cast" for alias in node.names):
+                lines.append(node.lineno)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            is_cast = (isinstance(func, ast.Name) and func.id == "cast") or (
+                isinstance(func, ast.Attribute) and func.attr == "cast"
+            )
+            if is_cast:
+                lines.append(node.lineno)
+    return lines
+
+
+def test_composition_root_does_not_reach_for_cast() -> None:
+    """Config.clouds is typed Sequence[ConfigCloud]; a cast in the wiring is a symptom, not a fix."""
+    tree = ast.parse(DI_MODULE.read_text(), filename=str(DI_MODULE))
+    assert _cast_mentions(tree) == []
