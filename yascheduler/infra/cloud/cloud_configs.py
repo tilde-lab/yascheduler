@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from yascheduler.domain import CloudConfig
 from yascheduler.shared import MAX_PORT, validate_interval
@@ -240,10 +240,10 @@ class ConfigCloudVultr(CloudConfig):
 # endregion CLASS_ConfigCloudVultr
 
 
-ConfigCloud = Union[
-    ConfigCloudAzure,
-    ConfigCloudHetzner,
-    ConfigCloudUpcloud,
-    ConfigCloudVastAI,
-    ConfigCloudVultr,
-]
+ConfigCloud = (
+    ConfigCloudAzure
+    | ConfigCloudHetzner
+    | ConfigCloudUpcloud
+    | ConfigCloudVastAI
+    | ConfigCloudVultr
+)

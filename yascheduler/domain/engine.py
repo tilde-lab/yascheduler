@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import chain
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence, ValuesView
@@ -53,11 +53,7 @@ class RemoteArchiveDeploy:
     url: str
 
 
-Deploy = Union[
-    LocalFilesDeploy,
-    LocalArchiveDeploy,
-    RemoteArchiveDeploy,
-]
+Deploy = LocalFilesDeploy | LocalArchiveDeploy | RemoteArchiveDeploy
 
 
 # region CLASS_Engine

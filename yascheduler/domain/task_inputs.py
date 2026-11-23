@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from yascheduler.domain.exceptions import (
     InvalidTaskSnapshotError,
@@ -101,7 +101,7 @@ class TaskInputDirectory:
 # endregion CLASS_TaskInputDirectory
 
 
-TaskInputEntry: TypeAlias = Union[TaskInputFile, TaskInputDirectory]
+TaskInputEntry: TypeAlias = TaskInputFile | TaskInputDirectory
 TaskInputSnapshot: TypeAlias = "tuple[TaskInputEntry, ...]"
 
 

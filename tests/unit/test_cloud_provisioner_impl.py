@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from pathlib import Path, PurePath
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -46,23 +45,7 @@ def _make_mock_adapter(
     adapter.op_limit = 5
     adapter.create_node_conn_timeout = 30
     adapter.create_node_timeout = 300
-
-    # Semaphore mock — stateful mock avoids asyncio.Semaphore which needs event loop on 3.9
-    sem = MagicMock()
-    _locked = False
-
-    def _acquire() -> None:
-        nonlocal _locked
-        _locked = True
-
-    def _release() -> None:
-        nonlocal _locked
-        _locked = False
-
-    sem.locked.side_effect = lambda: _locked
-    sem.acquire = AsyncMock(side_effect=_acquire)
-    sem.release = MagicMock(side_effect=_release)
-    adapter.get_op_semaphore.return_value = sem
+    adapter.get_op_semaphore.return_value = asyncio.Semaphore(adapter.op_limit)
 
     # Platform check
     def _check(platform: str) -> bool:
@@ -227,12 +210,6 @@ def make_provisioner(
     engines: MagicMock | None = None,
 ) -> CloudProvisionerImpl:
     """Helper to construct a CloudProvisionerImpl with defaults."""
-    # Python 3.9: asyncio.Lock() requires a running event loop during init.
-    if sys.version_info < (3, 10):
-        try:
-            asyncio.get_event_loop()
-        except RuntimeError:
-            asyncio.set_event_loop(asyncio.new_event_loop())
     return CloudProvisionerImpl(
         adapters=adapters or {},
         configs=configs or {},
@@ -411,24 +388,9 @@ class TestAllocate:
         adapter.op_limit = 1
         repo = _make_mock_repository()
 
-        # Real semaphore so `async with` actually acquires/releases; wrap it
-        # to observe hold timing without breaking async-with semantics.
-        sem = asyncio.Semaphore(adapter.op_limit)
+        sem = asyncio.Semaphore(1)
+        adapter.get_op_semaphore.return_value = sem
         held_during_create: list[bool] = []
-
-        class _ObservingSemaphore:
-            async def __aenter__(self) -> _ObservingSemaphore:
-                await sem.acquire()
-                return self
-
-            async def __aexit__(self, *exc: object) -> None:
-                sem.release()
-
-            def locked(self) -> bool:
-                return sem.locked()
-
-        observing = _ObservingSemaphore()
-        adapter.get_op_semaphore = MagicMock(return_value=observing)
 
         prov = make_provisioner(
             adapters={"test": adapter},
@@ -439,7 +401,7 @@ class TestAllocate:
         )
 
         async def _observe_create(*args: Any, **kwargs: Any) -> CloudCreateNodeDTO:
-            held_during_create.append(observing.locked())
+            held_during_create.append(sem.locked())
             return CloudCreateNodeDTO(external_id="10.0.0.1", hostname="10.0.0.1")
 
         adapter.create_node = _observe_create
@@ -452,7 +414,7 @@ class TestAllocate:
 
         # Held while create_node ran, released once allocate returned.
         assert held_during_create == [True]
-        assert observing.locked() is False
+        assert sem.locked() is False
 
     @pytest.mark.asyncio
     async def test_allocate_setup_failure_cleans_up_vm(

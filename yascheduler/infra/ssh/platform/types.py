@@ -16,7 +16,7 @@ import asyncio
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from asyncssh.connection import SSHClientConnection
 from asyncssh.misc import (
@@ -169,7 +169,7 @@ GetCPUCoresCallable = Callable[[OuterRunCallable], Coroutine[Any, Any, int]]
 # region ALIAS_ListProcessesCallable
 # PURPOSE: Type every platform-specific process-listing callable so SSHMachineSession.list_processes delegates without per-platform branching.
 ListProcessesCallable = Callable[
-    [SSHClientConnection, Optional[str]],
+    [SSHClientConnection, str | None],
     AsyncGenerator[ProcessInfo, None],
 ]
 

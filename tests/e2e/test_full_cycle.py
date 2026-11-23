@@ -95,7 +95,7 @@ async def test_full_cycle(
         assert len(task_ids) == len(tasks), (
             f"length mismatch: task_ids={len(task_ids)} tasks={len(tasks)}"
         )
-        for tid, task in zip(task_ids, tasks):
+        for tid, task in zip(task_ids, tasks, strict=True):
             assert task is not None, f"task {tid} vanished from DB"
             assert task.status == DomainTaskStatus.DONE, (
                 f"task {tid} status={task.status}, expected DONE"

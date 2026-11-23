@@ -101,7 +101,7 @@ def capture_input_snapshot(root: Path, selections: Sequence[str]) -> TaskInputSn
     try:
         validated = [validate_selection(selection) for selection in selections]
         _require_root_directory(root)
-        for raw, selection in zip(selections, validated):
+        for raw, selection in zip(selections, validated, strict=True):
             if not _select_matches(root, selection, (), matches=matches):
                 reason = (
                     "glob selection matched no entries"

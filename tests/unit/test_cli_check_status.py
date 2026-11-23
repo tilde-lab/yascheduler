@@ -9,9 +9,9 @@ from __future__ import annotations
 import importlib
 import json as _json
 import logging
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from typing import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

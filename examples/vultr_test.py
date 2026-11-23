@@ -359,7 +359,7 @@ def check_ssh(ip: str, port: int = 22, timeout: int = 60) -> bool:
             with socket.create_connection((ip, port), timeout=10):
                 print("SSH port is open")
                 return True
-        except (socket.timeout, ConnectionRefusedError, OSError):
+        except OSError:
             time.sleep(5)
     print(f"WARNING: could not reach SSH on {ip}:{port} within {timeout}s")
     return False

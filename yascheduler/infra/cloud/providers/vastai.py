@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import random
-from typing import TYPE_CHECKING, Literal, TypedDict, Union
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import aiohttp
 
@@ -119,9 +119,7 @@ class VastAIShowInstancesResponse(TypedDict):
     instances: list[VastAIInstance]
 
 
-# plain assignment RHS is evaluated eagerly on 3.9, so use typing.Union
-# instead of PEP 604 `|` (the future-annotations import does not defer this).
-VastAIFilter = dict[str, Union[str, int, float, bool, list[str]]]
+VastAIFilter = dict[str, str | int | float | bool | list[str]]
 
 
 class VastAISearchOffersFilters(TypedDict, total=False):

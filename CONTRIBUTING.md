@@ -5,7 +5,7 @@ and test code following the project conventions.
 
 ## Prerequisites
 
-- Python ≥ 3.9
+- Python ≥ 3.10
 - [uv](https://docs.astral.sh/uv/) (package manager)
 - Docker (for the dev environment and integration/e2e tests)
 
@@ -136,7 +136,7 @@ require migrations:
 
 ### Dependencies
 
-- Target Python `>=3.9`.
+- Target Python `>=3.10`.
 - Maintain compatibility with both `pip` and `uv` — use only PEP 621 standard
   fields in `pyproject.toml`.
 - **Change `pyproject.toml` `version` only in a release commit** — see

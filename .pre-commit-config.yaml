@@ -10,7 +10,7 @@ repos:
         name: ruff format
         description: Run ruff format
         language: system
-        entry: uv run ruff format --check
+        entry: uv run --locked ruff format --check
         pass_filenames: true
         exclude: "^openspec"
         types_or: [python, markdown]
@@ -19,14 +19,14 @@ repos:
         name: ruff check
         description: Run ruff check
         language: system
-        entry: uv run ruff check
+        entry: uv run --locked ruff check
         pass_filenames: true
         types: [python]
 
       - id: zuban-check
         name: zuban check
         description: Run zuban check
-        entry: uv run zuban check
+        entry: uv run --locked zuban check
         language: system
         pass_filenames: true
         types: [python]
@@ -34,7 +34,7 @@ repos:
       - id: lint-imports
         name: lint-imports
         description: Run lint-imports
-        entry: uv run lint-imports
+        entry: uv run --locked lint-imports
         language: system
         pass_filenames: false
         types: [python]
@@ -43,7 +43,7 @@ repos:
         name: tombi format
         description: Run tombi format
         language: system
-        entry: uv run tombi format --check
+        entry: uv run --locked tombi format --check
         pass_filenames: true
         types: [toml]
 
@@ -51,7 +51,7 @@ repos:
         name: sqlfluff format
         description: Format SQL files with sqlfluff
         language: system
-        entry: uv run sqlfluff format --dialect postgres
+        entry: uv run --locked sqlfluff format --dialect postgres
         pass_filenames: true
         types: [sql]
 
@@ -59,14 +59,14 @@ repos:
         name: sqlfluff lint
         description: Lint SQL files with sqlfluff
         language: system
-        entry: uv run sqlfluff lint --dialect postgres
+        entry: uv run --locked sqlfluff lint --dialect postgres
         pass_filenames: true
         types: [sql]
 
       - id: mdlint-check
         name: mdlint check
         description: "Run 'mdlint check' for consistent, reliable Markdown linting."
-        entry: uv run mdlint check
+        entry: uv run --locked mdlint check
         language: system
         types: [markdown]
         exclude: "^openspec"
