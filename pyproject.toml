@@ -59,6 +59,7 @@ yasubmit = "yascheduler.entrypoints.cli.submit:submit"
 yascheduler = "yascheduler.entrypoints.aiida_plugin:YaScheduler"
 
 [project.optional-dependencies]
+aiida = ["aiida-core"]
 azure = [
   "azure-identity~=1.16",
   "azure-mgmt-compute~=35.0.0",

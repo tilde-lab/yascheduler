@@ -67,8 +67,7 @@ async def test_skips_self_wrapper_for_sh_login_shell() -> None:
     pgrep self-matched, and occupancy reported BUSY forever.
     """
     ps_cmd = (
-        'pids=$(pgrep -f dummyengine); [ -n "$pids" ] '
-        '&& ps -o pid,comm,args -ww $pids'
+        'pids=$(pgrep -f dummyengine); [ -n "$pids" ] && ps -o pid,comm,args -ww $pids'
     )
     header = "PID COMMAND COMMAND"
     self_line = _line("10761", "sh", f"sh -c {ps_cmd}")
@@ -87,8 +86,7 @@ async def test_skips_self_wrapper_for_sh_login_shell() -> None:
 async def test_skips_self_wrapper_for_bash_login_shell() -> None:
     """Legacy `bash -c` wrapper must still be skipped."""
     ps_cmd = (
-        'pids=$(pgrep -f dummyengine); [ -n "$pids" ] '
-        '&& ps -o pid,comm,args -ww $pids'
+        'pids=$(pgrep -f dummyengine); [ -n "$pids" ] && ps -o pid,comm,args -ww $pids'
     )
     header = "PID COMMAND COMMAND"
     self_line = _line("10761", "bash", f"bash -c {ps_cmd}")

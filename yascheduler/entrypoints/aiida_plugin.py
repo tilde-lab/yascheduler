@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn, overload
 
 import aiida.schedulers
 from aiida.common.escaping import escape_for_bash
@@ -46,6 +46,19 @@ class _InvalidJobsTypeError(TypeError):
 class _JobCancellationNotSupportedError(FeatureNotAvailable):
     def __init__(self) -> None:
         super().__init__("Job cancellation is not supported by Yascheduler")
+
+
+class _MissingRequestedJobsError(SchedulerError):
+    def __init__(
+        self, missing: list[str], retval: int, stdout: str, stderr: str
+    ) -> None:
+        super().__init__(
+            f"yastatus did not report requested job(s) {missing} "
+            f"(retval={retval}, stdout={stdout.strip()[:200]!r}, "
+            f"stderr={stderr.strip()[:200]!r}): refusing to interpret "
+            "unreported jobs as finished - scheduler or database may be "
+            "transiently unavailable"
+        )
 
 
 _MAP_STATUS_YASCHEDULER = {
@@ -85,9 +98,11 @@ class YaScheduler(aiida.schedulers.Scheduler):
         AiiDA 2.7 makes this public method abstract on the base Scheduler.
         Older AiiDA versions provided the same behavior through submit_from_script.
         """
-        self.transport.chdir(working_directory)
+        # NB Transport.chdir was removed in newer aiida-core; workdir= has
+        # been part of exec_command_wait's contract since aiida 1.x.
         result = self.transport.exec_command_wait(
             self._get_submit_command(escape_for_bash(filename)),
+            workdir=working_directory,
         )
         return self._parse_submit_output(*result)
 
@@ -95,6 +110,22 @@ class YaScheduler(aiida.schedulers.Scheduler):
 
     # region METHOD_get_jobs
     # PURPOSE: Return list of currently active jobs from yascheduler, filtering by job IDs or user.
+    @overload
+    def get_jobs(
+        self,
+        jobs: list[str] | None = ...,
+        user: str | None = ...,
+        as_dict: Literal[False] = False,
+    ) -> list[JobInfo]: ...
+
+    @overload
+    def get_jobs(
+        self,
+        jobs: list[str] | None = ...,
+        user: str | None = ...,
+        as_dict: Literal[True] = ...,
+    ) -> dict[str, JobInfo]: ...
+
     def get_jobs(
         self,
         jobs: str | list[str] | None = None,
@@ -111,6 +142,8 @@ class YaScheduler(aiida.schedulers.Scheduler):
             )
 
         joblist = self._parse_joblist_output(retval, stdout, stderr)
+        if jobs is not None:
+            self._check_requested_jobs_present(jobs, joblist, retval, stdout, stderr)
         if as_dict:
             jobdict = {job.job_id: job for job in joblist}
             if None in jobdict:
@@ -120,6 +153,39 @@ class YaScheduler(aiida.schedulers.Scheduler):
         return joblist
 
     # endregion METHOD_get_jobs
+
+    # region METHOD__check_requested_jobs_present
+    # PURPOSE: Guard the poll against transient yastatus failures silently killing queued AiiDA calculations.
+    @staticmethod
+    def _check_requested_jobs_present(
+        requested: str | list[str],
+        joblist: list[JobInfo],
+        retval: int,
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        """Raise if any explicitly requested job is missing from the parsed list.
+
+        A transient yastatus failure (scheduler or database restarting, CLI
+        configuration error) yields an empty or partial job list. AiiDA's
+        polling contract treats a job absent from the list as DONE, so a
+        queued calculation would be 'retrieved' with no output and fail
+        spuriously. Raising instead makes AiiDA retry the poll and keeps the
+        calculation waiting.
+
+        Only well-formed yascheduler task ids are enforced: a malformed id
+        (e.g. left behind by a transient submit failure) would never appear
+        in yastatus output, and enforcing it would fail the poll for every
+        job in the same batch.
+        """
+        wanted = [requested] if isinstance(requested, str) else list(requested)
+        wanted = [jid for jid in wanted if isinstance(jid, str) and jid.isdigit()]
+        reported = {job.job_id for job in joblist}
+        missing = [job for job in wanted if job not in reported]
+        if missing:
+            raise _MissingRequestedJobsError(missing, retval, stdout, stderr)
+
+    # endregion METHOD__check_requested_jobs_present
 
     # region METHOD_kill_job
     # PURPOSE: Report that job cancellation is not supported by yascheduler (always returns False).
