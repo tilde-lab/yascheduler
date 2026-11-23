@@ -1,3 +1,13 @@
+## Unreleased
+
+### Fix
+
+- **cli**: `yastatus` printed `DONE` without saying why a task failed. `--json`
+  objects carry `error`, the failure reason or `null`, and an `--info` line
+  ends with `error=...` for a task that has a reason, with backslash, tab,
+  carriage return, and newline escaped. Lines for tasks without a reason and
+  the default two-column renderer are unchanged.
+
 ## v3.1.0 (2026-11-03)
 
 ### Upgrade notes

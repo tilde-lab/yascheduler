@@ -22,6 +22,7 @@ from yascheduler.domain import (
     TaskId,
     TaskStatus,
     allocated_node_id_of,
+    error_of,
     is_glob_pattern,
     remote_folder_of,
 )
@@ -39,6 +40,12 @@ if TYPE_CHECKING:
 __all__ = ["check_status"]
 
 logger = logging.getLogger(__name__)
+
+# A failure reason is free text from exception messages; these four characters
+# would break the one-line, tab-separated shape of an --info line.
+_INFO_ERROR_ESCAPES = str.maketrans(
+    {"\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r"}
+)
 
 
 # region FUNC__parse_status_args
@@ -130,24 +137,27 @@ def _render_default(tasks: list[AnyTask]) -> None:
 
 
 # region FUNC__render_info
-# PURPOSE: Render task metadata as parseable tab-separated lines so operators and scripts can consume structured status without depending on JSON or the AiiDA format.
+# PURPOSE: Render task metadata as parseable tab-separated lines so operators and scripts can consume structured status, including why a task failed, without depending on JSON or the AiiDA format.
+# ENSURES: a line ends with an `error` field holding the task's failure reason, with backslash, tab, carriage return, and newline escaped, exactly when the task carries one; a line for a task without a reason has no `error` field.
 def _render_info(tasks: list[AnyTask]) -> None:
     for task in tasks:
-        sys.stdout.write(
-            "task_id={}\tstatus={}\tlabel={}\tnode_id={}\n".format(
-                task.task_id,
-                task.status.name,
-                task.label,
-                allocated_node_id_of(task) or "-",
-            ),
+        line = "task_id={}\tstatus={}\tlabel={}\tnode_id={}".format(
+            task.task_id,
+            task.status.name,
+            task.label,
+            allocated_node_id_of(task) or "-",
         )
+        error = error_of(task)
+        if error is not None:
+            line += "\terror=" + error.translate(_INFO_ERROR_ESCAPES)
+        sys.stdout.write(line + "\n")
 
 
 # endregion FUNC__render_info
 
 
 # region FUNC__render_json
-# PURPOSE: Serialize task and node state as JSON with raw domain values so automation tools can consume the full status programmatically without parsing human-oriented text.
+# PURPOSE: Serialize task and node state as JSON with raw domain values so automation tools can consume the full status, including why a task failed, programmatically without parsing human-oriented text.
 def _render_json(tasks: list[AnyTask], nodes_by_id: dict[NodeId, Node]) -> str:
     # region BLOCK_render_json
     objects = []
@@ -162,6 +172,7 @@ def _render_json(tasks: list[AnyTask], nodes_by_id: dict[NodeId, Node]) -> str:
                 "engine": task.engine,
                 "local_folder": task.local_folder,
                 "remote_folder": remote_folder_of(task),
+                "error": error_of(task),
                 "created_at": task.created_at.isoformat(),
                 "updated_at": task.updated_at.isoformat(),
                 "node": (

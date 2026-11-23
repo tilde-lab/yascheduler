@@ -113,6 +113,7 @@ def make_task(
     engine: str = "g09",
     allocated_node_id: NodeId | None = None,
     output_selections: tuple[str, ...] = (),
+    error: str | None = None,
 ) -> Task:
     """Return a Task domain object with sensible defaults."""
     from datetime import datetime
@@ -126,7 +127,7 @@ def make_task(
         )
     else:
         state = Done(
-            error=None,
+            error=error,
             allocated_node_id=allocated_node_id,
             remote_folder="/tmp/remote",
         )
@@ -329,7 +330,7 @@ class TestCheckStatusDefault:
 
 
 class TestCheckStatusInfo:
-    """-i prints tab-separated task_id/status/label/ip."""
+    """-i prints tab-separated task_id/status/label/node_id, then error if any."""
 
     def test_info_tab_separated(
         self,
@@ -355,14 +356,41 @@ class TestCheckStatusInfo:
         assert "node_id=1" in out
         assert "\t" in out
 
+    def test_info_failed_task_ends_line_with_escaped_error(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        uow.tasks.list_by_jobs = AsyncMock(
+            return_value=[
+                make_task(task_id=3, status=TaskStatus.DONE),
+                make_task(
+                    task_id=4,
+                    status=TaskStatus.DONE,
+                    error="Download error: OUTPUT: selection matched no entries",
+                ),
+                make_task(task_id=5, status=TaskStatus.DONE, error="a\\b\tc\nd\re"),
+            ],
+        )
+        _run(["-i", "-j", "3", "4", "5"])
+        out, _ = capsys.readouterr()
+        assert out == (
+            "task_id=3\tstatus=DONE\tlabel=test\tnode_id=-\n"
+            "task_id=4\tstatus=DONE\tlabel=test\tnode_id=-\t"
+            "error=Download error: OUTPUT: selection matched no entries\n"
+            "task_id=5\tstatus=DONE\tlabel=test\tnode_id=-\t"
+            "error=a\\\\b\\tc\\nd\\re\n"
+        )
+
 
 # JSON renderer
 
 
 class TestCheckStatusJson:
-    """--json emits a list of 9-field objects with raw domain values."""
+    """--json emits a list of 10-field objects with raw domain values."""
 
-    def test_json_emits_list_with_nine_fields(
+    def test_json_emits_list_with_ten_fields(
         self,
         capsys: pytest.CaptureFixture[str],
         stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
@@ -399,10 +427,12 @@ class TestCheckStatusJson:
             "engine",
             "local_folder",
             "remote_folder",
+            "error",
             "created_at",
             "updated_at",
             "node",
         }
+        assert obj["error"] is None
         assert obj["status"] == "RUNNING"
         assert obj["node"]["hostname"] == "10.0.0.1"
         assert obj["node"]["port"] == 22
@@ -472,6 +502,22 @@ class TestCheckStatusJson:
         assert "port" not in obj
         assert "cloud" not in obj
         assert obj["engine"] == "g09"
+
+    def test_json_failed_task_carries_error(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        stub_config_deps: tuple[MagicMock, AsyncMock, MagicMock],
+    ) -> None:
+        _config, uow, _deps = stub_config_deps
+        uow.tasks.list_by_jobs = AsyncMock(
+            return_value=[
+                make_task(task_id=3, status=TaskStatus.DONE),
+                make_task(task_id=4, status=TaskStatus.DONE, error="node is gone"),
+            ],
+        )
+        _run(["--json", "-j", "3", "4"])
+        out, _ = capsys.readouterr()
+        assert [obj["error"] for obj in _json.loads(out)] == [None, "node is gone"]
 
     def test_json_empty_result_is_empty_list(
         self,

@@ -303,6 +303,12 @@ The default renderer SHALL print one line per task: the task id, three spaces,
 and the status name. `DONE` tasks SHALL appear only when the query is by id
 (with `-j`).
 
+The `-i` renderer SHALL print one tab-separated `key=value` line per task with
+the keys `task_id`, `status`, `label`, and `node_id`. When the task carries a
+failure reason, the line SHALL end with an `error` field holding that reason,
+with backslash, tab, carriage return, and newline escaped so the reason stays
+on one line.
+
 #### Scenario: the default output is two columns
 
 - **WHEN** `yastatus` is invoked against tasks `1` (RUNNING), `2` (TO_DO), and `3` (DONE)
@@ -331,15 +337,27 @@ and the status name. `DONE` tasks SHALL appear only when the query is by id
 | `--json`         | JSON renderer with raw domain values.                                 |
 | `-o`/`--convergence` | With `-v`, also download and print a CRYSTAL convergence snippet.  |
 
+#### Scenario: a failed task ends its info line with the reason
+
+- **WHEN** `yastatus -i -j 7` lists task `7`, which is `DONE` with the failure reason `Download error: OUTPUT: selection matched no entries`
+- **THEN** the line ends with `error=Download error: OUTPUT: selection matched no entries`
+
+#### Scenario: a task without a failure reason prints no error field
+
+- **WHEN** `yastatus -i` lists a task whose state carries no failure reason
+- **THEN** its line has no `error` field
+
 ### Requirement: yastatus JSON output
 
 When `--json` is given, `yastatus` SHALL print one JSON object per task
 with raw domain values and no display tokens. Each object SHALL carry a
-nested `node` object (not flat fields). The schemas SHALL be:
+nested `node` object (not flat fields). `error` SHALL be the task's failure
+reason, or `null` when the task has none. The schemas SHALL be:
 
 ```
 {"task_id": int, "status": str, "label": str, "engine": str,
  "local_folder": str | null, "remote_folder": str | null,
+ "error": str | null,
  "created_at": str, "updated_at": str,
  "node": {"hostname": str, "port": int, "username": str,
           "cloud": str | null, "jump_host": str | null,
@@ -360,6 +378,11 @@ An empty result SHALL print `[]`.
 
 - **WHEN** `yastatus --json` is invoked and the query returns no tasks
 - **THEN** the output is `[]` and the process exits `0`
+
+#### Scenario: a failed task carries its reason
+
+- **WHEN** `yastatus --json -j 7` lists task `7`, which is `DONE` with the failure reason `Download error: OUTPUT: selection matched no entries`
+- **THEN** the object's `error` is that reason, and it is `null` for a task without one
 
 ### Requirement: yastatus view mode connects with node parameters
 
