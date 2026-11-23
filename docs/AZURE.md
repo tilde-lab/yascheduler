@@ -37,16 +37,16 @@ az ad app create --display-name yascheduler
 ```
 
 Assign roles *Network Contributor* and *Virtual Machine Contributor*
-in the *Resource Group*. Use the correct `appId`:
+in the *Resource Group*. Use the correct `appId` and `subscriptionId`:
 
 ```bash
 az role assignment create \
     --assignee 00000000-0000-0000-0000-000000000000 \
-    --resource-group yascheduler-rg \
+    --scope /subscriptions/<subscriptionId>/resourceGroups/yascheduler-rg \
     --role "Network Contributor"
 az role assignment create \
     --assignee 00000000-0000-0000-0000-000000000000 \
-    --resource-group yascheduler-rg \
+    --scope /subscriptions/<subscriptionId>/resourceGroups/yascheduler-rg \
     --role "Virtual Machine Contributor"
 ```
 
