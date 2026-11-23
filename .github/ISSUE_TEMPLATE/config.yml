@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/tilde-lab/yascheduler/blob/master/CONTRIBUTING.md
+    about: Dev sandbox, project conventions, test commands, release process.
+  - name: Security vulnerability
+    url: https://github.com/tilde-lab/yascheduler/security/advisories/new
+    about: Report a vulnerability privately instead of opening an issue.
+  - name: Documentation
+    url: https://github.com/tilde-lab/yascheduler/tree/master/docs
+    about: Configuration, architecture, and provider-specific setup notes.
