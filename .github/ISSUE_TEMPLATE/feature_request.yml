@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose a capability, a behavior change, or a cleanup
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Behavior-changing work goes through OpenSpec: a proposal under
+        `openspec/changes/` and a requirement update under `openspec/specs/`.
+        Read `docs/decisions/` before proposing a new interface, a different
+        module boundary, or a different error model. Both rules are in
+        CONTRIBUTING.md.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: |
+        What is impossible, slow, or error-prone today, and who runs into it.
+        A concrete workflow beats a principle.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: |
+        The behavior you want, described with the commands, config keys or
+        API calls it would involve.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        Workarounds you tried, designs you rejected, and the reason each one
+        fell short.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surfaces
+      description: Every interface that would change. Select all that apply.
+      multiple: true
+      options:
+        - Orchestrator, allocator or consume flow
+        - CLI command or flag
+        - INI configuration
+        - Public Python API
+        - AiiDA plugin contract
+        - PostgreSQL schema (needs a migration)
+        - Cloud provider integration
+        - Documentation only
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: |
+        What breaks for an existing installation after an upgrade, and what
+        the migration or rollback path looks like. Write "nothing" when
+        nothing breaks.

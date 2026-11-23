@@ -1,0 +1,111 @@
+name: Bug report
+description: A defect in the daemon, a CLI tool, a provider, or the plugin
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the open and closed issues first. A report that names the
+        version, the logs and a reproduction gets acted on far sooner.
+
+        Suspected vulnerability: use the private advisory link instead of a
+        public issue.
+  - type: input
+    id: version
+    attributes:
+      label: yascheduler version
+      description: |
+        Release tag, or the version reported by an installed package:
+        `pip show yascheduler` / `uv pip show yascheduler`.
+      placeholder: "3.1.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - PyPI package, installed with pip
+        - PyPI package, installed with uv
+        - Git checkout, `uv sync`
+        - Git checkout, `pip install -e`
+        - Other or unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: python
+    attributes:
+      label: Python version
+      options:
+        - "3.9"
+        - "3.10"
+        - "3.11"
+        - "3.12"
+        - "3.13"
+        - "3.14"
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Pick the closest match. "Not sure" is a valid answer.
+      options:
+        - Orchestrator and allocator
+        - SSH infrastructure and node setup
+        - Cloud providers (Vultr, Azure, UpCloud, Vast.ai)
+        - PostgreSQL persistence and migrations
+        - CLI tools (yainit, yanodes, yasetnode, yastatus, yasubmit)
+        - Python client API
+        - AiiDA scheduler plugin
+        - Installation and packaging
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that still shows the defect.
+      placeholder: |
+        1. ./dev.py up
+        2. ./dev.py run yasubmit --engine test_shell --payload '{}'
+        3. ./dev.py run yastatus
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened, and with what task status.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and logs
+      description: |
+        Paste the traceback or the log lines around the failure. Raise the
+        log level to DEBUG when the default output says nothing.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: |
+        The relevant `yascheduler.conf` sections, with passwords, key paths
+        and provider tokens replaced by placeholders.
+      render: ini
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: |
+        Node setup, provider region, task payload, or anything else that
+        narrows the cause down.
