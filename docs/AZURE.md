@@ -3,7 +3,7 @@
 You can pre-build an image with all the engines you need. This can be faster
 than uploading an engine each time/creating an engine when configuring a node.
 There is an example of building such an image at
-[examples/own-vm-image/](../examples/own-vm-image/README.md).
+[examples/own-vm-images/](../examples/own-vm-images/README.md).
 
 ## Setup
 
