@@ -173,6 +173,9 @@ These settings are common to all the providers:
 
 ### Hetzner
 
+The connector uses the Hetzner REST API through `aiohttp`, which is a core
+dependency, so no extra is required.
+
 Settings prefix is `hetzner`.
 
 - `hetzner_token`
@@ -192,7 +195,8 @@ Settings prefix is `hetzner`.
 
 ### Azure
 
-Azure Cloud should be pre-configured for `yascheduler`. See [Azure setup](docs/AZURE.md).
+Azure Cloud should be pre-configured for `yascheduler`. See [Azure setup](AZURE.md).
+The Azure SDK is optional: install it with `pip install yascheduler[azure]`.
 
 Settings prefix is `az`.
 
@@ -241,6 +245,8 @@ Settings prefix is `az`.
 
 ### UpCloud
 
+The UpCloud SDK is optional: install it with `pip install yascheduler[upcloud]`.
+
 Settings prefix is `upcloud`.
 
 - `upcloud_login`
@@ -252,7 +258,8 @@ Settings prefix is `upcloud`.
 ### VastAI
 
 VastAI is a GPU marketplace for on-demand GPU instances.
-See [VastAI setup](docs/VASTAI.md) for setup instructions.
+See [VastAI setup](VASTAI.md) for setup instructions.
+The connector uses `aiohttp` from the core dependencies, so no extra is required.
 
 Settings prefix is `vastai`.
 
@@ -295,7 +302,7 @@ calculations. This integration uses the Vultr REST API v2 directly via `aiohttp`
 (no extra Python dependency is required — `aiohttp` and `asyncssh` are already
 core dependencies).
 
-See [Vultr setup](docs/VULTR.md) for details on bare-metal provisioning,
+See [Vultr setup](VULTR.md) for details on bare-metal provisioning,
 RAID0 NVMe setup, and cloud-init configuration.
 
 Settings prefix is `vultr`.

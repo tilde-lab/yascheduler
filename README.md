@@ -17,11 +17,15 @@ with its configuration template.
 
 Use `pip` and PyPI: `pip install yascheduler`.
 
-By default, no cloud connectors are installed.
-To install the appropriate connector, use one of the commands:
+The Hetzner Cloud, VastAI, and Vultr connectors ship with the package and need
+no additional dependencies. Microsoft Azure and UpCloud talk to vendor SDKs,
+which are optional:
 
 - for Microsoft Azure: `pip install yascheduler[azure]`
 - for UpCloud: `pip install yascheduler[upcloud]`
+
+A configured provider whose dependencies are missing is skipped: the daemon
+logs the provider name with the import error and keeps running the others.
 
 The last updates and bugfixes can be obtained cloning the repository:
 
@@ -30,12 +34,16 @@ git clone https://github.com/tilde-lab/yascheduler.git
 pip install yascheduler/
 ```
 
-The installation procedure creates the configuration file located at
-`/etc/yascheduler/yascheduler.conf`.
+Installation does not create a configuration file. Write
+`/etc/yascheduler/yascheduler.conf` (or point `YASCHEDULER_CONF_PATH` at your
+own file), using `yascheduler/data/yascheduler.conf` from the installed package
+as a starting point.
 The file contains credentials for Postgres database access, used directories,
 cloud providers and scientific simulation codes (called *engines*).
-Please check and amend this file with the correct credentials. The database
-and the system service should then be initialized with `yainit` script.
+Every section, key, and default is documented in
+[docs/CONFIG.md](docs/CONFIG.md).
+The database schema and the system service are then initialized with the
+`yainit` script.
 
 ## Usage
 
@@ -197,15 +205,19 @@ The file covers the PostgreSQL database, local daemon settings, remote SSH
 defaults, cloud providers, and calculation engines. Every section, key, and
 default is documented in **[docs/CONFIG.md](docs/CONFIG.md)**.
 
-For cloud-provider-specific setup (Azure, VastAI, Vultr), see also
-[docs/AZURE.md](docs/AZURE.md), [docs/VASTAI.md](docs/VASTAI.md),
-[docs/VULTR.md](docs/VULTR.md).
+For cloud-provider-specific setup, see
+[docs/CONFIG.md](docs/CONFIG.md#providers-clouds) for all five providers, and
+the dedicated notes for [Azure](docs/AZURE.md), [VastAI](docs/VASTAI.md), and
+[Vultr](docs/VULTR.md).
 
 ## Aiida Integration
 
 See the detailed instructions for the [MPDS-AiiDA-CRYSTAL
 workflows](https://github.com/mpds-io/mpds-aiida) as well as the
-[ansible-mpds](https://github.com/mpds-io/ansible-mpds) repository. In essence:
+[ansible-mpds](https://github.com/mpds-io/ansible-mpds) repository. The
+scheduler plugin imports `aiida-core` at load time, so install it with
+`pip install yascheduler[aiida]` unless your AiiDA environment already
+provides it. In essence:
 
 ```sh
 ssh aiidauser@localhost # important
