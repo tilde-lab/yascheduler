@@ -1,3 +1,13 @@
+## Unreleased
+
+### Fix
+
+- **config**: the packaged `yascheduler.conf` template parses again. Its
+  `engines_dir` interpolated `%(data_dir)s` while `data_dir` was left commented
+  out, so a copied template aborted the config parse with
+  `InterpolationMissingOptionError` before any setting was applied. `data_dir`
+  is now set explicitly in `[local]` and `[remote]`.
+
 ## v3.1.0 (2026-11-03)
 
 ### Upgrade notes
