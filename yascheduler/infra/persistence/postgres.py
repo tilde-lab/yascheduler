@@ -73,7 +73,7 @@ class _PgRepository:
         def _fn() -> list[dict[str, Any]]:
             rows: list[tuple[Any, ...]] = self._conn.run(sql, **params) or []
             cols = [c["name"] for c in (self._conn.columns or [])]
-            return [dict(zip(cols, row)) for row in rows]
+            return [dict(zip(cols, row, strict=True)) for row in rows]
 
         return await asyncio.get_running_loop().run_in_executor(self._executor, _fn)
 

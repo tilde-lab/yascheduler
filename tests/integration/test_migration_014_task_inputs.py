@@ -247,7 +247,7 @@ def _query(
 ) -> list[dict[str, object]]:
     raw_rows: list[tuple[object, ...]] = conn.run(sql, **params) or []
     columns = [column["name"] for column in (conn.columns or [])]
-    return [dict(zip(columns, row)) for row in raw_rows]
+    return [dict(zip(columns, row, strict=True)) for row in raw_rows]
 
 
 def _tracker_rows(conn: pg8000.native.Connection) -> list[str]:

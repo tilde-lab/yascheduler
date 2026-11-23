@@ -54,7 +54,7 @@ async def _detect_platform(
     checks: Sequence[bool] = [
         await aall(amap(lambda y: with_limit(conn, y), x.checks)) for x in adapters
     ]
-    for candidate, check in zip(adapters, checks):
+    for candidate, check in zip(adapters, checks, strict=True):
         if check:
             platforms.append(candidate.platform)
         if check and not adapter:

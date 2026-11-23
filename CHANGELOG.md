@@ -1,3 +1,12 @@
+## Unreleased
+
+### BREAKING CHANGE
+
+- Python 3.9 is no longer supported. The package requires Python 3.10 or newer,
+  and `pip` and `uv` refuse to install it on 3.9. A host whose system
+  interpreter is 3.9 (RHEL 9, Debian 11) needs a newer interpreter before the
+  upgrade; no configuration, command-line, or database change comes with it.
+
 ## v3.1.0 (2026-11-03)
 
 ### Upgrade notes

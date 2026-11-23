@@ -109,8 +109,6 @@ are convention + code review.
 - **R1 and R2 are unenforced by tooling.** Within-package relative imports and
   facade-only cross-package imports depend on spec text, AGENTS.md triggers,
   and code review. A reviewer skipping the check lets violations through.
-- **`import-linter` pinned at `>=2.5,<2.6`.** Version 2.6 dropped Python 3.9
-  support. The pin stays until the project bumps to Python ≥3.10.
 - **Compatibility shim for `client.py`.** A real file at `yascheduler/client.py`
   re-exports `Yascheduler` from `entrypoints/client.py`.
 

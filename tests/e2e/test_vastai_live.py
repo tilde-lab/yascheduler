@@ -326,7 +326,7 @@ async def _assert_outputs(
             nid for t in tasks if t and (nid := allocated_node_id_of(t)) is not None
         ]
         nodes_by_id = await uow.nodes.get_by_ids(node_ids) if node_ids else {}
-    for idx, (tid, task) in enumerate(zip(task_ids, tasks)):
+    for idx, (tid, task) in enumerate(zip(task_ids, tasks, strict=True)):
         assert task is not None, f"task {tid} vanished from DB"
         assert task.status == DomainTaskStatus.DONE, (
             f"task {tid} status={task.status}, expected DONE"

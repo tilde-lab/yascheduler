@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .model import NodeId, TaskId
@@ -103,4 +103,4 @@ class TaskAbandoned(DomainEvent):
 # endregion CLASS_TaskAbandoned
 
 
-Event = Union[TaskCreated, TaskAllocated, TaskCompleted, TaskFailed, TaskAbandoned]
+Event = TaskCreated | TaskAllocated | TaskCompleted | TaskFailed | TaskAbandoned

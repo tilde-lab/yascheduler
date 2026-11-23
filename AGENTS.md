@@ -13,7 +13,7 @@
   schema. Schema changes MUST include migrations.
 - Do not change `pyproject.toml` version outside a release commit; there,
   `uv version X.Y.Z --no-sync` moves it together with `uv.lock`.
-- Target Python `>=3.9`.
+- Target Python `>=3.10`.
 - To add new dependencies: FIRST declare them in an OpenSpec change proposal
   with rationale.
 - Maintain compatibility with both `pip` and `uv`. Use only PEP 621 standard

@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum, unique
-from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar, Union, cast
+from typing import TYPE_CHECKING, ClassVar, Generic, TypeVar, cast
 
 from yascheduler.shared import StrEnum, TypeAlias, TypeIs
 
@@ -241,7 +241,7 @@ class Done:
     remote_folder: str | None = None
 
 
-TaskState = Union[Todo, Running, Done]
+TaskState = Todo | Running | Done
 
 # Covariant TypeVar: sound because Task is frozen (like tuple[T_co, ...]); a
 # wider-typed reference cannot mutate the state through the container.
@@ -437,7 +437,7 @@ class Task(Generic[S_co]):
 TodoTask: TypeAlias = Task[Todo]
 RunningTask: TypeAlias = Task[Running]
 DoneTask: TypeAlias = Task[Done]
-AnyTask: TypeAlias = Union[Task[Todo], Task[Running], Task[Done]]
+AnyTask: TypeAlias = Task[Todo] | Task[Running] | Task[Done]
 
 
 # region FUNC_any_status_helpers

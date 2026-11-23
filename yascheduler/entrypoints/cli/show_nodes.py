@@ -222,7 +222,9 @@ def _render_nodes_table(rows: list[_NodeView]) -> str:
         for col_idx in range(len(headers))
     ]
     lines = [
-        sep.join(cell.ljust(width) for cell, width in zip(line, col_widths))
+        sep.join(
+            cell.ljust(width) for cell, width in zip(line, col_widths, strict=True)
+        )
         for line in all_rows
     ]
     return "\n".join(lines)

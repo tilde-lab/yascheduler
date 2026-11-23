@@ -188,7 +188,7 @@ async def _remove_remote_paths(
 
 
 # region FUNC__aiter
-# PURPOSE: Reproduce the repository's lazy per-task entry stream so deployment reads one entry at a time from a plain sequence (no async-generator expressions on the 3.9 floor).
+# PURPOSE: Reproduce the repository's lazy per-task entry stream so deployment reads one entry at a time from a plain sequence.
 async def _aiter(entries: TaskInputSnapshot) -> AsyncIterator[TaskInputEntry]:
     """Yield snapshot entries one at a time, as the stored keyset stream does."""
     for entry in entries:
